@@ -36,12 +36,18 @@ export function getRoomImagePath(roomType: string, roomNumber: string): string {
   // 객실 타입에 따른 이미지 매칭
   let roomTypeKey = ""
 
-  if (normalizedRoomType.includes("스탠다드") && normalizedRoomType.includes("더블")) {
-    roomTypeKey = "스탠다드"
-    console.log("[v0] 매칭: 스탠다드 더블 -> 스탠다드")
-  } else if (normalizedRoomType.includes("스탠다드") && normalizedRoomType.includes("트윈")) {
-    roomTypeKey = "스탠다드 트윈"
-    console.log("[v0] 매칭: 스탠다드 트윈")
+  if (normalizedRoomType.includes("스탠다드")) {
+    // 이제 "스탠다드"만 포함하면 "스탠다드"로 매칭됩니다.
+    roomTypeKey = "스탠다드";
+    console.log("[v0] 매칭: 스탠다드");
+} 
+// 2. 스탠다드 트윈 조건은 유지
+else if (normalizedRoomType.includes("스탠다드") && normalizedRoomType.includes("트윈")) {
+    // 이 조건은 이미 위에서 "스탠다드"에 매칭되어 실행되지 않습니다!
+    // -> 이 조건을 제거하거나, 순서를 조정해야 합니다.
+    roomTypeKey = "스탠다드 트윈";
+    console.log("[v0] 매칭: 스탠다드 트윈 -> 스탠다드 트윈");
+} 
   } else if (
     normalizedRoomType.includes("디럭스") &&
     (normalizedRoomType.includes("오션") || normalizedRoomType.includes("오션뷰"))
