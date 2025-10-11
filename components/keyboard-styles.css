@@ -1,0 +1,62 @@
+/* Custom styles for the Korean keyboard */
+
+.korean-keyboard-wrapper {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.korean-keyboard-wrapper .hg-theme-default {
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.korean-keyboard-wrapper .hg-button {
+  height: 60px;
+  border-radius: 12px;
+  background-color: white;
+  border: 1px solid #e0e0e0;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  color: #333;
+  font-size: 22px;
+  margin: 5px;
+}
+
+.korean-keyboard-wrapper .hg-button:active {
+  background-color: #f0f0f0;
+  transform: translateY(1px);
+}
+
+/* Special keys styling */
+.korean-keyboard-wrapper .hg-button.space-key {
+  width: 200px;
+}
+
+.korean-keyboard-wrapper .hg-button.dot-key {
+  width: 200px;
+}
+
+.korean-keyboard-wrapper .hg-button.enter-key {
+  width: 200px;
+}
+
+.korean-keyboard-wrapper .hg-row {
+  display: flex;
+  justify-content: center;
+}
+
+.korean-keyboard-wrapper .hg-row:last-child {
+  margin-bottom: 5px;
+}
+
+/* Adjust the layout to match the image */
+.korean-keyboard-wrapper .hg-row:last-child {
+  display: flex;
+  justify-content: space-between;
+}
+
+.korean-keyboard-wrapper .hg-button.shift-key,
+.korean-keyboard-wrapper .hg-button.pre-key {
+  width: auto;
+}

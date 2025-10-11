@@ -1,0 +1,262 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Do Hyeon 폰트 추가 */
+@import url("https://fonts.googleapis.com/css2?family=Do+Hyeon&display=swap");
+
+:root {
+  --foreground-rgb: 0, 0, 0;
+  --background-rgb: 254, 254, 247;
+  --primary-button: 66, 192, 255;
+  --accent-color: 255, 46, 109;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  color: rgb(var(--foreground-rgb));
+  background: rgb(var(--background-rgb));
+  font-family: "Do Hyeon", sans-serif;
+}
+
+/* Update the kiosk-container class to use full width and height */
+.kiosk-container {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: rgb(var(--background-rgb));
+  display: flex;
+  flex-direction: column;
+}
+
+/* 실제 키오스크 화면 최적화 */
+html,
+body {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  touch-action: manipulation;
+}
+
+/* 버튼 터치 최적화 */
+button {
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+/* 텍스트 선택 방지 */
+.no-select {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  -webkit-touch-callout: none !important;
+}
+
+/* 키오스크 카드 버튼 스타일 */
+.kiosk-card {
+  background-color: rgb(var(--primary-button));
+  border-radius: 20px;
+  padding: 60px; /* Changed padding to 60px on all sides */
+  margin-bottom: 30px;
+  box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.2);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: transform 0.1s ease-in-out;
+  width: 100%;
+  text-align: left;
+}
+
+.kiosk-card:active {
+  transform: translateY(2px);
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.2);
+}
+
+.kiosk-card h2 {
+  margin: 0 0 10px 0;
+  font-size: 60pt; /* Changed to 60pt */
+  font-weight: 700; /* Increased to bold */
+  color: #111;
+}
+
+.kiosk-card p {
+  margin: 0;
+  font-size: 24pt; /* Changed to 24pt */
+  line-height: 1.5;
+  font-weight: 600; /* Increased to semi-bold */
+  color: #333;
+}
+
+/* 아이콘 크기 증가 */
+.kiosk-icon {
+  width: 120px; /* 80px에서 120px로 증가 */
+  height: 120px; /* 80px에서 120px로 증가 */
+}
+
+/* Update text alignment for kiosk elements */
+.kiosk-title,
+.kiosk-highlight {
+  text-align: left; /* Left-align text */
+  font-weight: 700; /* Increased to bold */
+}
+
+/* Update the kiosk-title and kiosk-highlight font sizes */
+.kiosk-title {
+  font-size: 24pt; /* Changed to 24pt */
+  color: #111;
+  margin-bottom: 5px;
+}
+
+.kiosk-highlight {
+  color: rgb(var(--accent-color));
+  font-weight: 800; /* Extra bold for highlight text */
+  font-size: 60pt; /* Changed to 60pt */
+  margin-bottom: 40px;
+}
+
+/* Update the kiosk-content-container to align to the top and use full width */
+.kiosk-content-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 100%; /* Remove the max-width constraint */
+  margin: 0;
+  padding: 120px; /* Changed padding to 120px on all sides */
+  height: 100%;
+  align-items: flex-start; /* Left-align content */
+  justify-content: flex-start; /* Top-align content */
+  box-sizing: border-box; /* Ensure padding is included in width/height calculation */
+}
+
+/* Update the kiosk-buttons-container to align to the top */
+.kiosk-buttons-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start; /* Change from center to top */
+  width: 100%;
+  margin-top: 20px; /* Add some spacing after the header */
+}
+
+/* 키보드 스타일 조정 */
+.korean-keyboard-wrapper .hg-button {
+  height: 50px;
+  font-size: 20px;
+  border-radius: 8px;
+  margin: 4px;
+  font-weight: 600; /* Increased font weight */
+}
+
+/* 모든 텍스트 요소에 대한 기본 글자 굵기 설정 */
+p,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+span,
+div,
+button,
+input,
+label {
+  font-weight: 600; /* Increased from 500 to 600 */
+}
+
+/* 버튼 텍스트 굵기 증가 */
+.button,
+button {
+  font-weight: 700; /* Increased to bold */
+}
+
+/* 카드 내부 텍스트 굵기 증가 */
+.card p {
+  font-weight: 600; /* Increased to semi-bold */
+}
+
+.card .font-medium {
+  font-weight: 700; /* Increased to bold */
+}
+
+.card .font-bold {
+  font-weight: 800; /* Increased to extra bold */
+}
+
+/* 입력 필드 스타일 강화 */
+input {
+  font-weight: 600;
+}
+
+/* 버튼 스타일 강화 */
+.ui-button {
+  font-weight: 700;
+  border-width: 3px;
+}
+
+/* 카드 스타일 강화 */
+.card {
+  border-radius: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* 일관된 여백 설정 */
+.kiosk-spacing {
+  margin-bottom: 24px;
+}
+
+/* 키오스크 모드에서 마우스 포인터 숨기기 및 텍스트 선택 방지 */
+.kiosk-mode {
+  cursor: none !important; /* 마우스 포인터 숨기기 */
+  user-select: none !important; /* 텍스트 선택 방지 */
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  -webkit-touch-callout: none !important; /* iOS에서 길게 터치했을 때 메뉴 표시 방지 */
+}
+
+/* 모든 버튼에 대해 텍스트 선택 방지 */
+button,
+.button,
+.kiosk-card {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  -webkit-touch-callout: none !important;
+}
+
+/* 입력 필드를 제외한 모든 텍스트 요소에 대해 선택 방지 */
+p,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+span,
+div,
+label {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+/* 입력 필드는 선택 가능하도록 유지 */
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+}
