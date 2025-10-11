@@ -1,6 +1,8 @@
 "use client"
 
+import { useEffect } from "react"
 import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
+import { playIdleWelcome } from "@/lib/audio-utils"
 
 interface IdleScreenProps {
   onNavigate: (screen: string) => void
@@ -10,6 +12,11 @@ interface IdleScreenProps {
 
 export default function IdleScreen({ onNavigate, kioskLocation, imageUrl }: IdleScreenProps) {
   const locationTitle = getLocationTitle(kioskLocation)
+
+  useEffect(() => {
+    console.log("[v0] IdleScreen mounted, playing welcome audio")
+    playIdleWelcome()
+  }, [])
 
   const handleScreenTouch = () => {
     console.log("[v0] Idle screen touched, navigating to standby")

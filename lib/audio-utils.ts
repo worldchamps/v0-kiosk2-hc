@@ -17,6 +17,8 @@ const AUDIO_FILES = {
     "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/DBuilding%20Guide-i4zaRn19m3BbOUWUQLUgF1k9EhcQAq.mp3",
   BUILDING_CAMP_GUIDE:
     "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/CampBuilding%20Guide-gvNhIVPE0CyFXD9mfRCq81J5ENz0bu.mp3",
+  IDLE_WELCOME:
+    "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/ElevenLabs_2025-10-11T06_11_56_JiYoung_pvc_sp103_s72_sb93_se0_b_m2-7MVHQLf0Vc79ckFUIUkJRHLdsBMe50.mp3",
   // BGM 추가
   BGM: "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/BGM-KxDaQotYetSNviIMu8k9fN0pnce4X3.mp3",
 }
@@ -27,6 +29,8 @@ const audioCache: { [key: string]: HTMLAudioElement } = {}
 // BGM 관련 변수
 let bgmPlaying = false
 let bgmAudio: HTMLAudioElement | null = null
+
+let idleWelcomePlayed = false
 
 /**
  * 음성 파일 재생 함수
@@ -210,6 +214,57 @@ export function setBGMVolume(volume: number): void {
  */
 export function isBGMPlaying(): boolean {
   return bgmPlaying
+}
+
+/**
+ * 대기 화면 환영 음성 재생 함수 (최초 1회만)
+ */
+export function playIdleWelcome(): void {
+  if (idleWelcomePlayed) {
+    console.log("Idle welcome already played, skipping")
+    return
+  }
+
+  try {
+    // 캐시에 없으면 새로 생성
+    if (!audioCache["IDLE_WELCOME"]) {
+      audioCache["IDLE_WELCOME"] = new Audio(AUDIO_FILES.IDLE_WELCOME)
+    }
+
+    const audio = audioCache["IDLE_WELCOME"]
+    audio.currentTime = 0
+    audio.volume = 0.8
+
+    // 재생 완료 후 BGM 시작
+    audio.onended = () => {
+      console.log("Idle welcome audio ended, starting BGM")
+      startBGM(0.3)
+    }
+
+    audio
+      .play()
+      .then(() => {
+        console.log("Idle welcome audio started")
+        idleWelcomePlayed = true
+      })
+      .catch((error) => {
+        console.error("Idle welcome audio playback error:", error)
+        // 재생 실패 시 바로 BGM 시작
+        startBGM(0.3)
+      })
+  } catch (error) {
+    console.error("Error playing idle welcome audio:", error)
+    // 오류 발생 시 바로 BGM 시작
+    startBGM(0.3)
+  }
+}
+
+/**
+ * 대기 화면 환영 음성 재생 상태 초기화 (앱 재시작 시)
+ */
+export function resetIdleWelcome(): void {
+  idleWelcomePlayed = false
+  console.log("Idle welcome state reset")
 }
 
 /**
