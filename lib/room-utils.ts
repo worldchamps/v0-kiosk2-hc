@@ -36,28 +36,41 @@ export function getRoomImagePath(roomType: string, roomNumber: string): string {
   let roomTypeKey = ""
 
   if (normalizedRoomType.includes("스탠다드") && normalizedRoomType.includes("더블")) {
-    roomTypeKey = "스탠다드 더블"
-  } else if (normalizedRoomType.includes("스탠다드") && normalizedRoomType.includes("트윈")) {
-    roomTypeKey = "스탠다드 트윈"
-  } else if (
+    // 1. "스탠다드 더블" -> "스탠다드"
+    roomTypeKey = "스탠다드";
+} else if (normalizedRoomType.includes("스탠다드") && normalizedRoomType.includes("트윈")) {
+    // 기존 유지
+    roomTypeKey = "스탠다드 트윈";
+} else if (
     normalizedRoomType.includes("디럭스") &&
     normalizedRoomType.includes("더블") &&
     (normalizedRoomType.includes("오션") || normalizedRoomType.includes("오션뷰"))
-  ) {
-    roomTypeKey = "디럭스 더블(오션뷰)"
-  } else if (normalizedRoomType.includes("디럭스") && normalizedRoomType.includes("더블")) {
-    roomTypeKey = "디럭스 더블"
-  } else if (normalizedRoomType.includes("독채") && normalizedRoomType.includes("펜션")) {
-    roomTypeKey = "독채 펜션"
-  } else if (
+) {
+    // 2. "디럭스 더블(오션뷰)" -> "디럭스(오션뷰)"
+    roomTypeKey = "디럭스(오션뷰)";
+} 
+// 3. 디럭스 더블 조건 제거 
+/* else if (normalizedRoomType.includes("디럭스") && normalizedRoomType.includes("더블")) {
+    roomTypeKey = "디럭스 더블";
+} 
+*/
+else if (normalizedRoomType.includes("독채") && normalizedRoomType.includes("펜션")) {
+    // 기존 유지
+    roomTypeKey = "독채 펜션";
+} else if (
     normalizedRoomType.includes("스위트") &&
     normalizedRoomType.includes("트윈") &&
     (normalizedRoomType.includes("오션") || normalizedRoomType.includes("오션뷰"))
-  ) {
-    roomTypeKey = "스위트 트윈(오션뷰)"
-  } else if (normalizedRoomType.includes("스위트") && normalizedRoomType.includes("트윈")) {
-    roomTypeKey = "스위트 트윈"
-  }
+) {
+    // 4. "스위트 트윈(오션뷰)" -> "스위트(오션뷰)"
+    roomTypeKey = "스위트(오션뷰)";
+} 
+// 5. 스위트 트윈 조건 제거
+/*
+else if (normalizedRoomType.includes("스위트") && normalizedRoomType.includes("트윈")) {
+    roomTypeKey = "스위트 트윈";
+}
+*/
 
 
 
