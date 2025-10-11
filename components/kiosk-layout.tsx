@@ -129,8 +129,8 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     try {
       console.log(`Checking reservation for: ${name}, today: ${getCurrentDateKST()}`)
 
-      // API 엔드포인트 변경 - admin/reservations 대신 reservations 사용
-      const response = await fetch(`/api/reservations?name=${encodeURIComponent(name)}&todayOnly=true`, {
+      // API 엔드포인트 변경 - todayOnly=false로 변경하여 미래 날짜 예약 허용
+      const response = await fetch(`/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false`, {
         method: "GET",
       })
 

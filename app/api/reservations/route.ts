@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const guestName = searchParams.get("name")
-    const todayOnly = searchParams.get("todayOnly") !== "false" // 기본값은 true
+    const todayOnly = searchParams.get("todayOnly") === "true" // 기본값은 false로 변경
 
     const sheets = createSheetsClient()
     const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID || ""
@@ -99,9 +99,9 @@ export async function GET(request: NextRequest) {
 
     let filteredReservations = [...reservations]
 
-    // 오늘 날짜(KST 기준)로 필터링
+    // 오늘 날짜(KST 기준)로 필터링 - 오늘 이후 날짜 포함
     if (todayOnly) {
-      filteredReservations = filteredReservations.filter((res) => res.checkInDate === today)
+      filteredReservations = filteredReservations.filter((res) => res.checkInDate >= today)
     }
 
     // 이름으로 필터링
