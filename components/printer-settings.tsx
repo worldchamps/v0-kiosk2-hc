@@ -250,7 +250,7 @@ export default function PrinterSettings() {
               <div>
                 <h4 className="font-medium">프린터 모드 정보</h4>
                 <p className="text-sm text-gray-600 mt-1">
-                  <strong>일반 모드:</strong> 다양한 글꼴 크기와 서식을 사용하여 시각적으로 강조된 영수증을 인쇄합니다.
+                  <strong>일반 모드:</strong> 다양한 글꼴 크기와 서식을 사용하여 시각적으로 강조된 영수증을 인쇄합니��.
                   BK-3 프린터와 같은 ESC/POS 명령어를 완전히 지원하는 프린터에 적합합니다.
                 </p>
                 <p className="text-sm text-gray-600 mt-2">
