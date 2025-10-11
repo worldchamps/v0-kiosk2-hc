@@ -8,11 +8,11 @@ import OnSiteReservation from "@/components/on-site-reservation"
 import ReservationDetails from "@/components/reservation-details"
 import CheckInComplete from "@/components/check-in-complete"
 import ReservationNotFound from "@/components/reservation-not-found"
+import ReservationList from "@/components/reservation-list"
 import { getCurrentDateKST } from "@/lib/date-utils"
 import { type KioskLocation, getKioskLocation } from "@/lib/location-utils"
 import { useRouter } from "next/navigation"
 import AdminKeypad from "@/components/admin-keypad"
-// 음성 유틸리티 import 수정
 import { stopAllAudio, pauseBGM, resumeBGM } from "@/lib/audio-utils"
 
 interface KioskLayoutProps {
@@ -22,6 +22,7 @@ interface KioskLayoutProps {
 export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   const [currentScreen, setCurrentScreen] = useState("standby")
   const [reservationData, setReservationData] = useState(null)
+  const [reservationsList, setReservationsList] = useState([])
   const [guestName, setGuestName] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -35,38 +36,28 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   const [kioskLocation, setKioskLocation] = useState<KioskLocation>("A")
   const router = useRouter()
 
-  // 관리자 비밀번호 - 변경됨
   const adminPassword = "KIM1334**"
 
-  // 키오스크 위치 불러오기
   useEffect(() => {
     const savedLocation = getKioskLocation()
     setKioskLocation(savedLocation)
   }, [])
 
-  // 디버깅 정보 표시
   useEffect(() => {
     if (debugInfo) {
       console.log("Debug Info:", debugInfo)
     }
   }, [debugInfo])
 
-  // 컴포넌트가 마운트될 때 body에 kiosk-mode 클래스 추가
   useEffect(() => {
-    // body에 kiosk-mode 클래스 추가
     document.body.classList.add("kiosk-mode")
-
-    // 컴포넌트가 언마운트될 때 kiosk-mode 클래스 제거
     return () => {
       document.body.classList.remove("kiosk-mode")
-      // 모든 오디오 중지 (BGM 포함)
       stopAllAudio(true)
     }
   }, [])
 
-  // 화면 전환 시 BGM 관리
   useEffect(() => {
-    // 대기 화면일 때 BGM 재개, 다른 화면일 때는 BGM 일시 중지
     if (currentScreen === "standby") {
       console.log("Resuming BGM (screen changed to standby)")
       resumeBGM()
@@ -76,23 +67,19 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     }
   }, [currentScreen])
 
-  // handleNavigate 함수 수정
   const handleNavigate = (screen) => {
-    // 화면 전환 시 모든 오디오 중지 (BGM 제외)
     stopAllAudio(false)
 
     setCurrentScreen(screen)
-    // Clear any previous errors when navigating
     setError("")
 
-    // Clear the guest name when navigating away from reservation confirmation
-    if (screen !== "reservationConfirm" && screen !== "reservationDetails") {
+    if (screen !== "reservationConfirm" && screen !== "reservationDetails" && screen !== "reservationList") {
       setGuestName("")
     }
 
-    // Reset reservation data and revealed info when going back to standby
     if (screen === "standby") {
       setReservationData(null)
+      setReservationsList([])
       setRevealedInfo({
         roomNumber: "",
         password: "",
@@ -118,7 +105,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     setShowAdminKeypad(false)
   }
 
-  // 클라이언트 코드에서 API 키 참조 제거
   const handleCheckReservation = async (name) => {
     if (!name.trim()) return
 
@@ -129,7 +115,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     try {
       console.log(`Checking reservation for: ${name}, today: ${getCurrentDateKST()}`)
 
-      // API 엔드포인트 변경 - todayOnly=false로 변경하여 미래 날짜 예약 허용
       const response = await fetch(`/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false`, {
         method: "GET",
       })
@@ -144,14 +129,17 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       console.log("API Response:", data)
 
       if (data.reservations && data.reservations.length > 0) {
-        // 예약 데이터 저장
-        const reservation = data.reservations[0]
-        console.log("Found reservation:", reservation)
-
-        setReservationData(reservation)
-        setCurrentScreen("reservationDetails")
+        if (data.reservations.length > 1) {
+          console.log(`Found ${data.reservations.length} reservations for ${name}`)
+          setReservationsList(data.reservations)
+          setCurrentScreen("reservationList")
+        } else {
+          const reservation = data.reservations[0]
+          console.log("Found reservation:", reservation)
+          setReservationData(reservation)
+          setCurrentScreen("reservationDetails")
+        }
       } else {
-        // 오늘 날짜에 예약이 없는 경우
         const today = getCurrentDateKST()
         console.log(`No reservation found for ${name} on ${today}`)
         setCurrentScreen("reservationNotFound")
@@ -165,7 +153,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     }
   }
 
-  // Update the handleCheckIn function to remove API key
   const handleCheckIn = async () => {
     if (!reservationData || !reservationData.reservationId) return
 
@@ -192,12 +179,11 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       const data = await response.json()
       console.log("Check-in response:", data)
 
-      // Save room number and password
       if (data.data) {
         setRevealedInfo({
           roomNumber: data.data.roomNumber || "",
           password: data.data.password || "",
-          floor: data.data.floor || "", // Add floor information
+          floor: data.data.floor || "",
         })
 
         console.log("Revealed info:", {
@@ -207,7 +193,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         })
       }
 
-      // Switch to check-in complete screen
       setCurrentScreen("checkInComplete")
     } catch (err) {
       console.error("Error during check-in:", err)
@@ -217,7 +202,12 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     }
   }
 
-  // 디버깅을 위한 상태 로그
+  const handleSelectReservation = (reservation) => {
+    console.log("Selected reservation:", reservation)
+    setReservationData(reservation)
+    setCurrentScreen("reservationDetails")
+  }
+
   useEffect(() => {
     console.log("showAdminKeypad 상태 변경:", showAdminKeypad)
   }, [showAdminKeypad])
@@ -237,6 +227,16 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             setGuestName={setGuestName}
             loading={loading}
             kioskLocation={kioskLocation}
+          />
+        )}
+
+        {currentScreen === "reservationList" && (
+          <ReservationList
+            reservations={reservationsList}
+            onSelectReservation={handleSelectReservation}
+            onNavigate={handleNavigate}
+            kioskLocation={kioskLocation}
+            guestName={guestName}
           />
         )}
 
@@ -264,7 +264,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             reservation={reservationData}
             revealedInfo={revealedInfo}
             kioskLocation={kioskLocation}
-            onNavigate={handleNavigate} // Add this line
+            onNavigate={handleNavigate}
           />
         )}
 
@@ -277,7 +277,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         )}
       </div>
 
-      {/* 관리자 모드 접근 버튼 - 더 명확하게 표시 */}
       <div className="absolute bottom-4 right-4">
         <button
           className="px-4 py-2 bg-gray-800 text-white rounded-lg opacity-70 hover:opacity-100 transition-opacity text-sm font-medium shadow-lg"
@@ -288,7 +287,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         </button>
       </div>
 
-      {/* 관리자 키패드 - z-index 추가 */}
       {showAdminKeypad && (
         <div className="fixed inset-0 z-50">
           <AdminKeypad
@@ -299,7 +297,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         </div>
       )}
 
-      {/* 디버깅용 상태 표시 (개발 중에만 사용) */}
       {process.env.NODE_ENV === "development" && (
         <div className="fixed top-4 left-4 bg-black text-white p-2 rounded text-xs z-40">
           Admin Keypad: {showAdminKeypad ? "OPEN" : "CLOSED"}

@@ -109,9 +109,7 @@ export async function GET(request: NextRequest) {
       filteredReservations = filteredReservations.filter((res) => res.guestName === guestName)
     }
 
-    // 체크인 전 예약만 반환 (체크인 상태가 비어있는 경우)
-    // 이 부분은 문제가 될 수 있으므로 일단 주석 처리
-    // filteredReservations = filteredReservations.filter((res) => !res.checkInStatus)
+    filteredReservations = filteredReservations.filter((res) => !res.checkInStatus || res.checkInStatus.trim() === "")
 
     // 디버깅 정보 추가
     const debugInfo = {
