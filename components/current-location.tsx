@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button"
 import Image from "next/image"
 import { type KioskLocation, getLocationMapPath, getLocationTitle } from "@/lib/location-utils"
+import { useIdleTimer } from "@/hooks/use-idle-timer"
 
 interface CurrentLocationProps {
   onNavigate: (screen: string) => void
@@ -15,6 +16,15 @@ export default function CurrentLocation({ onNavigate, kioskLocation }: CurrentLo
 
   // 위치에 따른 제목
   const locationTitle = getLocationTitle(kioskLocation)
+
+  useIdleTimer({
+    onIdle: () => {
+      console.log("[v0] Current location idle, navigating to idle screen")
+      onNavigate("idle")
+    },
+    idleTime: 60000, // 60 seconds
+    enabled: true,
+  })
 
   return (
     <div className="flex items-start justify-start w-full h-full">

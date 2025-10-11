@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import StandbyScreen from "@/components/standby-screen"
+import IdleScreen from "@/components/idle-screen"
 import ReservationConfirm from "@/components/reservation-confirm"
 import CurrentLocation from "@/components/current-location"
 import OnSiteReservation from "@/components/on-site-reservation"
@@ -77,7 +78,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       setGuestName("")
     }
 
-    if (screen === "standby") {
+    if (screen === "standby" || screen === "idle") {
       setReservationData(null)
       setReservationsList([])
       setRevealedInfo({
@@ -216,6 +217,10 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     <div className="w-full h-full bg-[#fefef7] overflow-hidden kiosk-mode relative">
       <div className="h-full w-full">
         {error && <div className="m-4 p-3 bg-red-100 text-red-700 rounded-md">{error}</div>}
+
+        {currentScreen === "idle" && (
+          <IdleScreen onNavigate={handleNavigate} kioskLocation={kioskLocation} videoUrl="/idle-video.mp4" />
+        )}
 
         {currentScreen === "standby" && <StandbyScreen onNavigate={handleNavigate} kioskLocation={kioskLocation} />}
 

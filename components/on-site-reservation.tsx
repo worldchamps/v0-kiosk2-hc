@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import Image from "next/image"
 import { Phone } from "lucide-react"
+import { useIdleTimer } from "@/hooks/use-idle-timer"
 
 interface OnSiteReservationProps {
   onNavigate: (screen: string) => void
@@ -16,6 +17,15 @@ export default function OnSiteReservation({ onNavigate }: OnSiteReservationProps
     { name: "스탠다드 트윈", image: "/opulent-suite.png" },
     { name: "스위트 트윈", image: "/opulent-suite.png" },
   ]
+
+  useIdleTimer({
+    onIdle: () => {
+      console.log("[v0] On-site reservation idle, navigating to idle screen")
+      onNavigate("idle")
+    },
+    idleTime: 60000, // 60 seconds
+    enabled: true,
+  })
 
   return (
     <div className="flex items-start justify-start w-full h-full">

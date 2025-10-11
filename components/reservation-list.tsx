@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card"
 import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
 import { playAudio } from "@/lib/audio-utils"
 import { useEffect } from "react"
+import { useIdleTimer } from "@/hooks/use-idle-timer"
 
 interface Reservation {
   place: string
@@ -39,6 +40,15 @@ export default function ReservationList({
   guestName,
 }: ReservationListProps) {
   const locationTitle = getLocationTitle(kioskLocation)
+
+  useIdleTimer({
+    onIdle: () => {
+      console.log("[v0] Reservation list idle, navigating to idle screen")
+      onNavigate("idle")
+    },
+    idleTime: 60000, // 60 seconds
+    enabled: true,
+  })
 
   useEffect(() => {
     playAudio("MULTIPLE_RESERVATIONS")

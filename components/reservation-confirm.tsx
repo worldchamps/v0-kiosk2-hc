@@ -6,8 +6,8 @@ import { Input } from "@/components/ui/input"
 import KoreanKeyboard from "./korean-keyboard"
 import { Loader2 } from "lucide-react"
 import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
-// 상단에 음성 유틸리티 import 추가
 import { playAudio } from "@/lib/audio-utils"
+import { useIdleTimer } from "@/hooks/use-idle-timer"
 
 interface ReservationConfirmProps {
   onNavigate: (screen: string) => void
@@ -33,6 +33,15 @@ export default function ReservationConfirm({
 
   // 위치에 따른 제목
   const locationTitle = getLocationTitle(kioskLocation)
+
+  useIdleTimer({
+    onIdle: () => {
+      console.log("[v0] Reservation confirm idle, navigating to idle screen")
+      onNavigate("idle")
+    },
+    idleTime: 60000, // 60 seconds
+    enabled: true,
+  })
 
   // 컴포넌트가 마운트될 때 자동으로 입력창에 포커스
   useEffect(() => {

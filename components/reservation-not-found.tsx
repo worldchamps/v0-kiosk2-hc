@@ -5,10 +5,9 @@ import { Card, CardContent } from "@/components/ui/card"
 import { AlertCircle } from "lucide-react"
 import { getCurrentDateKST, formatDateKorean } from "@/lib/date-utils"
 import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
-
-// 상단에 음성 유틸리티 import 추가
 import { playAudio } from "@/lib/audio-utils"
 import { useEffect } from "react"
+import { useIdleTimer } from "@/hooks/use-idle-timer"
 
 interface ReservationNotFoundProps {
   onRecheck: () => void
@@ -20,12 +19,18 @@ export default function ReservationNotFound({ onRecheck, onNavigate, kioskLocati
   const today = getCurrentDateKST()
   const formattedDate = formatDateKorean(today)
 
-  // 위치에 따른 제목
   const locationTitle = getLocationTitle(kioskLocation)
 
-  // 컴포넌트 내부에 useEffect 추가 (return 문 바로 위에 추가)
+  useIdleTimer({
+    onIdle: () => {
+      console.log("[v0] Reservation not found idle, navigating to idle screen")
+      onNavigate("idle")
+    },
+    idleTime: 60000, // 60 seconds
+    enabled: true,
+  })
+
   useEffect(() => {
-    // 컴포넌트 마운트 시 음성 재생
     playAudio("RESERVATION_NOT_FOUND")
   }, [])
 
@@ -56,7 +61,12 @@ export default function ReservationNotFound({ onRecheck, onNavigate, kioskLocati
             다시 확인
           </Button>
 
-          <Button variant="outline" size="lg" className="h-12 text-lg" onClick={() => onNavigate("standby")}>
+          <Button
+            variant="outline"
+            size="lg"
+            className="h-12 text-lg bg-transparent"
+            onClick={() => onNavigate("standby")}
+          >
             돌아가기
           </Button>
         </div>

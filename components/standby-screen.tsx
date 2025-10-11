@@ -4,6 +4,7 @@ import Image from "next/image"
 import { useEffect } from "react"
 import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
 import { startBGM, pauseBGM } from "@/lib/audio-utils"
+import { useIdleTimer } from "@/hooks/use-idle-timer"
 
 interface StandbyScreenProps {
   onNavigate: (screen: string) => void
@@ -13,6 +14,15 @@ interface StandbyScreenProps {
 export default function StandbyScreen({ onNavigate, kioskLocation }: StandbyScreenProps) {
   // 위치에 따른 제목
   const locationTitle = getLocationTitle(kioskLocation)
+
+  useIdleTimer({
+    onIdle: () => {
+      console.log("[v0] Standby screen idle, navigating to idle screen")
+      onNavigate("idle")
+    },
+    idleTime: 60000, // 60 seconds
+    enabled: true,
+  })
 
   // 컴포넌트 마운트 시 BGM 재생 시작
   useEffect(() => {

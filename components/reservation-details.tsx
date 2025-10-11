@@ -7,8 +7,8 @@ import Image from "next/image"
 import { Loader2, Eye, EyeOff } from "lucide-react"
 import { formatDateKorean } from "@/lib/date-utils"
 import { getRoomImagePath, checkImageExists } from "@/lib/room-utils"
-// 상단에 음성 유틸리티 import 추가
 import { playAudio } from "@/lib/audio-utils"
+import { useIdleTimer } from "@/hooks/use-idle-timer"
 
 interface Reservation {
   place?: string
@@ -46,6 +46,15 @@ export default function ReservationDetails({
   const [roomImagePath, setRoomImagePath] = useState("/hotel-floor-plan.png")
   const [imageExists, setImageExists] = useState(true)
   const [showPassword, setShowPassword] = useState(false)
+
+  useIdleTimer({
+    onIdle: () => {
+      console.log("[v0] Reservation details idle, navigating to idle screen")
+      onNavigate("idle")
+    },
+    idleTime: 60000, // 60 seconds
+    enabled: true,
+  })
 
   // 객실 이미지 경로 설정
   useEffect(() => {
@@ -104,7 +113,7 @@ export default function ReservationDetails({
   // 객실 번호와 비밀번호가 공개되었는지 확인
   const hasRevealedInfo = !!(revealedInfo?.roomNumber || revealedInfo?.password)
 
-  // 표시할 객실 번호와 비밀번호 (체크인 완료 후 공개된 정보 또는 예약 정보)
+  // 표시할 객실 번호와 비밀번호 (체크인 완료 후에만 표시)
   const displayRoomNumber = revealedInfo?.roomNumber || reservation.roomNumber || ""
   const displayPassword = revealedInfo?.password || reservation.password || ""
 
@@ -231,7 +240,7 @@ export default function ReservationDetails({
           <Button
             variant="outline"
             size="lg"
-            className="h-12 text-lg"
+            className="h-12 text-lg bg-transparent"
             onClick={() => onNavigate("standby")}
             disabled={loading}
           >

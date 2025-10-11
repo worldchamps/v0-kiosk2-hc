@@ -15,8 +15,8 @@ import {
 import Image from "next/image"
 import { getBuildingZoomImagePath } from "@/lib/location-utils"
 import type { KioskLocation } from "@/lib/location-utils"
-// 음성 유틸리티 import 추가
 import { playBuildingGuide, stopAllAudio } from "@/lib/audio-utils"
+import { useIdleTimer } from "@/hooks/use-idle-timer"
 
 interface CheckInCompleteProps {
   reservation?: any
@@ -275,6 +275,19 @@ export default function CheckInComplete({
   // Building name display (A동, B동, etc.)
   const buildingName = roomNumber && roomNumber.length > 0 ? `${roomNumber.charAt(0)}동` : ""
 
+  useIdleTimer({
+    onIdle: () => {
+      console.log("[v0] Check-in complete idle, navigating to idle screen")
+      clearAllTimers()
+      stopAllAudio()
+      if (onNavigate) {
+        onNavigate("idle")
+      }
+    },
+    idleTime: 60000, // 60 seconds
+    enabled: true,
+  })
+
   return (
     <div className="flex items-start justify-start w-full h-full">
       <div className="kiosk-content-container">
@@ -364,7 +377,7 @@ export default function CheckInComplete({
 
                 <Button
                   variant="outline"
-                  className="text-xl font-bold h-16 px-6"
+                  className="text-xl font-bold h-16 px-6 bg-transparent"
                   onClick={() => {
                     logDebug("Back button clicked: clearing all timers")
                     // Clear all timers
