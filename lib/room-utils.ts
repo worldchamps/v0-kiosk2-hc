@@ -47,7 +47,7 @@ export function getRoomImagePath(roomType: string, roomNumber: string): string {
     (normalizedRoomType.includes("오션") || normalizedRoomType.includes("오션뷰"))
 ) {
     // 2. "디럭스 더블(오션뷰)" -> "디럭스(오션뷰)"
-    roomTypeKey = "디럭스(오션뷰)";
+    roomTypeKey = "디럭스 (오션뷰)";
 } 
 // 3. 디럭스 더블 조건 제거 
 /* else if (normalizedRoomType.includes("디럭스") && normalizedRoomType.includes("더블")) {
@@ -63,7 +63,7 @@ else if (normalizedRoomType.includes("독채") && normalizedRoomType.includes("�
     (normalizedRoomType.includes("오션") || normalizedRoomType.includes("오션뷰"))
 ) {
     // 4. "스위트 트윈(오션뷰)" -> "스위트(오션뷰)"
-    roomTypeKey = "스위트(오션뷰)";
+    roomTypeKey = "스위트 (오션뷰)";
 } 
 // 5. 스위트 트윈 조건 제거
 /*
