@@ -219,7 +219,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         {error && <div className="m-4 p-3 bg-red-100 text-red-700 rounded-md">{error}</div>}
 
         {currentScreen === "idle" && (
-          <IdleScreen onNavigate={handleNavigate} kioskLocation={kioskLocation} videoUrl="/idle-video.mp4" />
+          <IdleScreen onNavigate={handleNavigate} kioskLocation={kioskLocation} imageUrl="/idle-image.jpg" />
         )}
 
         {currentScreen === "standby" && <StandbyScreen onNavigate={handleNavigate} kioskLocation={kioskLocation} />}

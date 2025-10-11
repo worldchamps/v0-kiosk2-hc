@@ -1,28 +1,15 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
 import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
 
 interface IdleScreenProps {
   onNavigate: (screen: string) => void
   kioskLocation: KioskLocation
-  videoUrl?: string
+  imageUrl?: string
 }
 
-export default function IdleScreen({ onNavigate, kioskLocation, videoUrl }: IdleScreenProps) {
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const [videoError, setVideoError] = useState(false)
+export default function IdleScreen({ onNavigate, kioskLocation, imageUrl }: IdleScreenProps) {
   const locationTitle = getLocationTitle(kioskLocation)
-
-  useEffect(() => {
-    // Auto-play video when component mounts
-    if (videoRef.current && videoUrl && !videoError) {
-      videoRef.current.play().catch((error) => {
-        console.error("Video autoplay failed:", error)
-        setVideoError(true)
-      })
-    }
-  }, [videoUrl, videoError])
 
   const handleScreenTouch = () => {
     console.log("[v0] Idle screen touched, navigating to standby")
@@ -34,22 +21,12 @@ export default function IdleScreen({ onNavigate, kioskLocation, videoUrl }: Idle
       className="relative flex items-center justify-center w-full h-full bg-[#fefef7] overflow-hidden cursor-pointer"
       onClick={handleScreenTouch}
     >
-      {/* Video background */}
-      {videoUrl && !videoError && (
-        <video
-          ref={videoRef}
+      {imageUrl && (
+        <img
+          src={imageUrl || "/placeholder.svg"}
+          alt="Idle background"
           className="absolute inset-0 w-full h-full object-cover"
-          loop
-          muted
-          playsInline
-          autoPlay
-          onError={() => {
-            console.error("Video failed to load")
-            setVideoError(true)
-          }}
-        >
-          <source src={videoUrl} type="video/mp4" />
-        </video>
+        />
       )}
 
       {/* Overlay content */}
