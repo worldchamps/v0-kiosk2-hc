@@ -21,7 +21,7 @@ interface KioskLayoutProps {
 }
 
 export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
-  const [currentScreen, setCurrentScreen] = useState("standby")
+  const [currentScreen, setCurrentScreen] = useState("idle")
   const [reservationData, setReservationData] = useState(null)
   const [reservationsList, setReservationsList] = useState([])
   const [guestName, setGuestName] = useState("")
