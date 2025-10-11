@@ -33,21 +33,15 @@ export function getRoomImagePath(roomType: string, roomNumber: string): string {
   const normalizedRoomType = roomType.trim().toLowerCase()
   console.log("[v0] 정규화된 객실 타입:", normalizedRoomType)
 
-  // 객실 타입에 따른 이미지 매칭
   let roomTypeKey = ""
 
-  if (normalizedRoomType.includes("스탠다드")) {
-    // 이제 "스탠다드"만 포함하면 "스탠다드"로 매칭됩니다.
-    roomTypeKey = "스탠다드";
-    console.log("[v0] 매칭: 스탠다드");
-} 
-// 2. 스탠다드 트윈 조건은 유지
-else if (normalizedRoomType.includes("스탠다드") && normalizedRoomType.includes("트윈")) {
-    // 이 조건은 이미 위에서 "스탠다드"에 매칭되어 실행되지 않습니다!
-    // -> 이 조건을 제거하거나, 순서를 조정해야 합니다.
-    roomTypeKey = "스탠다드 트윈";
-    console.log("[v0] 매칭: 스탠다드 트윈 -> 스탠다드 트윈");
-} 
+  // 스탠다드 트윈을 먼저 체크 (더 구체적인 조건)
+  if (normalizedRoomType.includes("스탠다드") && normalizedRoomType.includes("트윈")) {
+    roomTypeKey = "스탠다드 트윈"
+    console.log("[v0] 매칭: 스탠다드 트윈")
+  } else if (normalizedRoomType.includes("스탠다드")) {
+    roomTypeKey = "스탠다드"
+    console.log("[v0] 매칭: 스탠다드")
   } else if (
     normalizedRoomType.includes("디럭스") &&
     (normalizedRoomType.includes("오션") || normalizedRoomType.includes("오션뷰"))
@@ -60,6 +54,9 @@ else if (normalizedRoomType.includes("스탠다드") && normalizedRoomType.inclu
   } else if (normalizedRoomType.includes("독채") && normalizedRoomType.includes("펜션")) {
     roomTypeKey = "독채 펜션"
     console.log("[v0] 매칭: 독채 펜션")
+  } else if (normalizedRoomType.includes("독채") && normalizedRoomType.includes("마당")) {
+    roomTypeKey = "독채 마당"
+    console.log("[v0] 매칭: 독채 마당")
   } else if (
     normalizedRoomType.includes("스위트") &&
     (normalizedRoomType.includes("오션") || normalizedRoomType.includes("오션뷰"))
