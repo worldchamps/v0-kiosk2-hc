@@ -6,8 +6,11 @@ const API_KEY = process.env.API_KEY || ""
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || ""
 
 function authenticateRequest(request: NextRequest) {
-  const apiKey = request.headers.get("x-api-key") || request.headers.get("authorization")
-  return apiKey === API_KEY || apiKey === ADMIN_API_KEY
+  const apiKey = request.headers.get("x-api-key")
+  const authHeader = request.headers.get("authorization")
+  const bearerToken = authHeader?.replace("Bearer ", "")
+
+  return apiKey === API_KEY || apiKey === ADMIN_API_KEY || bearerToken === API_KEY || bearerToken === ADMIN_API_KEY
 }
 
 // GET: 대기 중인 체크인 목록 조회 (로컬 PMS가 폴링)

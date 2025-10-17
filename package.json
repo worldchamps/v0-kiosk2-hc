@@ -6,6 +6,7 @@
     "build": "next build",
     "dev": "next dev",
     "lint": "next lint",
+    "setup:pms-queue": "tsx scripts/setup-pms-queue-sheet.ts",
     "start": "next start"
   },
   "dependencies": {
@@ -59,6 +60,7 @@
     "sonner": "^1.7.1",
     "tailwind-merge": "^2.5.5",
     "tailwindcss-animate": "^1.0.7",
+    "tsx": "^4.19.2",
     "vaul": "^0.9.6",
     "zod": "^3.24.1"
   },
