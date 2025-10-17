@@ -88,7 +88,7 @@ export default function PrinterSettings() {
       if (!isConnected) {
         const connected = await connectPrinter()
         if (!connected) {
-          setStatus("프린터 연결에 실패했습니다.")
+          setStatus("프린터 연결에 ���패했습니다.")
           setIsPrinting(false)
           return
         }

@@ -18,13 +18,37 @@ function initFirebase() {
 
 export const db = initFirebase()
 
-// PMS Queue에 체크인 정보 추가
+export function getPropertyFromRoomNumber(roomNumber: string): string {
+  const upperRoom = roomNumber.toUpperCase().trim()
+
+  // Property 3: A### 또는 B### 형식
+  if (upperRoom.match(/^[AB]\d{3}$/)) {
+    return "property3"
+  }
+
+  // Property 4: Camp ### 형식 (예: Camp 101, CAMP 205)
+  if (upperRoom.match(/^CAMP\s*\d{3}$/i)) {
+    return "property4"
+  }
+
+  // Property 1 & 2는 독립적인 PMS 사용 (Firebase 불필요)
+  // C###, D### → Property 1 (독립 PMS)
+  // Kariv ### → Property 2 (독립 PMS)
+
+  // 기본값: property3 (기존 동작 유지)
+  return "property3"
+}
+
 export async function addToPMSQueue(data: {
   roomNumber: string
   guestName: string
   checkInDate: string
 }) {
-  const ref = db.ref("pms_queue")
+  // 호실 번호로 속성 결정
+  const property = getPropertyFromRoomNumber(data.roomNumber)
+
+  // 속성별 경로에 데이터 저장
+  const ref = db.ref(`pms_queue/${property}`)
   const newRef = ref.push()
 
   await newRef.set({
@@ -33,16 +57,18 @@ export async function addToPMSQueue(data: {
     guestName: data.guestName,
     checkInDate: data.checkInDate,
     status: "pending",
+    property: property,
     createdAt: new Date().toISOString(),
     completedAt: null,
   })
 
+  console.log(`[Firebase] Added to ${property} queue:`, data.roomNumber)
   return newRef.key
 }
 
 // PMS Queue 항목을 완료 처리
-export async function completePMSQueueItem(id: string) {
-  const ref = db.ref(`pms_queue/${id}`)
+export async function completePMSQueueItem(property: string, id: string) {
+  const ref = db.ref(`pms_queue/${property}/${id}`)
   await ref.update({
     status: "completed",
     completedAt: new Date().toISOString(),

@@ -31,11 +31,11 @@ FIREBASE_CREDENTIALS_PATH = clean_path(r"C:\PMS\firebase-service-account.json") 
 FIREBASE_DATABASE_URL = "https://kiosk-pms-default-rtdb.asia-southeast1.firebasedatabase.app/"  # 실제 URL로 변경
 
 # AutoHotkey 스크립트 경로
-AHK_SCRIPT_PATH = clean_path(r"C:\Users\USER\Documents\AutoHotkey\pms_automator.ahk")
-AHK_EXE_PATH = clean_path(r"C:\Program Files\AutoHotkey\AutoHotkey.exe")
+AHK_SCRIPT_PATH = clean_path(r"C:\PMS\pms_automator.ahk")
+AHK_EXE_PATH = clean_path(r"C:\Program Files\AutoHotkey\v1.1.37.02\AutoHotkeyU64.exe")
 
 # 임시 파일 경로 (AutoHotkey가 읽을 호실 번호 파일)
-ROOM_NUMBER_FILE = clean_path(r"C:\Users\USER\Documents\AutoHotkey\room_number_data.tmp")
+ROOM_NUMBER_FILE = clean_path(r"C:\PMS\room_number_data.tmp")
 
 # ===================================================================
 # Firebase 초기화
@@ -97,19 +97,44 @@ def execute_pms_automation(room_number, guest_name, queue_id):
     try:
         print(f"\n[PMS Listener] 체크인 처리 시작: {room_number} ({guest_name})")
         
+        # 0. 필수 파일 존재 확인
+        if not os.path.exists(AHK_EXE_PATH):
+            print(f"[PMS Listener] ✗ AutoHotkey 실행 파일을 찾을 수 없습니다: {AHK_EXE_PATH}")
+            return False
+            
+        if not os.path.exists(AHK_SCRIPT_PATH):
+            print(f"[PMS Listener] ✗ AutoHotkey 스크립트를 찾을 수 없습니다: {AHK_SCRIPT_PATH}")
+            return False
+        
+        # 임시 파일 디렉토리 생성
+        os.makedirs(os.path.dirname(ROOM_NUMBER_FILE), exist_ok=True)
+        
         # 1. 호실 번호를 임시 파일에 저장
+        print(f"[PMS Listener] 임시 파일 작성: {ROOM_NUMBER_FILE}")
         with open(ROOM_NUMBER_FILE, 'w', encoding='utf-8') as f:
             f.write(room_number)
+        print(f"[PMS Listener] 호실 번호 저장 완료: {room_number}")
         
         # 2. AutoHotkey 스크립트 실행
+        command = [AHK_EXE_PATH, AHK_SCRIPT_PATH]
+        print(f"[PMS Listener] 실행 명령: {' '.join(command)}")
+        
         result = subprocess.run(
-            [AHK_EXE_PATH, AHK_SCRIPT_PATH],
+            command,
             capture_output=True,
             text=True,
             timeout=30  # 30초 타임아웃
         )
         
         # 3. 실행 결과 확인
+        print(f"[PMS Listener] 반환 코드: {result.returncode}")
+        
+        if result.stdout:
+            print(f"[PMS Listener] 표준 출력:\n{result.stdout}")
+        
+        if result.stderr:
+            print(f"[PMS Listener] 표준 에러:\n{result.stderr}")
+        
         if result.returncode == 0:
             print(f"[PMS Listener] ✓ 체크인 성공: {room_number}")
             # Firebase에서 완료 처리
@@ -117,14 +142,17 @@ def execute_pms_automation(room_number, guest_name, queue_id):
             return True
         else:
             print(f"[PMS Listener] ✗ 체크인 실패: {room_number}")
-            print(f"[PMS Listener] 오류: {result.stdout}")
             return False
             
     except subprocess.TimeoutExpired:
         print(f"[PMS Listener] ✗ 타임아웃: {room_number} (30초 초과)")
         return False
     except Exception as e:
-        print(f"[PMS Listener] ✗ 실행 오류: {e}")
+        print(f"[PMS Listener] ✗ 실행 오류 발생")
+        print(f"[PMS Listener] 오류 타입: {type(e).__name__}")
+        print(f"[PMS Listener] 오류 메시지: {str(e)}")
+        import traceback
+        print(f"[PMS Listener] 상세 정보:\n{traceback.format_exc()}")
         return False
 
 # ===================================================================
