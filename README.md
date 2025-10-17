@@ -29,27 +29,37 @@ Continue building your app on:
 3. Changes are automatically pushed to this repository
 4. Vercel deploys the latest version from this repository
 
-## PMS Integration Setup
+---
 
-### 1. Google Sheets 설정
+## PMS Integration
 
-PMS Queue 시트를 자동으로 생성하려면:
+This kiosk integrates with local PMS (Property Management System) software using Firebase Realtime Database for real-time check-in automation.
 
-\`\`\`bash
-npm run setup:pms-queue
-\`\`\`
+### Quick Setup
 
-이 명령어는 Google Sheets에 "PMS Queue" 시트를 생성하고 필요한 헤더를 설정합니다.
+1. **Firebase Setup** (5 minutes)
+   - Create Firebase project with Realtime Database
+   - Download service account key
+   - See [docs/FIREBASE_SETUP.md](docs/FIREBASE_SETUP.md)
 
-### 2. 로컬 PMS 연동
+2. **Environment Variables**
+   - Add Firebase credentials to Vercel (Vars section in v0)
+   - See [.env.example](.env.example)
 
-로컬 PMS 컴퓨터에서 실행할 Python 스크립트는 `scripts/pms_listener.py`에 있습니다.
+3. **Local PMS Listener**
+   - Install Python and Firebase Admin SDK
+   - Run `python scripts/pms_firebase_listener.py`
+   - See [docs/QUICK_START.md](docs/QUICK_START.md)
 
-자세한 설정 방법은 [PMS Integration Guide](docs/PMS_INTEGRATION.md)를 참고하세요.
+### Features
 
-### 3. API 엔드포인트
+- ✅ Real-time check-in notifications (no polling)
+- ✅ Automatic PMS room status updates via AutoHotkey
+- ✅ No API rate limits
+- ✅ Free Firebase tier sufficient for small properties
 
-- `GET /api/pms-queue` - 대기 중인 체크인 조회
-- `POST /api/pms-queue/complete` - 처리 완료 표시
+### Documentation
 
-API 인증은 `Authorization: Bearer YOUR_API_KEY` 헤더를 사용합니다.
+- [Quick Start Guide](docs/QUICK_START.md) - Get started in 15 minutes
+- [Firebase Setup](docs/FIREBASE_SETUP.md) - Detailed Firebase configuration
+- [PMS Integration](docs/PMS_INTEGRATION.md) - Architecture and troubleshooting

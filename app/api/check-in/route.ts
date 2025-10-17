@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { headers } from "next/headers"
 import { createSheetsClient, SHEET_COLUMNS, getRoomInfoFromStatus } from "@/lib/google-sheets"
+import { addToPMSQueue } from "@/lib/firebase-admin"
 
 // API Key for authentication
 const API_KEY = process.env.API_KEY || ""
@@ -117,6 +118,18 @@ export async function POST(request: NextRequest) {
     })
 
     try {
+      await addToPMSQueue({
+        roomNumber,
+        guestName,
+        checkInDate,
+      })
+      console.log("[v0] Added to Firebase PMS Queue:", { roomNumber, guestName })
+    } catch (firebaseError) {
+      console.error("[v0] Failed to add to Firebase PMS Queue:", firebaseError)
+      // Firebase 추가 실패해도 체크인은 계속 진행
+    }
+
+    try {
       await sheets.spreadsheets.values.append({
         spreadsheetId,
         range: "PMS Queue!A:G",
@@ -135,9 +148,9 @@ export async function POST(request: NextRequest) {
           ],
         },
       })
-      console.log("[v0] Added to PMS Queue:", { roomNumber, guestName })
+      console.log("[v0] Added to Google Sheets PMS Queue:", { roomNumber, guestName })
     } catch (pmsError) {
-      console.error("[v0] Failed to add to PMS Queue:", pmsError)
+      console.error("[v0] Failed to add to Google Sheets PMS Queue:", pmsError)
       // PMS Queue 추가 실패해도 체크인은 계속 진행
     }
 
