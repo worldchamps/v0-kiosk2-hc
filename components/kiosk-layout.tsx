@@ -10,7 +10,6 @@ import ReservationDetails from "@/components/reservation-details"
 import CheckInComplete from "@/components/check-in-complete"
 import ReservationNotFound from "@/components/reservation-not-found"
 import ReservationList from "@/components/reservation-list"
-import { getCurrentDateKST } from "@/lib/date-utils"
 import { type KioskLocation, getKioskLocation } from "@/lib/location-utils"
 import { useRouter } from "next/navigation"
 import AdminKeypad from "@/components/admin-keypad"
@@ -32,7 +31,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     password: "",
     floor: "",
   })
-  const [debugInfo, setDebugInfo] = useState(null)
   const [showAdminKeypad, setShowAdminKeypad] = useState(false)
   const [kioskLocation, setKioskLocation] = useState<KioskLocation>("A")
   const router = useRouter()
@@ -45,12 +43,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   }, [])
 
   useEffect(() => {
-    if (debugInfo) {
-      console.log("Debug Info:", debugInfo)
-    }
-  }, [debugInfo])
-
-  useEffect(() => {
     document.body.classList.add("kiosk-mode")
     return () => {
       document.body.classList.remove("kiosk-mode")
@@ -60,10 +52,8 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
 
   useEffect(() => {
     if (currentScreen === "standby") {
-      console.log("Resuming BGM (screen changed to standby)")
       resumeBGM()
     } else {
-      console.log("Pausing BGM (screen changed from standby)")
       pauseBGM()
     }
   }, [currentScreen])
@@ -90,19 +80,15 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   }
 
   const handleModeChangeClick = () => {
-    console.log("관리자 버튼 클릭됨!")
     setShowAdminKeypad(true)
-    console.log("showAdminKeypad 상태:", true)
   }
 
   const handlePasswordConfirm = (password: string) => {
-    console.log("비밀번호 확인됨:", password)
     setShowAdminKeypad(false)
     onChangeMode()
   }
 
   const handleAdminKeypadClose = () => {
-    console.log("관리자 키패드 닫기")
     setShowAdminKeypad(false)
   }
 
@@ -111,11 +97,8 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
 
     setLoading(true)
     setError("")
-    setDebugInfo(null)
 
     try {
-      console.log(`Checking reservation for: ${name}, today: ${getCurrentDateKST()}`)
-
       const response = await fetch(`/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false`, {
         method: "GET",
       })
@@ -125,24 +108,17 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       }
 
       const data = await response.json()
-      setDebugInfo(data.debug || null)
-
-      console.log("API Response:", data)
 
       if (data.reservations && data.reservations.length > 0) {
         if (data.reservations.length > 1) {
-          console.log(`Found ${data.reservations.length} reservations for ${name}`)
           setReservationsList(data.reservations)
           setCurrentScreen("reservationList")
         } else {
           const reservation = data.reservations[0]
-          console.log("Found reservation:", reservation)
           setReservationData(reservation)
           setCurrentScreen("reservationDetails")
         }
       } else {
-        const today = getCurrentDateKST()
-        console.log(`No reservation found for ${name} on ${today}`)
         setCurrentScreen("reservationNotFound")
       }
     } catch (err) {
@@ -161,8 +137,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     setError("")
 
     try {
-      console.log(`Checking in reservation: ${reservationData.reservationId}`)
-
       const response = await fetch("/api/check-in", {
         method: "POST",
         headers: {
@@ -178,19 +152,12 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       }
 
       const data = await response.json()
-      console.log("Check-in response:", data)
 
       if (data.data) {
         setRevealedInfo({
           roomNumber: data.data.roomNumber || "",
           password: data.data.password || "",
           floor: data.data.floor || "",
-        })
-
-        console.log("Revealed info:", {
-          roomNumber: data.data.roomNumber,
-          password: data.data.password,
-          floor: data.data.floor,
         })
       }
 
@@ -204,14 +171,9 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   }
 
   const handleSelectReservation = (reservation) => {
-    console.log("Selected reservation:", reservation)
     setReservationData(reservation)
     setCurrentScreen("reservationDetails")
   }
-
-  useEffect(() => {
-    console.log("showAdminKeypad 상태 변경:", showAdminKeypad)
-  }, [showAdminKeypad])
 
   return (
     <div className="w-full h-full bg-[#fefef7] overflow-hidden kiosk-mode relative">
@@ -299,12 +261,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             onConfirm={handlePasswordConfirm}
             adminPassword={adminPassword}
           />
-        </div>
-      )}
-
-      {process.env.NODE_ENV === "development" && (
-        <div className="fixed top-4 left-4 bg-black text-white p-2 rounded text-xs z-40">
-          Admin Keypad: {showAdminKeypad ? "OPEN" : "CLOSED"}
         </div>
       )}
     </div>

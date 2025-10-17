@@ -129,31 +129,6 @@ export async function POST(request: NextRequest) {
       // Firebase 추가 실패해도 체크인은 계속 진행
     }
 
-    try {
-      await sheets.spreadsheets.values.append({
-        spreadsheetId,
-        range: "PMS Queue!A:G",
-        valueInputOption: "USER_ENTERED",
-        requestBody: {
-          values: [
-            [
-              `PMS-${Date.now()}`, // ID
-              roomNumber, // 객실 번호
-              guestName, // 투숙객명
-              checkInDate, // 체크인 날짜
-              "pending", // 상태
-              checkInTime, // 생성 시간
-              "", // 완료 시간 (빈값)
-            ],
-          ],
-        },
-      })
-      console.log("[v0] Added to Google Sheets PMS Queue:", { roomNumber, guestName })
-    } catch (pmsError) {
-      console.error("[v0] Failed to add to Google Sheets PMS Queue:", pmsError)
-      // PMS Queue 추가 실패해도 체크인은 계속 진행
-    }
-
     return NextResponse.json({
       success: true,
       message: "Check-in completed successfully",

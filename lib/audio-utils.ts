@@ -85,7 +85,7 @@ export function playBuildingGuide(buildingType: string): void {
       playAudio("BUILDING_CAMP_GUIDE")
       break
     default:
-      console.warn(`알 수 없는 건물 타입: ${buildingType}`)
+      console.error(`알 수 없는 건물 타입: ${buildingType}`)
       break
   }
 }
