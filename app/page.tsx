@@ -28,8 +28,11 @@ export default function Home() {
         return
       }
     } else if (mode === "web") {
-      // 웹모드로 이동
-      router.push("/web")
+      setAppMode("web")
+      if (typeof window !== "undefined") {
+        localStorage.setItem("appMode", "web")
+      }
+      setIsLoading(false)
       return
     }
 
