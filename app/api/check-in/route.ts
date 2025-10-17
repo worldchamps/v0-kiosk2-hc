@@ -74,6 +74,8 @@ export async function POST(request: NextRequest) {
 
     const reservationData = reservationResponse.data.values?.[0] || []
     const roomNumber = reservationData[SHEET_COLUMNS.ROOM_NUMBER] || ""
+    const guestName = reservationData[SHEET_COLUMNS.GUEST_NAME] || ""
+    const checkInDate = reservationData[SHEET_COLUMNS.CHECK_IN_DATE] || ""
 
     // Beach Room Status 시트에서 객실 정보 조회
     const roomInfo = await getRoomInfoFromStatus(spreadsheetId, roomNumber)
@@ -113,6 +115,31 @@ export async function POST(request: NextRequest) {
         values: [[checkInTime]],
       },
     })
+
+    try {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range: "PMS Queue!A:G",
+        valueInputOption: "USER_ENTERED",
+        requestBody: {
+          values: [
+            [
+              `PMS-${Date.now()}`, // ID
+              roomNumber, // 객실 번호
+              guestName, // 투숙객명
+              checkInDate, // 체크인 날짜
+              "pending", // 상태
+              checkInTime, // 생성 시간
+              "", // 완료 시간 (빈값)
+            ],
+          ],
+        },
+      })
+      console.log("[v0] Added to PMS Queue:", { roomNumber, guestName })
+    } catch (pmsError) {
+      console.error("[v0] Failed to add to PMS Queue:", pmsError)
+      // PMS Queue 추가 실패해도 체크인은 계속 진행
+    }
 
     return NextResponse.json({
       success: true,

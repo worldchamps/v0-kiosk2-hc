@@ -31,6 +31,19 @@ export const BEACH_ROOM_STATUS_COLUMNS = {
 }
 
 /**
+ * PMS Queue 시트 열 인덱스 정의
+ */
+export const PMS_QUEUE_COLUMNS = {
+  ID: 0, // A열: 고유 ID
+  ROOM_NUMBER: 1, // B열: 객실 번호
+  GUEST_NAME: 2, // C열: 투숙객명
+  CHECK_IN_DATE: 3, // D열: 체크인 날짜
+  STATUS: 4, // E열: 상태 (pending/completed)
+  CREATED_AT: 5, // F열: 생성 시간
+  COMPLETED_AT: 6, // G열: 완료 시간
+}
+
+/**
  * 개인 키를 올바른 형식으로 변환하는 함수
  */
 export function formatPrivateKey(key: string): string {
