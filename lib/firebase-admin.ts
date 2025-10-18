@@ -53,6 +53,7 @@ export async function addToPMSQueue(data: {
 
   await newRef.set({
     id: newRef.key,
+    action: "checkin", // Added action field for standardization
     roomNumber: data.roomNumber,
     guestName: data.guestName,
     checkInDate: data.checkInDate,

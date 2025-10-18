@@ -14,6 +14,7 @@ import { type KioskLocation, getKioskLocation } from "@/lib/location-utils"
 import { useRouter } from "next/navigation"
 import AdminKeypad from "@/components/admin-keypad"
 import { stopAllAudio, pauseBGM, resumeBGM } from "@/lib/audio-utils"
+import { PrintQueueListener } from "@/components/print-queue-listener"
 
 interface KioskLayoutProps {
   onChangeMode: () => void
@@ -263,6 +264,8 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
           />
         </div>
       )}
+
+      <PrintQueueListener />
     </div>
   )
 }

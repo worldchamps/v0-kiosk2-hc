@@ -57,9 +57,36 @@ This kiosk integrates with local PMS (Property Management System) software using
 - ✅ Automatic PMS room status updates via AutoHotkey
 - ✅ No API rate limits
 - ✅ Free Firebase tier sufficient for small properties
+- ✅ **Remote printing from external web apps**
 
 ### Documentation
 
 - [Quick Start Guide](docs/QUICK_START.md) - Get started in 15 minutes
 - [Firebase Setup](docs/FIREBASE_SETUP.md) - Detailed Firebase configuration
 - [PMS Integration](docs/PMS_INTEGRATION.md) - Architecture and troubleshooting
+- [Remote Printing](docs/REMOTE_PRINTING.md) - Print room info from other apps
+
+---
+
+## Remote Printing API
+
+Send print jobs to kiosk printers from any external web application.
+
+### Quick Example
+
+\`\`\`bash
+curl -X POST https://your-kiosk-app.vercel.app/api/remote-print \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"roomNumber":"A101","password":"1234"}'
+\`\`\`
+
+### Features
+
+- 🖨️ Print room number and password remotely
+- 🔒 Secure API key authentication
+- 🔥 Real-time Firebase synchronization
+- 🏨 Automatic property routing (A/B → property3, CAMP → property4)
+- 🚫 No guest names printed (privacy protection)
+
+See [docs/REMOTE_PRINTING.md](docs/REMOTE_PRINTING.md) for complete documentation.

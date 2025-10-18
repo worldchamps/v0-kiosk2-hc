@@ -8,7 +8,7 @@ import WebLayout from "@/components/web-layout"
 import { saveKioskLocation } from "@/lib/location-utils"
 
 function HomeContent() {
-  const [appMode, setAppMode] = useState<"kiosk" | "web" | null>(null)
+  const [appMode, setAppMode] = useState<"kiosk" | "web" | null>("kiosk")
   const [isLoading, setIsLoading] = useState(true)
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -36,6 +36,10 @@ function HomeContent() {
       const savedMode = localStorage.getItem("appMode") as "kiosk" | "web" | null
       if (savedMode) {
         setAppMode(savedMode)
+      } else {
+        // Default to kiosk mode
+        setAppMode("kiosk")
+        localStorage.setItem("appMode", "kiosk")
       }
       setIsLoading(false)
     }
