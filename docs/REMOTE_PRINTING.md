@@ -84,6 +84,7 @@ async function printRoomInfo(roomNumber: string, password: string) {
 
 // 사용 예시
 await printRoomInfo('A101', '1234')
+await printRoomInfo('Camp 513', '5678')
 \`\`\`
 
 ### Python
@@ -112,6 +113,7 @@ def print_room_info(room_number: str, password: str):
 
 # 사용 예시
 print_room_info('A101', '1234')
+print_room_info('Camp 513', '5678')
 \`\`\`
 
 ### cURL
@@ -142,7 +144,7 @@ print_queue/
 │       ├── createdAt: ISO timestamp
 │       └── completedAt: ISO timestamp | null
 │
-└── property4/          (CAMP ### 호실)
+└── property4/          (Camp ### 호실)
     └── {auto-id}/
         └── (동일한 구조)
 \`\`\`
@@ -192,7 +194,9 @@ print_queue/
 |----------|----------|------|
 | A### | property3 | A101, A205 |
 | B### | property3 | B301, B412 |
-| CAMP ### | property4 | CAMP 101, CAMP 205 |
+| Camp + 숫자 | property4 | Camp 5, Camp 101, Camp 513 |
+
+**중요**: Camp 호실은 이제 1자리 이상의 모든 숫자를 지원합니다 (Camp 5, Camp 513 등).
 
 ---
 
@@ -268,8 +272,22 @@ Firebase Console → Realtime Database → `print_queue/property3` 확인
 
 ### 잘못된 property로 라우팅
 
-- 호실 번호 형식 확인 (A101, B205, CAMP 101)
+- 호실 번호 형식 확인 (A101, B205, Camp 101, Camp 513)
 - `getPropertyFromRoomNumber()` 함수 로직 확인
+
+### Camp 호실 체크인 실패
+
+**증상**: "Camp 513" 같은 호실이 처리되지 않음
+
+**원인**: 이전 버전에서는 3자리 숫자만 허용 (`Camp ###`)
+
+**해결**: 
+1. Python 리스너 스크립트 업데이트 (이미 완료)
+2. 리스너 재시작:
+   \`\`\`bash
+   # Property 4 리스너 재시작
+   python C:\PMS\Property4\pms_firebase_listener_property4.py
+   \`\`\`
 
 ---
 
@@ -288,6 +306,3 @@ Firebase Console → Realtime Database → `print_queue/property3` 확인
 - [ ] 프린트 히스토리 로깅
 - [ ] 여러 키오스크 동시 관리
 - [ ] 프린트 상태 실시간 모니터링 대시보드
-\`\`\`
-
-```json file="" isHidden

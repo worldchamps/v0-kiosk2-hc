@@ -26,8 +26,7 @@ export function getPropertyFromRoomNumber(roomNumber: string): string {
     return "property3"
   }
 
-  // Property 4: Camp ### 형식 (예: Camp 101, CAMP 205)
-  if (upperRoom.match(/^CAMP\s*\d{3}$/i)) {
+  if (upperRoom.match(/^CAMP\s*\d+$/i)) {
     return "property4"
   }
 
