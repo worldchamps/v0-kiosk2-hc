@@ -21,16 +21,12 @@ export const db = initFirebase()
 export function getPropertyFromRoomNumber(roomNumber: string): string {
   const upperRoom = roomNumber.toUpperCase().trim()
 
-  console.log("[v0] Routing room number:", roomNumber, "→", upperRoom)
-
   // Property 3: A### 또는 B### 형식
   if (upperRoom.match(/^[AB]\d{3}$/)) {
-    console.log("[v0] Matched property3 (A/B rooms)")
     return "property3"
   }
 
-  if (upperRoom.match(/^CAMP\s*\d+$/i)) {
-    console.log("[v0] Matched property4 (Camp rooms)")
+  if (upperRoom.match(/^Camp*\d+$/i)) {
     return "property4"
   }
 
@@ -39,7 +35,6 @@ export function getPropertyFromRoomNumber(roomNumber: string): string {
   // Kariv ### → Property 2 (독립 PMS)
 
   // 기본값: property3 (기존 동작 유지)
-  console.log("[v0] No match, defaulting to property3")
   return "property3"
 }
 
@@ -48,37 +43,26 @@ export async function addToPMSQueue(data: {
   guestName: string
   checkInDate: string
 }) {
+  // 호실 번호로 속성 결정
   const property = getPropertyFromRoomNumber(data.roomNumber)
-
-  console.log("[v0] Firebase Queue Data:", {
-    roomNumber: data.roomNumber,
-    guestName: data.guestName,
-    checkInDate: data.checkInDate,
-    property: property,
-  })
 
   // 속성별 경로에 데이터 저장
   const ref = db.ref(`pms_queue/${property}`)
   const newRef = ref.push()
 
-  const queueData = {
+  await newRef.set({
     id: newRef.key,
-    action: "checkin",
-    roomNumber: data.roomNumber, // 원본 객실 번호 사용 (공백 유지)
+    action: "checkin", // Added action field for standardization
+    roomNumber: data.roomNumber,
     guestName: data.guestName,
     checkInDate: data.checkInDate,
     status: "pending",
     property: property,
     createdAt: new Date().toISOString(),
     completedAt: null,
-  }
+  })
 
-  console.log("[v0] Writing to Firebase path:", `pms_queue/${property}/${newRef.key}`)
-  console.log("[v0] Queue data:", JSON.stringify(queueData, null, 2))
-
-  await newRef.set(queueData)
-
-  console.log(`[v0] Successfully added to ${property} queue:`, data.roomNumber)
+  console.log(`[Firebase] Added to ${property} queue:`, data.roomNumber)
   return newRef.key
 }
 

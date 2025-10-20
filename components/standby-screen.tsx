@@ -99,14 +99,13 @@ export default function StandbyScreen({ onNavigate, kioskLocation }: StandbyScre
             <Image src="/location-pin-icon.png" alt="Location" width={80} height={80} className="kiosk-icon" />
           </button>
 
-          {/* On-site Reservation Button */}
           <button className="kiosk-card" onClick={() => onNavigate("onSiteReservation")}>
             <div>
               <h2>현장예약</h2>
               <p>
-                현장 예약은 현재 지원 불가
+                예약 가능한 객실 확인
                 <br />
-                010-5126-4644 로 연락 부탁합니다.
+                즉시 예약 가능합니다
               </p>
             </div>
             <Image src="/desk-icon.png" alt="Desk" width={80} height={80} className="kiosk-icon" />
