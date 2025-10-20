@@ -48,7 +48,6 @@ export async function addToPMSQueue(data: {
   guestName: string
   checkInDate: string
 }) {
-  // 호실 번호로 속성 결정
   const property = getPropertyFromRoomNumber(data.roomNumber)
 
   console.log("[v0] Firebase Queue Data:", {
@@ -64,8 +63,8 @@ export async function addToPMSQueue(data: {
 
   const queueData = {
     id: newRef.key,
-    action: "checkin", // Added action field for standardization
-    roomNumber: data.roomNumber,
+    action: "checkin",
+    roomNumber: data.roomNumber, // 원본 객실 번호 사용 (공백 유지)
     guestName: data.guestName,
     checkInDate: data.checkInDate,
     status: "pending",
