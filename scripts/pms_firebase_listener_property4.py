@@ -19,7 +19,7 @@ PROPERTY_DISPLAY_NAME = "Property 4 (Camp 동)"
 
 # 이 속성에서 처리할 호실 패턴
 ROOM_PATTERNS = [
-    r'^CAMP\s*\d+$',    # Camp + 1자리 이상 숫자 (예: Camp 5, Camp 101, Camp 513)
+    r'^CAMP\s*\d{3}$',    # Camp ### (예: Camp 101, CAMP 205)
 ]
 
 def clean_path(path_str):

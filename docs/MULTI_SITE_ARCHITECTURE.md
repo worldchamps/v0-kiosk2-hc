@@ -60,7 +60,7 @@
 - **설정 디렉토리**: `C:\PMS\Property3\`
 
 ### Property 4
-- **호실 형식**: Camp ### (예: Camp 5, Camp 101, Camp 513)
+- **호실 형식**: Camp ### (예: Camp 101, Camp 205)
 - **Firebase 경로**: `pms_queue/property4/`
 - **리스너 스크립트**: `pms_firebase_listener_property4.py`
 - **설정 디렉토리**: `C:\PMS\Property4\`
@@ -81,7 +81,8 @@ export function getPropertyFromRoomNumber(roomNumber: string): string {
     return "property3"
   }
   
-  if (upperRoom.match(/^CAMP\s*\d+$/i)) {
+  // Property 4: Camp ###
+  if (upperRoom.match(/^CAMP\s*\d{3}$/i)) {
     return "property4"
   }
   
@@ -98,9 +99,7 @@ export function getPropertyFromRoomNumber(roomNumber: string): string {
 | Kariv 101| Property 2 | - | 독립 PMS |
 | A101     | property3  | pms_queue/property3/ | Firebase |
 | B521     | property3  | pms_queue/property3/ | Firebase |
-| Camp 5   | property4  | pms_queue/property4/ | Firebase |
 | Camp 101 | property4  | pms_queue/property4/ | Firebase |
-| Camp 513 | property4  | pms_queue/property4/ | Firebase |
 | CAMP 205 | property4  | pms_queue/property4/ | Firebase |
 
 ## 설치 및 설정
@@ -194,8 +193,8 @@ Firebase Console에서 실시간 데이터 확인:
 2. **호실 번호 형식 확인**
    - 로그에서 "이 속성에서 처리할 수 없는 호실" 메시지 확인
    - 호실 번호가 올바른 형식인지 검증
-   - Property 3: A### 또는 B### (정확히 3자리)
-   - Property 4: Camp + 숫자 (1자리 이상)
+   - Property 3: A### 또는 B###
+   - Property 4: Camp ###
 
 3. **Firebase 경로 확인**
    - Firebase Console에서 데이터가 올바른 경로에 저장되는지 확인
