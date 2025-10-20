@@ -17,8 +17,9 @@ interface AvailableRoom {
   roomNumber: string
   roomType: string
   status: string
-  price: string
+  password: string
   floor: string
+  roomCode: string
 }
 
 type BookingStep = "roomType" | "roomSelect" | "guestInfo" | "confirmation" | "complete"
@@ -98,11 +99,12 @@ export default function OnSiteReservation({ onNavigate }: OnSiteReservationProps
           guestName,
           phoneNumber,
           roomNumber: selectedRoom.roomNumber,
+          roomCode: selectedRoom.roomCode,
           roomType: selectedRoom.roomType,
-          price: selectedRoom.price,
+          price: "가격 미정", // Price will be determined by staff
           checkInDate,
           checkOutDate,
-          password: "", // Will be assigned later
+          password: selectedRoom.password,
         }),
       })
 
@@ -179,7 +181,6 @@ export default function OnSiteReservation({ onNavigate }: OnSiteReservationProps
               {availableRoomTypes.map((roomType) => {
                 const rooms = roomsByType[roomType]
                 const availableCount = rooms.length
-                const sampleRoom = rooms[0]
 
                 return (
                   <Card
@@ -192,7 +193,6 @@ export default function OnSiteReservation({ onNavigate }: OnSiteReservationProps
                         <div>
                           <p className="font-bold text-2xl mb-2">{roomType}</p>
                           <p className="text-xl text-gray-600">예약 가능: {availableCount}개</p>
-                          <p className="text-2xl font-bold text-blue-600 mt-2">{sampleRoom.price}원</p>
                         </div>
                         <div className="text-right">
                           <Button size="lg" className="text-xl">
@@ -235,7 +235,7 @@ export default function OnSiteReservation({ onNavigate }: OnSiteReservationProps
             <div className="grid grid-cols-2 gap-6 w-full mb-10">
               {rooms.map((room) => (
                 <Card
-                  key={room.roomNumber}
+                  key={room.roomCode}
                   className="overflow-hidden shadow-md cursor-pointer hover:shadow-lg transition-shadow"
                   onClick={() => handleRoomSelect(room)}
                 >
@@ -243,7 +243,6 @@ export default function OnSiteReservation({ onNavigate }: OnSiteReservationProps
                     <p className="font-bold text-3xl mb-2">{room.roomNumber}</p>
                     <p className="text-xl text-gray-600">{room.building}</p>
                     <p className="text-xl text-gray-600">{room.floor}층</p>
-                    <p className="text-2xl font-bold text-blue-600 mt-2">{room.price}원</p>
                   </CardContent>
                 </Card>
               ))}
@@ -284,7 +283,7 @@ export default function OnSiteReservation({ onNavigate }: OnSiteReservationProps
                     <span className="font-semibold">객실 타입:</span> {selectedRoom.roomType}
                   </p>
                   <p className="text-xl">
-                    <span className="font-semibold">가격:</span> {selectedRoom.price}원
+                    <span className="font-semibold">건물:</span> {selectedRoom.building}
                   </p>
                 </div>
               </CardContent>

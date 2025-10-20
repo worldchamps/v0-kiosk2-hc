@@ -5,10 +5,10 @@ import { createSheetsClient } from "@/lib/google-sheets"
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { guestName, phoneNumber, roomNumber, roomType, price, checkInDate, checkOutDate, password } = body
+    const { guestName, phoneNumber, roomNumber, roomCode, roomType, price, checkInDate, checkOutDate, password } = body
 
     // Validate required fields
-    if (!guestName || !phoneNumber || !roomNumber || !checkInDate || !checkOutDate) {
+    if (!guestName || !phoneNumber || !roomNumber || !roomCode || !checkInDate || !checkOutDate) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
@@ -50,23 +50,23 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // Update room status in Beach Room Status sheet to "예약"
     const statusResponse = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "Beach Room Status!A2:F",
+      range: "Beach Room Status!A2:G",
     })
 
     const statusRows = statusResponse.data.values
     if (statusRows) {
       for (let i = 0; i < statusRows.length; i++) {
-        if (statusRows[i][1] === roomNumber) {
-          // Update status column (column D, index 3)
+        // Match by roomCode (G열, index 6) for accurate identification
+        if (statusRows[i][6] === roomCode) {
+          // Update status column E (index 4 in 0-based, row i+2 in sheet)
           await sheets.spreadsheets.values.update({
             spreadsheetId,
-            range: `Beach Room Status!D${i + 2}`,
+            range: `Beach Room Status!E${i + 2}`,
             valueInputOption: "USER_ENTERED",
             requestBody: {
-              values: [["예약"]],
+              values: [["사용 중"]],
             },
           })
           break
