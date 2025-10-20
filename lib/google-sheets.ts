@@ -163,3 +163,52 @@ export async function getRoomInfoFromStatus(spreadsheetId: string, roomNumber: s
     return null
   }
 }
+
+/**
+ * Beach Room Status 시트의 객실 상태 업데이트
+ */
+export async function updateRoomStatus(spreadsheetId: string, roomNumber: string, status: string) {
+  try {
+    const sheets = createSheetsClient()
+
+    // Beach Room Status 시트에서 모든 데이터 가져오기
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: "Beach Room Status!A2:G",
+    })
+
+    const rows = response.data.values
+    if (!rows || rows.length === 0) {
+      throw new Error("No data found in Beach Room Status sheet")
+    }
+
+    // 객실 호수와 매칭되는 행 찾기 (B열, index 1)
+    let rowIndex = -1
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i][1] === roomNumber) {
+        rowIndex = i + 2 // +2 because we start at A2 (1-indexed)
+        break
+      }
+    }
+
+    if (rowIndex === -1) {
+      throw new Error(`Room ${roomNumber} not found in Beach Room Status sheet`)
+    }
+
+    // 상태 열(D열) 업데이트
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `Beach Room Status!D${rowIndex}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [[status]],
+      },
+    })
+
+    console.log(`[Google Sheets] Updated room ${roomNumber} status to ${status}`)
+    return { success: true, roomNumber, status, rowIndex }
+  } catch (error) {
+    console.error("Error updating room status in Beach Room Status:", error)
+    throw error
+  }
+}
