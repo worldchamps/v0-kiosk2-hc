@@ -21,12 +21,16 @@ export const db = initFirebase()
 export function getPropertyFromRoomNumber(roomNumber: string): string {
   const upperRoom = roomNumber.toUpperCase().trim()
 
+  console.log("[v0] Routing room number:", roomNumber, "→", upperRoom)
+
   // Property 3: A### 또는 B### 형식
   if (upperRoom.match(/^[AB]\d{3}$/)) {
+    console.log("[v0] Matched property3 (A/B rooms)")
     return "property3"
   }
 
   if (upperRoom.match(/^CAMP\s*\d+$/i)) {
+    console.log("[v0] Matched property4 (Camp rooms)")
     return "property4"
   }
 
@@ -35,6 +39,7 @@ export function getPropertyFromRoomNumber(roomNumber: string): string {
   // Kariv ### → Property 2 (독립 PMS)
 
   // 기본값: property3 (기존 동작 유지)
+  console.log("[v0] No match, defaulting to property3")
   return "property3"
 }
 
