@@ -51,11 +51,18 @@ export async function addToPMSQueue(data: {
   // 호실 번호로 속성 결정
   const property = getPropertyFromRoomNumber(data.roomNumber)
 
+  console.log("[v0] Firebase Queue Data:", {
+    roomNumber: data.roomNumber,
+    guestName: data.guestName,
+    checkInDate: data.checkInDate,
+    property: property,
+  })
+
   // 속성별 경로에 데이터 저장
   const ref = db.ref(`pms_queue/${property}`)
   const newRef = ref.push()
 
-  await newRef.set({
+  const queueData = {
     id: newRef.key,
     action: "checkin", // Added action field for standardization
     roomNumber: data.roomNumber,
@@ -65,9 +72,14 @@ export async function addToPMSQueue(data: {
     property: property,
     createdAt: new Date().toISOString(),
     completedAt: null,
-  })
+  }
 
-  console.log(`[Firebase] Added to ${property} queue:`, data.roomNumber)
+  console.log("[v0] Writing to Firebase path:", `pms_queue/${property}/${newRef.key}`)
+  console.log("[v0] Queue data:", JSON.stringify(queueData, null, 2))
+
+  await newRef.set(queueData)
+
+  console.log(`[v0] Successfully added to ${property} queue:`, data.roomNumber)
   return newRef.key
 }
 

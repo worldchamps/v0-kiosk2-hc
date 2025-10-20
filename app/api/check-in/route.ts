@@ -118,14 +118,21 @@ export async function POST(request: NextRequest) {
     })
 
     try {
-      await addToPMSQueue({
+      console.log("[v0] Attempting to add to PMS Queue:", { roomNumber, guestName, checkInDate })
+
+      const queueId = await addToPMSQueue({
         roomNumber,
         guestName,
         checkInDate,
       })
-      console.log("[v0] Added to Firebase PMS Queue:", { roomNumber, guestName })
+
+      console.log("[v0] Successfully added to Firebase PMS Queue with ID:", queueId)
     } catch (firebaseError) {
       console.error("[v0] Failed to add to Firebase PMS Queue:", firebaseError)
+      console.error("[v0] Error details:", {
+        message: (firebaseError as Error).message,
+        stack: (firebaseError as Error).stack,
+      })
       // Firebase 추가 실패해도 체크인은 계속 진행
     }
 
