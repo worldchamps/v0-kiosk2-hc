@@ -58,7 +58,6 @@ This kiosk integrates with local PMS (Property Management System) software using
 - ✅ No API rate limits
 - ✅ Free Firebase tier sufficient for small properties
 - ✅ **Remote printing from external web apps**
-- ✅ **Room status sync with BeachRoomStatus spreadsheet**
 
 ### Documentation
 
@@ -66,7 +65,6 @@ This kiosk integrates with local PMS (Property Management System) software using
 - [Firebase Setup](docs/FIREBASE_SETUP.md) - Detailed Firebase configuration
 - [PMS Integration](docs/PMS_INTEGRATION.md) - Architecture and troubleshooting
 - [Remote Printing](docs/REMOTE_PRINTING.md) - Print room info from other apps
-- [Room Status Sync](docs/ROOM_STATUS_SYNC.md) - Sync room status with BeachRoomStatus
 
 ---
 
@@ -92,35 +90,3 @@ curl -X POST https://your-kiosk-app.vercel.app/api/remote-print \
 - 🚫 No guest names printed (privacy protection)
 
 See [docs/REMOTE_PRINTING.md](docs/REMOTE_PRINTING.md) for complete documentation.
-
----
-
-## Room Status Update API
-
-Update room status in BeachRoomStatus spreadsheet from your PMS web app.
-
-### Quick Example
-
-\`\`\`bash
-curl -X POST https://your-kiosk-app.vercel.app/api/room-status/update \
-  -H "x-api-key: YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"roomNumber":"A101","status":"occupied"}'
-\`\`\`
-
-### Features
-
-- 📊 Update BeachRoomStatus spreadsheet in real-time
-- 🔄 Sync room status: vacant, occupied, cleaning, maintenance
-- 🔒 Secure API key authentication
-- 🏨 Works with all properties (A/B/CAMP rooms)
-- ✅ Automatic row detection and update
-
-### Use Cases
-
-- **Check-in**: Update status to "occupied"
-- **Check-out**: Update status to "cleaning"
-- **Cleaning complete**: Update status to "vacant"
-- **Maintenance**: Update status to "maintenance"
-
-See [docs/ROOM_STATUS_SYNC.md](docs/ROOM_STATUS_SYNC.md) for complete documentation.
