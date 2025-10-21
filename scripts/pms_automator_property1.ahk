@@ -2,10 +2,10 @@
 #Persistent
 
 ; ===============================================================
-; 설정: 파일 경로
+; 설정: 파일 경로 (Property1)
 ; ===============================================================
-TriggerFile := "C:\PMS\Property2\trigger.txt"
-LogFile := "C:\PMS\Property2\ahk_log.txt"
+TriggerFile := "C:\PMS\Property1\trigger.txt"
+LogFile := "C:\PMS\Property1\ahk_log.txt"
 
 ; ===============================================================
 ; 로그 함수
@@ -19,8 +19,8 @@ Log(message) {
 }
 
 ; 시작 로그 및 알림
-FileAppend, ========== AHK 스크립트 시작 ==========`n, %LogFile%
-TrayTip, Property2 PMS Automator, 스크립트가 시작되었습니다.`n트리거 파일 대기 중..., 3, 1
+FileAppend, ========== AHK 스크립트 시작 (Property1) ==========`n, %LogFile%
+TrayTip, Property1 PMS Automator, 스크립트가 시작되었습니다.`n트리거 파일 대기 중..., 3, 1
 
 ; ===============================================================
 ; 트리거 파일 모니터링 (1초마다 체크)
@@ -32,24 +32,24 @@ CheckTriggerFile:
     IfExist, %TriggerFile%
     {
         FileAppend, [트리거 감지] 매크로 실행 시작`n, %LogFile%
-        TrayTip, Property2 PMS Automator, 트리거 파일 감지!`n매크로 실행 중..., 2, 1
+        TrayTip, Property1 PMS Automator, 트리거 파일 감지!`n매크로 실행 중..., 2, 1
         
         Gosub, RunMyMacro
         
         FileDelete, %TriggerFile%
         FileAppend, [트리거 삭제] 처리 완료`n, %LogFile%
         
-        TrayTip, Property2 PMS Automator, 매크로 실행 완료!, 2, 1
+        TrayTip, Property1 PMS Automator, 매크로 실행 완료!, 2, 1
     }
 return
 
 ; ===============================================================
-; 수동 실행 핫키 (Ctrl+Alt+R) - 테스트용 202호
+; 수동 실행 핫키 (Ctrl+Alt+R) - 테스트용 C103호
 ; ===============================================================
 ^!r::
-    FileAppend, [수동 실행] Ctrl+Alt+R 눌림 (202호 테스트)`n, %LogFile%
-    TrayTip, Property2 PMS Automator, 수동 실행 시작! (202호), 2, 1
-    targetRoom := "202"
+    FileAppend, [수동 실행] Ctrl+Alt+R 눌림 (C103호 테스트)`n, %LogFile%
+    TrayTip, Property1 PMS Automator, 수동 실행 시작! (C103호), 2, 1
+    targetRoom := "C103"
     Gosub, RunMyMacro
 return
 
@@ -68,26 +68,26 @@ RunMyMacro:
         FileRead, triggerContent, %TriggerFile%
         FileAppend, [트리거 내용] %triggerContent%`n, %LogFile%
         
-        ; JSON에서 room_number 추출 (간단한 파싱)
-        ; "room_number": "Kariv 506" 형식에서 506 추출
-        if RegExMatch(triggerContent, """room_number"":\s*""Kariv\s*(\d+)""", match) {
+        ; JSON에서 room_number 추출
+        ; "room_number": "C103" 또는 "D211" 형식에서 추출
+        if RegExMatch(triggerContent, """room_number"":\s*""([CD]\d+)""", match) {
             targetRoom := match1
             FileAppend, [파싱 성공] 대상 객실: %targetRoom%`n, %LogFile%
         } else {
-            FileAppend, [파싱 실패] 기본값 202호 사용`n, %LogFile%
-            targetRoom := "202"
+            FileAppend, [파싱 실패] 기본값 C103호 사용`n, %LogFile%
+            targetRoom := "C103"
         }
     }
     
-    ; targetRoom이 설정되지 않았으면 202호 기본값
+    ; targetRoom이 설정되지 않았으면 C103호 기본값
     if (targetRoom = "") {
-        targetRoom := "202"
-        FileAppend, [기본값] 202호로 설정`n, %LogFile%
+        targetRoom := "C103"
+        FileAppend, [기본값] C103호로 설정`n, %LogFile%
     }
     
-    FileAppend, [실행 대상] Kariv %targetRoom%`n, %LogFile%
+    FileAppend, [실행 대상] %targetRoom%`n, %LogFile%
     
-    ; 네비게이션 좌표
+    ; 네비게이션 좌표 (Property2와 동일하다고 가정)
     OpenRoomListMenuX := 187
     OpenRoomListMenuY := 39
     OpenRoomListCommandX := 240
@@ -136,89 +136,39 @@ RunMyMacro:
     CoordMode, Mouse, Window
 
     ; 대상 객실만 처리
-    FileAppend, [4단계] 대상 객실 처리: Kariv %targetRoom%`n, %LogFile%
+    FileAppend, [4단계] 대상 객실 처리: %targetRoom%`n, %LogFile%
     
-    ; 객실 번호에 따른 좌표 매핑
-    if (targetRoom = "202") {
-        roomX := 55
-        roomY := 127
-    } else if (targetRoom = "203") {
-        roomX := 55
-        roomY := 150
-    } else if (targetRoom = "205") {
-        roomX := 55
-        roomY := 173
-    } else if (targetRoom = "206") {
-        roomX := 55
-        roomY := 196
-    } else if (targetRoom = "207") {
-        roomX := 55
-        roomY := 219
-    } else if (targetRoom = "208") {
-        roomX := 55
-        roomY := 242
-    } else if (targetRoom = "301") {
-        roomX := 55
-        roomY := 265
-    } else if (targetRoom = "302") {
-        roomX := 55
-        roomY := 288
-    } else if (targetRoom = "303") {
-        roomX := 55
-        roomY := 311
-    } else if (targetRoom = "305") {
-        roomX := 55
-        roomY := 334
-    } else if (targetRoom = "306") {
-        roomX := 55
-        roomY := 357
-    } else if (targetRoom = "307") {
-        roomX := 55
-        roomY := 380
-    } else if (targetRoom = "308") {
-        roomX := 55
-        roomY := 403
-    } else if (targetRoom = "501") {
-        roomX := 55
-        roomY := 426
-    } else if (targetRoom = "502") {
-        roomX := 55
-        roomY := 449
-    } else if (targetRoom = "503") {
-        roomX := 55
-        roomY := 472
-    } else if (targetRoom = "505") {
-        roomX := 55
-        roomY := 495
-    } else if (targetRoom = "506") {
-        roomX := 55
-        roomY := 518
-    } else if (targetRoom = "507") {
-        roomX := 55
-        roomY := 541
-    } else if (targetRoom = "508") {
-        roomX := 55
-        roomY := 564
-    } else if (targetRoom = "601") {
-        roomX := 55
-        roomY := 587
-    } else if (targetRoom = "602") {
-        roomX := 55
-        roomY := 610
-    } else if (targetRoom = "603") {
-        roomX := 55
-        roomY := 633
-    } else if (targetRoom = "605") {
-        roomX := 55
-        roomY := 656
-    } else {
+    ; Property1 객실 좌표 매핑 (C###, D### 형식)
+    ; 시작 좌표: 55, 127, Y좌표 23씩 증가
+    baseX := 55
+    baseY := 127
+    yIncrement := 23
+    
+    ; 객실 순서 배열
+    rooms := "C103,C105,C201,C202,C203,C205,C206,C301,C302,C303,C305,D211,D212,D213,D111,D112,D113,D115,D215,D216,D311,D312"
+    
+    ; 대상 객실의 인덱스 찾기
+    roomIndex := -1
+    Loop, Parse, rooms, `,
+    {
+        if (A_LoopField = targetRoom) {
+            roomIndex := A_Index - 1
+            break
+        }
+    }
+    
+    if (roomIndex = -1) {
         FileAppend, [오류] 알 수 없는 객실 번호: %targetRoom%`n, %LogFile%
         MsgBox, 알 수 없는 객실 번호: %targetRoom%
         return
     }
     
+    ; 좌표 계산
+    roomX := baseX
+    roomY := baseY + (roomIndex * yIncrement)
+    
     ; 대상 객실 더블 클릭
-    FileAppend, [처리중] Kariv %targetRoom% (%roomX%`, %roomY%)`n, %LogFile%
+    FileAppend, [처리중] %targetRoom% (%roomX%`, %roomY%)`n, %LogFile%
     MouseMove, %roomX%, %roomY%
     Sleep, 200
     Click, 2
