@@ -1,6 +1,5 @@
 import firebase_admin
 from firebase_admin import credentials, db
-import subprocess
 import os
 import time
 import json
@@ -14,9 +13,7 @@ FIREBASE_STATUS_PATH = f"pms_status/{PROPERTY}"
 FIREBASE_CREDENTIALS_PATH = r"C:\PMS\Property2\firebase-service-account.json"
 FIREBASE_DATABASE_URL = "https://kiosk-pms-default-rtdb.asia-southeast1.firebasedatabase.app/"
 
-AHK_SCRIPT_PATH = r"C:\PMS\Property2\pms_automator_property2.ahk"
-AHK_EXE_PATH = r"C:\Program Files\AutoHotkey\v1.1.37.02\AutoHotkeyU64.exe"
-ROOM_NUMBER_FILE = r"C:\PMS\Property2\room_number_data.tmp"
+TRIGGER_FILE = r"C:\PMS\Property2\trigger.txt"
 ROOM_STATUS_JSON = r"C:\PMS\Property2\room_status.json"
 
 LOG_FILE = r"C:\PMS\Property2\listener.log"
@@ -140,55 +137,45 @@ def execute_pms_automation(room_number, action, guest_name, queue_id):
     try:
         log(f"🔄 {action} 시작: {room_number} ({guest_name})")
         
-        if not os.path.exists(AHK_EXE_PATH):
-            log(f"❌ AutoHotkey 실행 파일 없음: {AHK_EXE_PATH}")
-            mark_as_failed(queue_id, "AutoHotkey 실행 파일 없음")
+        # 트리거 파일 생성
+        os.makedirs(os.path.dirname(TRIGGER_FILE), exist_ok=True)
+        
+        trigger_data = {
+            'room_number': room_number,
+            'action': action,
+            'guest_name': guest_name,
+            'queue_id': queue_id,
+            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        with open(TRIGGER_FILE, 'w', encoding='utf-8') as f:
+            json.dump(trigger_data, f, ensure_ascii=False, indent=2)
+        
+        log(f"✓ 트리거 파일 생성: {TRIGGER_FILE}")
+        log(f"  - 데이터: {trigger_data}")
+        
+        # AHK가 파일을 처리할 때까지 대기 (최대 60초)
+        max_wait = 60
+        wait_count = 0
+        
+        while os.path.exists(TRIGGER_FILE) and wait_count < max_wait:
+            time.sleep(1)
+            wait_count += 1
+        
+        if wait_count >= max_wait:
+            log(f"⏱️ 타임아웃: AHK가 트리거 파일을 처리하지 않음")
+            mark_as_failed(queue_id, "타임아웃")
             return False
+        
+        log(f"✅ {action} 완료: {room_number} (처리 시간: {wait_count}초)")
+        
+        # Google Sheets 업데이트
+        new_status = map_action_to_status(action)
+        update_google_sheets(room_number, new_status)
+        
+        mark_as_completed(queue_id)
+        return True
             
-        if not os.path.exists(AHK_SCRIPT_PATH):
-            log(f"❌ AutoHotkey 스크립트 없음: {AHK_SCRIPT_PATH}")
-            mark_as_failed(queue_id, "AutoHotkey 스크립트 없음")
-            return False
-        
-        log(f"✓ AutoHotkey 경로 확인 완료")
-        log(f"  - EXE: {AHK_EXE_PATH}")
-        log(f"  - Script: {AHK_SCRIPT_PATH}")
-        log(f"  - Action: {action}")
-        
-        os.makedirs(os.path.dirname(ROOM_NUMBER_FILE), exist_ok=True)
-        
-        with open(ROOM_NUMBER_FILE, 'w', encoding='utf-8') as f:
-            f.write(room_number)
-        log(f"✓ 객실 번호 파일 작성: {room_number}")
-        
-        command = [AHK_EXE_PATH, AHK_SCRIPT_PATH, action]
-        log(f"🚀 AutoHotkey 실행 명령: {' '.join(command)}")
-        
-        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
-        
-        log(f"AutoHotkey 종료 코드: {result.returncode}")
-        if result.stdout:
-            log(f"AutoHotkey 출력: {result.stdout}")
-        if result.stderr:
-            log(f"AutoHotkey 에러: {result.stderr}")
-        
-        if result.returncode == 0:
-            log(f"✅ {action} 성공: {room_number}")
-            
-            new_status = map_action_to_status(action)
-            update_google_sheets(room_number, new_status)
-            
-            mark_as_completed(queue_id)
-            return True
-        else:
-            log(f"❌ {action} 실패: {room_number} (종료 코드: {result.returncode})")
-            mark_as_failed(queue_id, f"AutoHotkey 실행 실패 (코드: {result.returncode})")
-            return False
-            
-    except subprocess.TimeoutExpired:
-        log(f"⏱️ 타임아웃: {room_number}")
-        mark_as_failed(queue_id, "타임아웃")
-        return False
     except Exception as e:
         log(f"❌ 실행 오류: {e}")
         import traceback
@@ -291,6 +278,7 @@ def main():
     log(f"  - Property: {PROPERTY}")
     log(f"  - Firebase Path: {FIREBASE_PATH}")
     log(f"  - Firebase Status Path: {FIREBASE_STATUS_PATH}")
+    log(f"  - Trigger File: {TRIGGER_FILE}")
     log(f"  - Log File: {LOG_FILE}")
     log(f"  - API Key 설정: {'✓' if API_KEY else '✗'}")
     log("=" * 60)
