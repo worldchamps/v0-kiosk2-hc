@@ -6,6 +6,7 @@ import RoomInfo from "@/components/room-info"
 import PrinterTest from "@/components/printer-test"
 import BillAcceptorTest from "@/components/bill-acceptor-test"
 import BillDispenserTest from "@/components/bill-dispenser-test"
+import RoomTypeSettings from "@/components/room-type-settings"
 
 export default function WebLayout({ onChangeMode }: { onChangeMode: () => void }) {
   return (
@@ -24,6 +25,7 @@ export default function WebLayout({ onChangeMode }: { onChangeMode: () => void }
             <TabsTrigger value="printer">프린터 테스트</TabsTrigger>
             <TabsTrigger value="billAcceptor">지폐 인식기</TabsTrigger>
             <TabsTrigger value="billDispenser">지폐 방출기</TabsTrigger>
+            <TabsTrigger value="roomTypeSettings">객실 타입 설정</TabsTrigger>
           </TabsList>
           <TabsContent value="roomInfo">
             <RoomInfo reservations={[]} />
@@ -36,6 +38,9 @@ export default function WebLayout({ onChangeMode }: { onChangeMode: () => void }
           </TabsContent>
           <TabsContent value="billDispenser">
             <BillDispenserTest />
+          </TabsContent>
+          <TabsContent value="roomTypeSettings">
+            <RoomTypeSettings />
           </TabsContent>
         </Tabs>
       </main>

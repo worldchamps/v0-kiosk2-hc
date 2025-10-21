@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server"
 import { createSheetsClient } from "@/lib/google-sheets"
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const { searchParams } = new URL(request.url)
+    const location = searchParams.get("location")?.toUpperCase()
+
     const sheets = createSheetsClient()
     const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID || ""
 
@@ -18,10 +21,7 @@ export async function GET() {
     const rows = response.data.values
 
     console.log("[v0] Total rows fetched:", rows?.length || 0)
-    if (rows && rows.length > 0) {
-      console.log("[v0] First row sample:", rows[0])
-      console.log("[v0] Column structure - A:Building, B:Room#, C:Type, D:Password, E:Status, F:Floor, G:Code")
-    }
+    console.log("[v0] Filtering by location:", location || "ALL")
 
     if (!rows || rows.length === 0) {
       return NextResponse.json({
@@ -37,23 +37,29 @@ export async function GET() {
           roomNumber: row[1] || "", // B열: Room number (###호)
           roomType: row[2] || "", // C열: Room Type
           password: row[3] || "", // D열: Password
-          status: (row[4] || "").trim(), // E열: Status (공실, 사용 중, 청소 대기중)
+          status: (row[4] || "").trim(), // E열: Status
           floor: row[5] || "", // F열: Floor
           roomCode: row[6] || "", // G열: Room code (unique identifier)
         }
-        console.log(
-          "[v0] Room:",
-          room.roomNumber,
-          "Code:",
-          room.roomCode,
-          "Status:",
-          `"${room.status}"`,
-          "Match:",
-          room.status === "공실",
-        )
         return room
       })
-      .filter((room) => room.status === "공실") // Only rooms with status "공실"
+      .filter((room) => {
+        // Filter by status
+        if (room.status !== "공실") return false
+
+        // Filter by location if specified
+        if (location) {
+          if (location === "CAMP") {
+            // CAMP location shows only Camp rooms
+            return room.building === "Camp"
+          } else if (["A", "B", "D"].includes(location)) {
+            // A, B, D locations show Beach A and Beach B rooms (Property3)
+            return room.building === "Beach A" || room.building === "Beach B"
+          }
+        }
+
+        return true
+      })
 
     console.log("[v0] Available rooms after filter:", availableRooms.length)
 
@@ -73,6 +79,7 @@ export async function GET() {
       availableRooms,
       roomsByType,
       total: availableRooms.length,
+      location: location || "ALL",
     })
   } catch (error) {
     console.error("Error fetching available rooms:", error)

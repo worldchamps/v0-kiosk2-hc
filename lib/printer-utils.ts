@@ -767,20 +767,19 @@ async function printFormattedRoomInfoReceipt(roomData: any): Promise<boolean> {
     await printText("\n\n")
 
     // 비밀번호 - 큰 글씨로 표시
-    const largeSizeCommand2 = new Uint8Array([ESC, 0x21, 0x30]) // 다시 큰 글씨로
-    logCommand("ESC ! (Large Size Font)", largeSizeCommand2)
-    await printerWriter.write(largeSizeCommand2)
+    await printerWriter.write(largeSizeCommand)
+    await printText(`Door PW: ${roomData.password}\n\n`)
 
-    await printText(`Door PW: ${roomData.password || "0000"}\n\n`)
-
-    // 구분선
-    const normalSizeCommand = new Uint8Array([ESC, 0x21, 0x10]) // 기본 글씨 크기로 돌아감
-    logCommand("ESC ! (Mid Size Font)", normalSizeCommand)
+    // 기본 크기로 날짜
+    const normalSizeCommand = new Uint8Array([ESC, 0x21, 0x00])
+    logCommand("ESC ! (Normal Size Font)", normalSizeCommand)
     await printerWriter.write(normalSizeCommand)
 
-    await printText("------------------------------------\n\n\n")
+    await printText("-------------------------------------\n")
+    await printText(`Check-in: ${formatDateForReceipt(roomData.checkInDate)}\n`)
+    await printText(`Check-out: ${formatDateForReceipt(roomData.checkOutDate)}\n\n\n`)
 
-    // 용지 절단 (Partial cut)
+    // 용지 절단
     const cutCommand = new Uint8Array([GS, 0x56, 0x01])
     logCommand("GS V (Cut Paper)", cutCommand)
     await printerWriter.write(cutCommand)
@@ -805,12 +804,10 @@ async function printSimpleRoomInfoReceipt(roomData: any): Promise<boolean> {
 
     logDebug("Simple Mode로 객실 정보 영수증 인쇄 시작")
 
-    // ESC @ - Initialize printer
     const initCommand = new Uint8Array([ESC, 0x40])
     logCommand("ESC @ (Initialize)", initCommand)
     await printerWriter.write(initCommand)
 
-    // Basic text only
     await printText("THE BEACH STAY\r\n\r\n")
     await printText("-------------------------------------\r\n\r\n")
 
@@ -820,9 +817,8 @@ async function printSimpleRoomInfoReceipt(roomData: any): Promise<boolean> {
     const floor = roomData.floor ? `${roomData.floor}F` : "2F"
     const roomNumber = roomData.roomNumber || "000"
     await printText(`ROOM: ${roomNumber} ${floor}\r\n\r\n`)
-    await printText(`DOOR PASSWORD: ${roomData.password || "0000"}\r\n\r\n\r\n`)
+    await printText(`DOOR PASSWORD: ${roomData.password}\r\n\r\n\r\n`)
 
-    // GS V 1 for partial cut
     const cutCommand = new Uint8Array([GS, 0x56, 0x01])
     logCommand("GS V (Cut Paper)", cutCommand)
     await printerWriter.write(cutCommand)
@@ -831,6 +827,156 @@ async function printSimpleRoomInfoReceipt(roomData: any): Promise<boolean> {
     return true
   } catch (error) {
     logDebug("단순 모드 객실 정보 영수증 인쇄 중 오류 발생: " + error)
+    return false
+  }
+}
+
+/**
+ * 현장예약 영수증 인쇄 함수
+ */
+export async function printOnSiteReservationReceipt(reservationData: {
+  reservationId: string
+  guestName: string
+  roomCode: string
+  roomType: string
+  checkInDate: string
+  checkOutDate: string
+  password: string
+}): Promise<boolean> {
+  try {
+    if (!printerWriter) {
+      logDebug("프린터가 연결되어 있지 않습니다.")
+      return false
+    }
+
+    const useSimpleMode = getSimplePrintMode()
+    logDebug(
+      `현장예약 영수증 인쇄 모드: ${useSimpleMode ? "Simple Mode" : "Rich Mode"}, 프린터 모델: ${detectedPrinterModel}`,
+    )
+
+    if (useSimpleMode) {
+      return printSimpleOnSiteReservationReceipt(reservationData)
+    } else {
+      if (detectedPrinterModel === "BK3-3" && process.env.FORCE_SIMPLE_FOR_BK3 === "true") {
+        logDebug("BK3-3 프린터에 대해 강제로 Simple Mode 사용")
+        return printSimpleOnSiteReservationReceipt(reservationData)
+      }
+      return printFormattedOnSiteReservationReceipt(reservationData)
+    }
+  } catch (error) {
+    logDebug("현장예약 영수증 인쇄 중 오류 발생: " + error)
+    return false
+  }
+}
+
+/**
+ * 기존 형식의 현장예약 영수증 인쇄
+ */
+async function printFormattedOnSiteReservationReceipt(reservationData: {
+  reservationId: string
+  guestName: string
+  roomCode: string
+  roomType: string
+  checkInDate: string
+  checkOutDate: string
+  password: string
+}): Promise<boolean> {
+  try {
+    if (!printerWriter) return false
+
+    logDebug("Rich Mode로 현장예약 영수증 인쇄 시작")
+
+    await initializePrinter()
+
+    // 중간 크기 글씨
+    const midSizeCommand = new Uint8Array([ESC, 0x21, 0x10])
+    logCommand("ESC ! (Mid Size Font)", midSizeCommand)
+    await printerWriter.write(midSizeCommand)
+
+    await printText("The Beach Stay\n")
+    await printText("-------------------------------------\n")
+
+    // 큰 글씨
+    const largeSizeCommand = new Uint8Array([ESC, 0x21, 0x30])
+    logCommand("ESC ! (Large Size Font)", largeSizeCommand)
+    await printerWriter.write(largeSizeCommand)
+
+    await printText("ON-SITE RESERVATION\n\n")
+
+    // 기본 크기
+    const normalSizeCommand = new Uint8Array([ESC, 0x21, 0x00])
+    logCommand("ESC ! (Normal Size Font)", normalSizeCommand)
+    await printerWriter.write(normalSizeCommand)
+
+    await printText(`Reservation ID:\n${reservationData.reservationId}\n\n`)
+    await printText(`Guest: ${reservationData.guestName}\n`)
+    await printText(`Room: ${reservationData.roomCode}\n`)
+    await printText(`Type: ${translateRoomType(reservationData.roomType)}\n\n`)
+
+    // 큰 글씨로 비밀번호
+    await printerWriter.write(largeSizeCommand)
+    await printText(`Door PW: ${reservationData.password}\n\n`)
+
+    // 기본 크기로 날짜
+    await printerWriter.write(normalSizeCommand)
+    await printText("-------------------------------------\n")
+    await printText(`Check-in: ${formatDateForReceipt(reservationData.checkInDate)}\n`)
+    await printText(`Check-out: ${formatDateForReceipt(reservationData.checkOutDate)}\n\n\n`)
+
+    // 용지 절단
+    const cutCommand = new Uint8Array([GS, 0x56, 0x01])
+    logCommand("GS V (Cut Paper)", cutCommand)
+    await printerWriter.write(cutCommand)
+
+    logDebug("Rich Mode 현장예약 영수증 인쇄 완료")
+    return true
+  } catch (error) {
+    logDebug("현장예약 영수증 인쇄 중 오류 발생: " + error)
+    return false
+  }
+}
+
+/**
+ * 단순 모드 현장예약 영수증 인쇄
+ */
+async function printSimpleOnSiteReservationReceipt(reservationData: {
+  reservationId: string
+  guestName: string
+  roomCode: string
+  roomType: string
+  checkInDate: string
+  checkOutDate: string
+  password: string
+}): Promise<boolean> {
+  try {
+    if (!printerWriter) return false
+
+    logDebug("Simple Mode로 현장예약 영수증 인쇄 시작")
+
+    const initCommand = new Uint8Array([ESC, 0x40])
+    logCommand("ESC @ (Initialize)", initCommand)
+    await printerWriter.write(initCommand)
+
+    await printText("THE BEACH STAY\r\n\r\n")
+    await printText("-------------------------------------\r\n\r\n")
+    await printText("ON-SITE RESERVATION\r\n\r\n")
+    await printText(`Reservation ID:\r\n${reservationData.reservationId}\r\n\r\n`)
+    await printText(`Guest: ${reservationData.guestName}\r\n`)
+    await printText(`Room: ${reservationData.roomCode}\r\n`)
+    await printText(`Type: ${translateRoomType(reservationData.roomType)}\r\n\r\n`)
+    await printText(`DOOR PASSWORD: ${reservationData.password}\r\n\r\n`)
+    await printText("-------------------------------------\r\n\r\n")
+    await printText(`Check-in: ${formatDateForReceipt(reservationData.checkInDate)}\r\n`)
+    await printText(`Check-out: ${formatDateForReceipt(reservationData.checkOutDate)}\r\n\r\n\r\n`)
+
+    const cutCommand = new Uint8Array([GS, 0x56, 0x01])
+    logCommand("GS V (Cut Paper)", cutCommand)
+    await printerWriter.write(cutCommand)
+
+    logDebug("Simple Mode 현장예약 영수증 인쇄 완료")
+    return true
+  } catch (error) {
+    logDebug("단순 모드 현장예약 영수증 인쇄 중 오류 발생: " + error)
     return false
   }
 }

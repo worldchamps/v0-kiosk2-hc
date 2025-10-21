@@ -213,7 +213,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         )}
 
         {currentScreen === "onSiteReservation" && (
-          <OnSiteReservation onNavigate={handleNavigate} kioskLocation={kioskLocation} />
+          <OnSiteReservation onNavigate={handleNavigate} location={kioskLocation} />
         )}
 
         {currentScreen === "reservationDetails" && (

@@ -22,6 +22,37 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Spreadsheet ID not configured" }, { status: 500 })
     }
 
+    console.log("[v0] Checking room availability before booking...")
+    const statusCheckResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: "Beach Room Status!A2:G",
+    })
+
+    const statusRows = statusCheckResponse.data.values
+    let roomStillAvailable = false
+    let roomRowIndex = -1
+
+    if (statusRows) {
+      for (let i = 0; i < statusRows.length; i++) {
+        if (statusRows[i][6] === roomCode) {
+          roomRowIndex = i
+          const currentStatus = (statusRows[i][4] || "").trim()
+          if (currentStatus === "공실") {
+            roomStillAvailable = true
+          }
+          break
+        }
+      }
+    }
+
+    if (!roomStillAvailable) {
+      console.log("[v0] Room is no longer available:", roomCode)
+      return NextResponse.json(
+        { error: "이 객실은 방금 예약이 완료되었습니다. 다른 객실을 선택해주세요." },
+        { status: 409 },
+      )
+    }
+
     // Generate reservation ID
     const reservationId = `ONSITE-${Date.now()}`
 
@@ -56,30 +87,17 @@ export async function POST(request: NextRequest) {
     console.log("[v0] Reservation added to Google Sheets")
 
     console.log("[v0] Updating room status to '사용 중'...")
-    const statusResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: "Beach Room Status!A2:G",
-    })
-
-    const statusRows = statusResponse.data.values
-    if (statusRows) {
-      for (let i = 0; i < statusRows.length; i++) {
-        // Match by roomCode (G열, index 6) for accurate identification
-        if (statusRows[i][6] === roomCode) {
-          console.log(`[v0] Found room at row ${i + 2}, updating status...`)
-          // Update status column E (index 4 in 0-based, row i+2 in sheet)
-          await sheets.spreadsheets.values.update({
-            spreadsheetId,
-            range: `Beach Room Status!E${i + 2}`,
-            valueInputOption: "USER_ENTERED",
-            requestBody: {
-              values: [["사용 중"]],
-            },
-          })
-          console.log(`[v0] Room status updated to '사용 중' for ${roomCode}`)
-          break
-        }
-      }
+    if (roomRowIndex >= 0) {
+      console.log(`[v0] Found room at row ${roomRowIndex + 2}, updating status...`)
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `Beach Room Status!E${roomRowIndex + 2}`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: {
+          values: [["사용 중"]],
+        },
+      })
+      console.log(`[v0] Room status updated to '사용 중' for ${roomCode}`)
     }
 
     try {
@@ -105,6 +123,7 @@ export async function POST(request: NextRequest) {
         roomCode,
         checkInDate,
         checkOutDate,
+        password,
       },
     })
   } catch (error) {
