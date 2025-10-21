@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { createSheetsClient } from "@/lib/google-sheets"
+import { addToPMSQueue } from "@/lib/firebase-admin"
 
 export async function POST(request: NextRequest) {
   try {
@@ -72,6 +73,18 @@ export async function POST(request: NextRequest) {
           break
         }
       }
+    }
+
+    try {
+      await addToPMSQueue({
+        roomNumber,
+        guestName,
+        checkInDate,
+      })
+      console.log("[v0] On-site booking added to Firebase PMS Queue:", { roomNumber, guestName })
+    } catch (firebaseError) {
+      console.error("[v0] Failed to add to Firebase PMS Queue:", firebaseError)
+      // Continue even if Firebase fails - Google Sheets update is primary
     }
 
     return NextResponse.json({
