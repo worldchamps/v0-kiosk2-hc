@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
       phoneNumber, // Phone Number
       checkInDate, // Check-in Date
       checkOutDate, // Check-out Date
-      roomNumber, // Room Number
+      roomCode, // Use roomCode (G열) instead of roomNumber for consistency
       password || "", // Password
       "Checked In", // Check-in Status - 현장예약은 즉시 체크인
       new Date().toISOString(), // Check-in Time - 현재 시간
@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
     try {
       console.log("[v0] Adding to Firebase PMS Queue with roomCode:", roomCode)
       await addToPMSQueue({
-        roomNumber: roomCode, // G열의 roomCode 사용 (A###, B### 등)
+        roomNumber: roomCode, // Use roomCode (G열) instead of roomNumber for consistency
         guestName,
         checkInDate,
       })

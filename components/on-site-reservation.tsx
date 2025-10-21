@@ -98,9 +98,9 @@ export default function OnSiteReservation({ onNavigate }: OnSiteReservationProps
         body: JSON.stringify({
           guestName,
           phoneNumber,
-          roomNumber: selectedRoom.roomNumber,
-          roomCode: selectedRoom.roomCode,
+          roomCode: selectedRoom.roomCode, // G열 - 시스템 식별용
           roomType: selectedRoom.roomType,
+          building: selectedRoom.building,
           price: "가격 미정", // Price will be determined by staff
           checkInDate,
           checkOutDate,
@@ -240,7 +240,7 @@ export default function OnSiteReservation({ onNavigate }: OnSiteReservationProps
                   onClick={() => handleRoomSelect(room)}
                 >
                   <CardContent className="p-6">
-                    <p className="font-bold text-3xl mb-2">{room.roomNumber}</p>
+                    <p className="font-bold text-3xl mb-2">{room.roomCode}</p>
                     <p className="text-xl text-gray-600">{room.building}</p>
                     <p className="text-xl text-gray-600">{room.floor}층</p>
                   </CardContent>
@@ -277,7 +277,7 @@ export default function OnSiteReservation({ onNavigate }: OnSiteReservationProps
                 <h3 className="text-2xl font-bold mb-4">선택한 객실</h3>
                 <div className="space-y-2">
                   <p className="text-xl">
-                    <span className="font-semibold">객실 번호:</span> {selectedRoom.roomNumber}
+                    <span className="font-semibold">객실 번호:</span> {selectedRoom.roomCode}
                   </p>
                   <p className="text-xl">
                     <span className="font-semibold">객실 타입:</span> {selectedRoom.roomType}
@@ -400,7 +400,7 @@ export default function OnSiteReservation({ onNavigate }: OnSiteReservationProps
                     <span className="font-semibold">투숙객:</span> {guestName}
                   </p>
                   <p className="text-xl">
-                    <span className="font-semibold">객실 번호:</span> {selectedRoom?.roomNumber}
+                    <span className="font-semibold">객실 번호:</span> {selectedRoom?.roomCode}
                   </p>
                   <p className="text-xl">
                     <span className="font-semibold">체크인:</span> {checkInDate}
