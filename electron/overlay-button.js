@@ -8,6 +8,8 @@ let kioskPopup = null
  * 오버레이 버튼 창 생성 (Property1, Property2 전용)
  */
 function createOverlayButton() {
+  console.log("[v0] createOverlayButton called")
+
   if (overlayButton) {
     overlayButton.close()
   }
@@ -36,6 +38,12 @@ function createOverlayButton() {
   // 오버레이 버튼 HTML 로드
   overlayButton.loadFile(path.join(__dirname, "overlay-button.html"))
 
+  overlayButton.webContents.on("did-finish-load", () => {
+    console.log("[v0] Overlay button page loaded")
+  })
+
+  overlayButton.webContents.openDevTools({ mode: "detach" })
+
   // 마우스 이벤트 허용
   overlayButton.setIgnoreMouseEvents(false)
 
@@ -51,6 +59,8 @@ function createOverlayButton() {
  * 키오스크 팝업 창 생성
  */
 function createKioskPopup() {
+  console.log("[v0] createKioskPopup called")
+
   if (kioskPopup) {
     kioskPopup.close()
   }
@@ -74,6 +84,7 @@ function createKioskPopup() {
     ? "http://localhost:3000?mode=kiosk&popup=true"
     : `file://${path.join(__dirname, "../.next/server/app/index.html")}?mode=kiosk&popup=true`
 
+  console.log("[v0] Loading popup URL:", startUrl)
   kioskPopup.loadURL(startUrl)
 
   // 팝업이 닫히면 오버레이 버튼 다시 표시
@@ -115,13 +126,16 @@ function restorePMSFocus() {
   })
 }
 
+console.log("[v0] Registering overlay button IPC handlers")
+
 // IPC 핸들러: 오버레이 버튼 클릭
 ipcMain.on("overlay-button-clicked", () => {
-  console.log("[v0] Overlay button clicked")
+  console.log("[v0] IPC: overlay-button-clicked received")
 
   // 오버레이 버튼 숨기기
   if (overlayButton) {
     overlayButton.hide()
+    console.log("[v0] Overlay button hidden")
   }
 
   // 키오스크 팝업 열기
@@ -130,7 +144,7 @@ ipcMain.on("overlay-button-clicked", () => {
 
 // IPC 핸들러: 체크인 완료
 ipcMain.on("checkin-complete", () => {
-  console.log("[v0] Check-in complete, preparing to close popup")
+  console.log("[v0] IPC: checkin-complete received, preparing to close popup")
 
   // 5초 후 팝업 닫기 및 포커스 복구
   setTimeout(() => {
@@ -150,7 +164,7 @@ ipcMain.on("checkin-complete", () => {
 
 // IPC 핸들러: 팝업 즉시 닫기
 ipcMain.on("close-popup", () => {
-  console.log("[v0] Closing popup immediately")
+  console.log("[v0] IPC: close-popup received")
 
   if (kioskPopup) {
     kioskPopup.close()

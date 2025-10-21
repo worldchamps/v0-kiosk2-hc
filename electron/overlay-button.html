@@ -72,14 +72,18 @@
 
       btn.addEventListener("click", () => {
         console.log("[v0] Overlay button clicked in renderer")
-        // Electron IPC로 메인 프로세스에 알림
-        if (window.electron) {
-          window.electron.send("overlay-button-clicked")
+        if (window.electronAPI) {
+          console.log("[v0] Sending overlay-button-clicked event")
+          window.electronAPI.send("overlay-button-clicked")
+        } else {
+          console.error("[v0] electronAPI not available")
         }
       })
 
       // 버튼이 항상 클릭 가능하도록 보장
       btn.style.pointerEvents = "auto"
+      
+      console.log("[v0] Overlay button script loaded, electronAPI available:", !!window.electronAPI)
     </script>
   </body>
 </html>

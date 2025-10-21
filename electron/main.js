@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain } = require("electron")
 const path = require("path")
 const { SerialPort } = require("serialport")
-const { createOverlayButton } = require("./overlay-button")
+const overlayButtonModule = require("./overlay-button")
 
 let mainWindow
 let billAcceptorPort = null
@@ -12,7 +12,6 @@ const KIOSK_PROPERTY = process.env.KIOSK_PROPERTY || "property3"
 
 console.log(`[v0] Starting in ${OVERLAY_MODE ? "OVERLAY" : "FULLSCREEN"} mode for ${KIOSK_PROPERTY}`)
 
-// 시리얼 포트 설정 (나중에 설정 파일로 분리 가능)
 const BILL_ACCEPTOR_CONFIG = {
   path: "COM3", // Windows 기본값, 실제 포트로 변경 필요
   baudRate: 9600,
@@ -44,8 +43,6 @@ function createWindow() {
       },
     })
 
-    // 개발 모드: Next.js dev 서버
-    // 프로덕션: 빌드된 파일
     const isDev = process.env.NODE_ENV !== "production"
     const startUrl = isDev
       ? "http://localhost:3000"
@@ -53,26 +50,22 @@ function createWindow() {
 
     mainWindow.loadURL(startUrl)
 
-    // 개발 모드에서는 DevTools 열기
     if (isDev) {
       mainWindow.webContents.openDevTools()
     }
 
-    // 하드웨어 자동 연결 시도
     setTimeout(() => {
       connectBillAcceptor()
       connectBillDispenser()
     }, 2000)
   } else {
     console.log("[v0] Creating overlay button for Property1/2")
-    createOverlayButton()
+    overlayButtonModule.createOverlayButton()
   }
 }
 
-// 지폐 인식기 연결
 async function connectBillAcceptor() {
   try {
-    // 이미 연결되어 있으면 닫기
     if (billAcceptorPort && billAcceptorPort.isOpen) {
       billAcceptorPort.close()
     }
@@ -95,7 +88,6 @@ async function connectBillAcceptor() {
             error: err.message,
           })
         }
-        // 10초 후 재시도
         setTimeout(connectBillAcceptor, 10000)
         return
       }
@@ -108,7 +100,6 @@ async function connectBillAcceptor() {
       }
     })
 
-    // 데이터 수신
     billAcceptorPort.on("data", (data) => {
       console.log("[v0] 지폐 인식기 데이터:", data)
       if (mainWindow && mainWindow.webContents) {
@@ -118,7 +109,6 @@ async function connectBillAcceptor() {
       }
     })
 
-    // 에러 처리
     billAcceptorPort.on("error", (err) => {
       console.error("[v0] 지폐 인식기 에러:", err)
       if (mainWindow && mainWindow.webContents) {
@@ -129,7 +119,6 @@ async function connectBillAcceptor() {
       }
     })
 
-    // 연결 끊김
     billAcceptorPort.on("close", () => {
       console.log("[v0] 지폐 인식기 연결 끊김")
       if (mainWindow && mainWindow.webContents) {
@@ -137,7 +126,6 @@ async function connectBillAcceptor() {
           connected: false,
         })
       }
-      // 5초 후 재연결 시도
       setTimeout(connectBillAcceptor, 5000)
     })
   } catch (error) {
@@ -146,7 +134,6 @@ async function connectBillAcceptor() {
   }
 }
 
-// 지폐 방출기 연결
 async function connectBillDispenser() {
   try {
     if (billDispenserPort && billDispenserPort.isOpen) {
@@ -217,7 +204,6 @@ async function connectBillDispenser() {
   }
 }
 
-// IPC 핸들러: 지폐 인식기 명령 전송
 ipcMain.handle("send-to-bill-acceptor", async (event, command) => {
   if (!billAcceptorPort || !billAcceptorPort.isOpen) {
     return { success: false, error: "지폐 인식기가 연결되지 않았습니다" }
@@ -237,7 +223,6 @@ ipcMain.handle("send-to-bill-acceptor", async (event, command) => {
   }
 })
 
-// IPC 핸들러: 지폐 방출기 명령 전송
 ipcMain.handle("send-to-bill-dispenser", async (event, command) => {
   if (!billDispenserPort || !billDispenserPort.isOpen) {
     return { success: false, error: "지폐 방출기가 연결되지 않았습니다" }
@@ -257,7 +242,6 @@ ipcMain.handle("send-to-bill-dispenser", async (event, command) => {
   }
 })
 
-// IPC 핸들러: 사용 가능한 시리얼 포트 목록
 ipcMain.handle("list-serial-ports", async () => {
   try {
     const ports = await SerialPort.list()
@@ -267,7 +251,6 @@ ipcMain.handle("list-serial-ports", async () => {
   }
 })
 
-// IPC 핸들러: 수동 재연결
 ipcMain.handle("reconnect-bill-acceptor", async () => {
   await connectBillAcceptor()
   return { success: true }
@@ -281,7 +264,6 @@ ipcMain.handle("reconnect-bill-dispenser", async () => {
 app.whenReady().then(createWindow)
 
 app.on("window-all-closed", () => {
-  // 시리얼 포트 정리
   if (billAcceptorPort && billAcceptorPort.isOpen) {
     billAcceptorPort.close()
   }
