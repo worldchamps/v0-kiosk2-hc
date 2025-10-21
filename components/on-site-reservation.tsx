@@ -98,6 +98,7 @@ export default function OnSiteReservation({ onNavigate }: OnSiteReservationProps
         body: JSON.stringify({
           guestName,
           phoneNumber,
+          roomNumber: selectedRoom.roomCode, // G열 - API 호환성
           roomCode: selectedRoom.roomCode, // G열 - 시스템 식별용
           roomType: selectedRoom.roomType,
           building: selectedRoom.building,
@@ -118,7 +119,7 @@ export default function OnSiteReservation({ onNavigate }: OnSiteReservationProps
       }
     } catch (error) {
       console.error("Error submitting booking:", error)
-      alert("예약 중 오류가 발생했습니다")
+      alert("예약 중 오류가 발생했습니다: " + (error instanceof Error ? error.message : String(error)))
     } finally {
       setSubmitting(false)
     }
