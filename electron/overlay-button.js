@@ -1,42 +1,54 @@
 const { BrowserWindow, ipcMain } = require("electron")
 const path = require("path")
+const { exec } = require("child_process")
 
 let overlayButton = null
 let kioskPopup = null
 let topmostInterval = null
 
 /**
- * Windows API를 사용하여 강제로 최상위 유지
+ * PowerShell을 사용하여 강제로 최상위 유지 (FFI 없이)
  */
 function forceWindowToTop(window) {
-  if (!window) return
+  if (!window || window.isDestroyed()) return
 
-  const { exec } = require("child_process")
-
-  // Electron 내장 메서드
   window.setAlwaysOnTop(true, "screen-saver", 1)
   window.moveTop()
   window.focus()
 
-  // Windows API를 통한 강제 최상위 설정
-  // HWND_TOPMOST = -1
-  const hwnd = window.getNativeWindowHandle()
-  if (hwnd) {
-    const hwndBuffer = hwnd.readInt32LE(0)
-    const command = `powershell -command "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class Win32 { [DllImport(\\"user32.dll\\")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags); }'; [Win32]::SetWindowPos(${hwndBuffer}, -1, 0, 0, 0, 0, 0x0003)"`
+  try {
+    const hwnd = window.getNativeWindowHandle()
+    if (hwnd) {
+      const hwndValue = hwnd.readInt32LE ? hwnd.readInt32LE(0) : hwnd
 
-    exec(command, (error) => {
-      if (error) {
-        console.error("[v0] Failed to force window topmost:", error)
-      } else {
-        console.log("[v0] Successfully forced window to topmost")
-      }
-    })
+      // SetWindowPos를 사용하여 HWND_TOPMOST (-1) 설정
+      const psCommand = `
+        Add-Type -TypeDefinition @"
+          using System;
+          using System.Runtime.InteropServices;
+          public class Win32 {
+            [DllImport("user32.dll")]
+            public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+          }
+"@
+        [Win32]::SetWindowPos([IntPtr]${hwndValue}, [IntPtr](-1), 0, 0, 0, 0, 0x0003)
+      `
+
+      exec(`powershell -command "${psCommand.replace(/"/g, '\\"')}"`, (error) => {
+        if (error) {
+          console.error("[v0] PowerShell SetWindowPos failed:", error.message)
+        } else {
+          console.log("[v0] Successfully set window to HWND_TOPMOST")
+        }
+      })
+    }
+  } catch (error) {
+    console.error("[v0] Error in forceWindowToTop:", error)
   }
 }
 
 /**
- * 주기적으로 최상위 유지 (100ms마다)
+ * 주기적으로 최상위 유지 (50ms마다 - 더 공격적으로)
  */
 function startTopmostKeeper(window) {
   if (topmostInterval) {
@@ -47,9 +59,9 @@ function startTopmostKeeper(window) {
     if (window && !window.isDestroyed()) {
       forceWindowToTop(window)
     }
-  }, 100)
+  }, 50)
 
-  console.log("[v0] Started topmost keeper interval")
+  console.log("[v0] Started aggressive topmost keeper (50ms interval)")
 }
 
 /**
@@ -87,7 +99,7 @@ function createOverlayButton() {
     minimizable: false,
     maximizable: false,
     closable: false,
-    focusable: true, // 포커스 가능하도록 설정
+    focusable: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,
@@ -107,7 +119,6 @@ function createOverlayButton() {
   overlayButton.setIgnoreMouseEvents(false)
 
   forceWindowToTop(overlayButton)
-
   startTopmostKeeper(overlayButton)
 
   console.log("[v0] Overlay button created with aggressive topmost")
@@ -131,7 +142,7 @@ function createKioskPopup() {
     frame: false,
     alwaysOnTop: true,
     fullscreen: true,
-    focusable: true, // 포커스 가능하도록 설정
+    focusable: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,
@@ -153,7 +164,7 @@ function createKioskPopup() {
   })
 
   kioskPopup.on("closed", () => {
-    stopTopmostKeeper() // 팝업 닫힐 때 타이머 정리
+    stopTopmostKeeper()
     kioskPopup = null
     if (overlayButton) {
       overlayButton.show()
@@ -172,7 +183,6 @@ function createKioskPopup() {
  * PMS 프로그램으로 포커스 복구
  */
 function restorePMSFocus() {
-  const { exec } = require("child_process")
   const pmsWindowTitle = process.env.PMS_WINDOW_TITLE || "PMS"
 
   console.log(`[v0] Attempting to restore focus to: ${pmsWindowTitle}`)
@@ -181,7 +191,7 @@ function restorePMSFocus() {
 
   const command = `powershell -command "(New-Object -ComObject WScript.Shell).AppActivate('${pmsWindowTitle}')"`
 
-  exec(command, (error, stdout, stderr) => {
+  exec(command, (error) => {
     if (error) {
       console.error("[v0] Failed to restore PMS focus:", error)
       exec("powershell -command '(New-Object -ComObject Shell.Application).MinimizeAll()'", () => {
