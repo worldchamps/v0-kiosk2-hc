@@ -79,26 +79,69 @@ OVERLAY_MODE=true         # true면 오버레이 버튼 모드 활성화
 
 \`\`\`javascript
 const { BrowserWindow } = require('electron')
+const path = require('path')
+
+// 주기적으로 최상위 유지 (100ms마다)
+let topmostInterval = null
+
+function forceWindowToTop(window) {
+  if (!window) return
+  
+  // Electron 내장 메서드
+  window.setAlwaysOnTop(true, "screen-saver", 1)
+  window.moveTop()
+  window.focus()
+  
+  // Windows API를 통한 강제 최상위 설정 (HWND_TOPMOST = -1)
+  const { exec } = require("child_process")
+  const hwnd = window.getNativeWindowHandle()
+  
+  if (hwnd) {
+    const hwndBuffer = hwnd.readInt32LE(0)
+    const command = `powershell -command "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class Win32 { [DllImport(\\"user32.dll\\")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags); }'; [Win32]::SetWindowPos(${hwndBuffer}, -1, 0, 0, 0, 0, 0x0003)"`
+    
+    exec(command, (error) => {
+      if (error) console.error("[v0] Failed to force window topmost:", error)
+    })
+  }
+}
+
+function startTopmostKeeper(window) {
+  if (topmostInterval) clearInterval(topmostInterval)
+  
+  // 100ms마다 강제로 최상위 유지
+  topmostInterval = setInterval(() => {
+    if (window && !window.isDestroyed()) {
+      forceWindowToTop(window)
+    }
+  }, 100)
+}
 
 function createOverlayButton() {
   const button = new BrowserWindow({
-    width: 200,
-    height: 80,
-    x: 1700,  // 화면 우측 상단
-    y: 20,
+    width: 220,
+    height: 100,
+    x: 1680,
+    y: 30,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
+    focusable: true,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false
+      preload: path.join(__dirname, "preload.js"),
+      nodeIntegration: false,
+      contextIsolation: true
     }
   })
   
   button.loadFile('overlay-button.html')
   button.setIgnoreMouseEvents(false)
+  
+  // 강력한 최상위 유지 시작
+  forceWindowToTop(button)
+  startTopmostKeeper(button)
   
   return button
 }
@@ -209,12 +252,13 @@ useEffect(() => {
 ### Property1/2 키오스크
 
 \`\`\`bash
-# 환경변수 설정
+# 개발 모드
+npm run electron:overlay
+
+# 프로덕션 모드
 set KIOSK_PROPERTY=property1
 set OVERLAY_MODE=true
-
-# Electron 앱 실행
-npm run electron:start
+npm run electron
 \`\`\`
 
 ### Property3/4 키오스크 (기존 방식)
@@ -242,7 +286,12 @@ npm run electron:start
 ### 포커스 복구가 작동하지 않음
 - PMS 프로그램의 정확한 창 제목 확인
 - Windows PowerShell 권한 확인
+- `electron-config.json`에서 `pmsWindowTitle` 설정 확인
 
 ### 팝업이 PMS 프로그램 뒤로 가는 경우
+- 팝업 창에도 동일한 `startTopmostKeeper()` 적용
 - `alwaysOnTop: true` 설정 확인
-- z-index 우선순위 조정
+
+### 성능 문제 (CPU 사용량 증가)
+- `topmostInterval` 주기를 200ms로 늘림
+- 필요한 경우에만 `startTopmostKeeper()` 실행
