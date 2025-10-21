@@ -1,92 +1,42 @@
 const { BrowserWindow, ipcMain } = require("electron")
 const path = require("path")
 const { exec } = require("child_process")
-const ref = require("ref-napi") // Declare the variable before using it
 
 let overlayButton = null
 let kioskPopup = null
 let lightCheckInterval = null
 
-let user32 = null
-let SetWindowPos = null
-
-try {
-  const ffi = require("ffi-napi")
-
-  user32 = ffi.Library("user32", {
-    SetWindowPos: ["bool", ["pointer", "pointer", "int", "int", "int", "int", "uint"]],
-    SetForegroundWindow: ["bool", ["pointer"]],
-  })
-
-  SetWindowPos = user32.SetWindowPos
-  console.log("[v0] FFI loaded successfully - using native Windows API")
-} catch (error) {
-  console.warn("[v0] FFI not available, will use fallback methods:", error.message)
-}
-
 /**
- * Windows API를 직접 호출하여 최상위 설정 (한 번만 호출, 매우 효율적)
+ * Electron 고급 메서드로 최상위 유지 (2GB RAM 환경에 최적화)
+ * screen-saver 레벨은 대부분의 키오스크 프로그램보다 높은 우선순위
  */
-function setWindowTopmostNative(window) {
-  if (!window || window.isDestroyed()) return false
-
-  try {
-    const hwnd = window.getNativeWindowHandle()
-    if (!hwnd || !SetWindowPos) return false
-
-    const HWND_TOPMOST = ref.alloc("pointer", -1)
-    const SWP_NOMOVE = 0x0002
-    const SWP_NOSIZE = 0x0001
-    const SWP_SHOWWINDOW = 0x0040
-
-    const result = SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
-
-    console.log("[v0] Native SetWindowPos called, result:", result)
-    return result
-  } catch (error) {
-    console.error("[v0] Native SetWindowPos failed:", error)
-    return false
-  }
-}
-
-/**
- * Electron 내장 메서드로 최상위 유지 (가벼운 대체 방법)
- */
-function keepOnTopLight(window) {
+function keepOnTopAggressive(window) {
   if (!window || window.isDestroyed()) return
 
+  // 여러 레벨을 시도하여 최대한 높은 우선순위 확보
   window.setAlwaysOnTop(true, "screen-saver", 1)
+  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   window.moveTop()
+  window.focus()
 }
 
 /**
- * 최상위 유지 시작 (FFI 사용 시 매우 가벼움)
+ * 최상위 유지 시작 (가벼운 방법, 2GB RAM 환경 최적화)
  */
 function startTopmostKeeper(window) {
   stopTopmostKeeper()
 
-  // FFI 사용 가능하면 한 번만 호출
-  if (SetWindowPos) {
-    setWindowTopmostNative(window)
+  // 초기 설정
+  keepOnTopAggressive(window)
 
-    // 5초마다 한 번씩만 확인 (매우 가벼움)
-    lightCheckInterval = setInterval(() => {
-      if (window && !window.isDestroyed()) {
-        keepOnTopLight(window)
-      }
-    }, 5000)
+  // 3초마다 한 번씩만 확인 (매우 가벼움, PowerShell 없음)
+  lightCheckInterval = setInterval(() => {
+    if (window && !window.isDestroyed()) {
+      keepOnTopAggressive(window)
+    }
+  }, 3000)
 
-    console.log("[v0] Using FFI native method (very efficient, 5s check)")
-  } else {
-    // FFI 없으면 Electron 메서드만 사용 (1초마다)
-    lightCheckInterval = setInterval(() => {
-      if (window && !window.isDestroyed()) {
-        keepOnTopLight(window)
-      }
-    }, 1000)
-
-    console.log("[v0] Using Electron fallback method (1s check)")
-  }
+  console.log("[v0] Using lightweight Electron method (3s check, no PowerShell)")
 }
 
 /**
@@ -124,6 +74,7 @@ function createOverlayButton() {
     maximizable: false,
     closable: false,
     focusable: true,
+    type: "toolbar", // 툴바 타입은 일반 창보다 높은 우선순위
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,
@@ -135,11 +86,7 @@ function createOverlayButton() {
 
   overlayButton.webContents.on("did-finish-load", () => {
     console.log("[v0] Overlay button page loaded")
-    if (SetWindowPos) {
-      setWindowTopmostNative(overlayButton)
-    } else {
-      keepOnTopLight(overlayButton)
-    }
+    keepOnTopAggressive(overlayButton)
   })
 
   if (process.env.NODE_ENV !== "production") {
@@ -150,7 +97,7 @@ function createOverlayButton() {
 
   startTopmostKeeper(overlayButton)
 
-  console.log("[v0] Overlay button created with efficient topmost")
+  console.log("[v0] Overlay button created with lightweight topmost (2GB RAM optimized)")
 
   return overlayButton
 }
@@ -172,6 +119,7 @@ function createKioskPopup() {
     alwaysOnTop: true,
     fullscreen: true,
     focusable: true,
+    type: "toolbar",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,
@@ -188,11 +136,7 @@ function createKioskPopup() {
   kioskPopup.loadURL(startUrl)
 
   kioskPopup.webContents.on("did-finish-load", () => {
-    if (SetWindowPos) {
-      setWindowTopmostNative(kioskPopup)
-    } else {
-      keepOnTopLight(kioskPopup)
-    }
+    keepOnTopAggressive(kioskPopup)
     startTopmostKeeper(kioskPopup)
   })
 
@@ -201,17 +145,13 @@ function createKioskPopup() {
     kioskPopup = null
     if (overlayButton) {
       overlayButton.show()
-      if (SetWindowPos) {
-        setWindowTopmostNative(overlayButton)
-      } else {
-        keepOnTopLight(overlayButton)
-      }
+      keepOnTopAggressive(overlayButton)
       startTopmostKeeper(overlayButton)
     }
     console.log("[v0] Kiosk popup closed")
   })
 
-  console.log("[v0] Kiosk popup created with efficient topmost")
+  console.log("[v0] Kiosk popup created with lightweight topmost")
 
   return kioskPopup
 }
@@ -231,6 +171,7 @@ function restorePMSFocus() {
   exec(command, (error) => {
     if (error) {
       console.error("[v0] Failed to restore PMS focus:", error)
+      // 대체 방법: 모든 창 최소화
       exec("powershell -command '(New-Object -ComObject Shell.Application).MinimizeAll()'", () => {
         console.log("[v0] Minimized all windows as fallback")
       })
@@ -238,6 +179,7 @@ function restorePMSFocus() {
       console.log("[v0] Successfully restored PMS focus")
     }
 
+    // 오버레이 버튼 다시 활성화
     if (overlayButton) {
       setTimeout(() => {
         startTopmostKeeper(overlayButton)
@@ -246,6 +188,7 @@ function restorePMSFocus() {
   })
 }
 
+// IPC 핸들러 등록
 console.log("[v0] Registering overlay button IPC handlers")
 
 ipcMain.on("overlay-button-clicked", () => {
