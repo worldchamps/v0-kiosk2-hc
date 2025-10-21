@@ -6,7 +6,7 @@ import { saveKioskLocation } from "@/lib/location-utils"
 import KioskLayout from "@/components/kiosk-layout"
 
 // 유효한 위치 목록
-const validLocations = ["A", "B", "D", "CAMP"]
+const validLocations = ["A", "B", "D", "CAMP", "KARIV"]
 
 export default function KioskLocationPage({ params }: { params: { location: string } }) {
   const router = useRouter()

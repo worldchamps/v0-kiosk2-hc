@@ -31,9 +31,13 @@ export function getPropertyFromRoomNumber(roomNumber: string): string {
     return "property4"
   }
 
+  if (upperRoom.match(/^KARIV\s*\d+$/i)) {
+    return "property2"
+  }
+
   // Property 1 & 2는 독립적인 PMS 사용 (Firebase 불필요)
   // C###, D### → Property 1 (독립 PMS)
-  // Kariv ### → Property 2 (독립 PMS)
+  // Kariv ### → Property 2 (이제 Firebase 사용)
 
   // 기본값: property3 (기존 동작 유지)
   return "property3"
