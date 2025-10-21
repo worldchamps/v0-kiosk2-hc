@@ -21,6 +21,11 @@ export const db = initFirebase()
 export function getPropertyFromRoomNumber(roomNumber: string): string {
   const upperRoom = roomNumber.toUpperCase().trim()
 
+  // Property 1: C### or D### pattern
+  if (upperRoom.match(/^[CD]\d{3}$/)) {
+    return "property1"
+  }
+
   // Property 3: A### 또는 B### 형식
   if (upperRoom.match(/^[AB]\d{3}$/)) {
     return "property3"
@@ -31,13 +36,10 @@ export function getPropertyFromRoomNumber(roomNumber: string): string {
     return "property4"
   }
 
+  // Property 2: Kariv ### pattern
   if (upperRoom.match(/^KARIV\s*\d+$/i)) {
     return "property2"
   }
-
-  // Property 1 & 2는 독립적인 PMS 사용 (Firebase 불필요)
-  // C###, D### → Property 1 (독립 PMS)
-  // Kariv ### → Property 2 (이제 Firebase 사용)
 
   // 기본값: property3 (기존 동작 유지)
   return "property3"
