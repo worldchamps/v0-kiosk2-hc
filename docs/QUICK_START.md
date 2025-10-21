@@ -112,9 +112,21 @@ npm run electron:dev
 \`\`\`
 
 ### Property1/2 (오버레이 모드)
+
+**오버레이 모드로 실행:**
+\`\`\`bash
+npm run electron:overlay
+\`\`\`
+
 - 화면 우측 상단에 "예약 확인" 버튼 표시
 - 버튼 클릭 시 팝업 창 열림
 - 체크인 완료 후 자동으로 원래 프로그램으로 복귀
+
+**또는 환경변수로 실행:**
+\`\`\`bash
+# .env.local에 OVERLAY_MODE=true 설정 후
+npm run electron:dev
+\`\`\`
 
 ### Property3/4 (전체화면 모드)
 - 전체화면 키오스크 앱 실행

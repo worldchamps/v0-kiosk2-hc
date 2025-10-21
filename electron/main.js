@@ -57,16 +57,16 @@ function createWindow() {
     if (isDev) {
       mainWindow.webContents.openDevTools()
     }
+
+    // 하드웨어 자동 연결 시도
+    setTimeout(() => {
+      connectBillAcceptor()
+      connectBillDispenser()
+    }, 2000)
   } else {
     console.log("[v0] Creating overlay button for Property1/2")
     createOverlayButton()
   }
-
-  // 하드웨어 자동 연결 시도
-  setTimeout(() => {
-    connectBillAcceptor()
-    connectBillDispenser()
-  }, 2000)
 }
 
 // 지폐 인식기 연결
@@ -89,44 +89,54 @@ async function connectBillAcceptor() {
     billAcceptorPort.open((err) => {
       if (err) {
         console.error("[v0] 지폐 인식기 연결 실패:", err.message)
-        mainWindow.webContents.send("bill-acceptor-status", {
-          connected: false,
-          error: err.message,
-        })
+        if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send("bill-acceptor-status", {
+            connected: false,
+            error: err.message,
+          })
+        }
         // 10초 후 재시도
         setTimeout(connectBillAcceptor, 10000)
         return
       }
 
       console.log("[v0] 지폐 인식기 연결 성공")
-      mainWindow.webContents.send("bill-acceptor-status", {
-        connected: true,
-      })
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("bill-acceptor-status", {
+          connected: true,
+        })
+      }
     })
 
     // 데이터 수신
     billAcceptorPort.on("data", (data) => {
       console.log("[v0] 지폐 인식기 데이터:", data)
-      mainWindow.webContents.send("bill-acceptor-data", {
-        data: Array.from(data),
-      })
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("bill-acceptor-data", {
+          data: Array.from(data),
+        })
+      }
     })
 
     // 에러 처리
     billAcceptorPort.on("error", (err) => {
       console.error("[v0] 지폐 인식기 에러:", err)
-      mainWindow.webContents.send("bill-acceptor-status", {
-        connected: false,
-        error: err.message,
-      })
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("bill-acceptor-status", {
+          connected: false,
+          error: err.message,
+        })
+      }
     })
 
     // 연결 끊김
     billAcceptorPort.on("close", () => {
       console.log("[v0] 지폐 인식기 연결 끊김")
-      mainWindow.webContents.send("bill-acceptor-status", {
-        connected: false,
-      })
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("bill-acceptor-status", {
+          connected: false,
+        })
+      }
       // 5초 후 재연결 시도
       setTimeout(connectBillAcceptor, 5000)
     })
@@ -155,40 +165,50 @@ async function connectBillDispenser() {
     billDispenserPort.open((err) => {
       if (err) {
         console.error("[v0] 지폐 방출기 연결 실패:", err.message)
-        mainWindow.webContents.send("bill-dispenser-status", {
-          connected: false,
-          error: err.message,
-        })
+        if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send("bill-dispenser-status", {
+            connected: false,
+            error: err.message,
+          })
+        }
         setTimeout(connectBillDispenser, 10000)
         return
       }
 
       console.log("[v0] 지폐 방출기 연결 성공")
-      mainWindow.webContents.send("bill-dispenser-status", {
-        connected: true,
-      })
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("bill-dispenser-status", {
+          connected: true,
+        })
+      }
     })
 
     billDispenserPort.on("data", (data) => {
       console.log("[v0] 지폐 방출기 데이터:", data)
-      mainWindow.webContents.send("bill-dispenser-data", {
-        data: Array.from(data),
-      })
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("bill-dispenser-data", {
+          data: Array.from(data),
+        })
+      }
     })
 
     billDispenserPort.on("error", (err) => {
       console.error("[v0] 지폐 방출기 에러:", err)
-      mainWindow.webContents.send("bill-dispenser-status", {
-        connected: false,
-        error: err.message,
-      })
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("bill-dispenser-status", {
+          connected: false,
+          error: err.message,
+        })
+      }
     })
 
     billDispenserPort.on("close", () => {
       console.log("[v0] 지폐 방출기 연결 끊김")
-      mainWindow.webContents.send("bill-dispenser-status", {
-        connected: false,
-      })
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("bill-dispenser-status", {
+          connected: false,
+        })
+      }
       setTimeout(connectBillDispenser, 5000)
     })
   } catch (error) {

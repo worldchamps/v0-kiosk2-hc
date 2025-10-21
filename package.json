@@ -6,8 +6,10 @@
   "scripts": {
     "build": "next build",
     "dev": "next dev",
+    "electron": "electron .",
     "electron:build": "next build && electron-builder",
     "electron:dev": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron:overlay": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && cross-env OVERLAY_MODE=true electron .\"",
     "postinstall": "electron-builder install-app-deps",
     "lint": "next lint",
     "start": "next start"
