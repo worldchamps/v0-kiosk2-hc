@@ -34,6 +34,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   })
   const [showAdminKeypad, setShowAdminKeypad] = useState(false)
   const [kioskLocation, setKioskLocation] = useState<KioskLocation>("A")
+  const [isPopupMode, setIsPopupMode] = useState(false)
   const router = useRouter()
 
   const adminPassword = "KIM1334**"
@@ -41,6 +42,17 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   useEffect(() => {
     const savedLocation = getKioskLocation()
     setKioskLocation(savedLocation)
+
+    if (typeof window !== "undefined") {
+      const popupMode = localStorage.getItem("popupMode") === "true"
+      setIsPopupMode(popupMode)
+
+      // If popup mode, start directly at reservation confirm screen
+      if (popupMode) {
+        console.log("[v0] Popup mode detected, starting at reservation confirm")
+        setCurrentScreen("reservationConfirm")
+      }
+    }
   }, [])
 
   useEffect(() => {
@@ -223,7 +235,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             onNavigate={handleNavigate}
             loading={loading}
             revealedInfo={revealedInfo}
-            kioskLocation={kioskLocation}
           />
         )}
 
@@ -233,6 +244,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             revealedInfo={revealedInfo}
             kioskLocation={kioskLocation}
             onNavigate={handleNavigate}
+            isPopupMode={isPopupMode}
           />
         )}
 
@@ -245,15 +257,17 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         )}
       </div>
 
-      <div className="absolute bottom-4 right-4">
-        <button
-          className="px-4 py-2 bg-gray-800 text-white rounded-lg opacity-70 hover:opacity-100 transition-opacity text-sm font-medium shadow-lg"
-          onClick={handleModeChangeClick}
-          aria-label="관리자 모드"
-        >
-          관리자
-        </button>
-      </div>
+      {!isPopupMode && (
+        <div className="absolute bottom-4 right-4">
+          <button
+            className="px-4 py-2 bg-gray-800 text-white rounded-lg opacity-70 hover:opacity-100 transition-opacity text-sm font-medium shadow-lg"
+            onClick={handleModeChangeClick}
+            aria-label="관리자 모드"
+          >
+            관리자
+          </button>
+        </div>
+      )}
 
       {showAdminKeypad && (
         <div className="fixed inset-0 z-50">

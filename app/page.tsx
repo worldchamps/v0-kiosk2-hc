@@ -16,6 +16,7 @@ function HomeContent() {
   useEffect(() => {
     const mode = searchParams.get("mode")
     const location = searchParams.get("location")?.toUpperCase()
+    const isPopup = searchParams.get("popup") === "true"
 
     if (mode === "kiosk" && location) {
       if (["A", "B", "D", "CAMP"].includes(location)) {
@@ -27,6 +28,14 @@ function HomeContent() {
       setAppMode("web")
       if (typeof window !== "undefined") {
         localStorage.setItem("appMode", "web")
+      }
+      setIsLoading(false)
+      return
+    } else if (mode === "kiosk" && isPopup) {
+      setAppMode("kiosk")
+      if (typeof window !== "undefined") {
+        localStorage.setItem("appMode", "kiosk")
+        localStorage.setItem("popupMode", "true")
       }
       setIsLoading(false)
       return
@@ -53,6 +62,7 @@ function HomeContent() {
   const handleChangeMode = () => {
     setAppMode(null)
     localStorage.removeItem("appMode")
+    localStorage.removeItem("popupMode")
   }
 
   useEffect(() => {

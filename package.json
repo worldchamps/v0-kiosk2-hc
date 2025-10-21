@@ -64,6 +64,7 @@
       ".next/**/*",
       "public/**/*",
       "electron/**/*",
+      "electron-config.json",
       "package.json",
       "node_modules/**/*"
     ],

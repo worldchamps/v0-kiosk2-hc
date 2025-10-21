@@ -1,10 +1,16 @@
 const { app, BrowserWindow, ipcMain } = require("electron")
 const path = require("path")
 const { SerialPort } = require("serialport")
+const { createOverlayButton } = require("./overlay-button")
 
 let mainWindow
 let billAcceptorPort = null
 let billDispenserPort = null
+
+const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
+const KIOSK_PROPERTY = process.env.KIOSK_PROPERTY || "property3"
+
+console.log(`[v0] Starting in ${OVERLAY_MODE ? "OVERLAY" : "FULLSCREEN"} mode for ${KIOSK_PROPERTY}`)
 
 // 시리얼 포트 설정 (나중에 설정 파일로 분리 가능)
 const BILL_ACCEPTOR_CONFIG = {
@@ -24,29 +30,36 @@ const BILL_DISPENSER_CONFIG = {
 }
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1920,
-    height: 1080,
-    fullscreen: true,
-    kiosk: false, // 개발 중에는 false, 배포 시 true
-    frame: true, // 개발 중에는 true, 배포 시 false
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
-  })
+  if (!OVERLAY_MODE) {
+    mainWindow = new BrowserWindow({
+      width: 1920,
+      height: 1080,
+      fullscreen: true,
+      kiosk: false, // 개발 중에는 false, 배포 시 true
+      frame: true, // 개발 중에는 true, 배포 시 false
+      webPreferences: {
+        preload: path.join(__dirname, "preload.js"),
+        nodeIntegration: false,
+        contextIsolation: true,
+      },
+    })
 
-  // 개발 모드: Next.js dev 서버
-  // 프로덕션: 빌드된 파일
-  const isDev = process.env.NODE_ENV !== "production"
-  const startUrl = isDev ? "http://localhost:3000" : `file://${path.join(__dirname, "../.next/server/app/index.html")}`
+    // 개발 모드: Next.js dev 서버
+    // 프로덕션: 빌드된 파일
+    const isDev = process.env.NODE_ENV !== "production"
+    const startUrl = isDev
+      ? "http://localhost:3000"
+      : `file://${path.join(__dirname, "../.next/server/app/index.html")}`
 
-  mainWindow.loadURL(startUrl)
+    mainWindow.loadURL(startUrl)
 
-  // 개발 모드에서는 DevTools 열기
-  if (isDev) {
-    mainWindow.webContents.openDevTools()
+    // 개발 모드에서는 DevTools 열기
+    if (isDev) {
+      mainWindow.webContents.openDevTools()
+    }
+  } else {
+    console.log("[v0] Creating overlay button for Property1/2")
+    createOverlayButton()
   }
 
   // 하드웨어 자동 연결 시도

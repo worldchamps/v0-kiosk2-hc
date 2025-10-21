@@ -23,6 +23,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // 유틸리티
   listSerialPorts: () => ipcRenderer.invoke("list-serial-ports"),
 
+  // 오버레이 모드 관련
+  send: (channel, data) => {
+    // 허용된 채널만 전송 가능
+    const validChannels = ["overlay-button-clicked", "checkin-complete", "close-popup"]
+    if (validChannels.includes(channel)) {
+      ipcRenderer.send(channel, data)
+    }
+  },
+
   // Electron 환경 확인
   isElectron: true,
 })

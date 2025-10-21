@@ -31,40 +31,120 @@ Continue building your app on:
 
 ---
 
-## PMS Integration
+## Features
 
-This kiosk integrates with local PMS (Property Management System) software using Firebase Realtime Database for real-time check-in automation.
+### Multi-Property Support
 
-### Quick Setup
+- ✅ **Property1 (C동, D동)** - Overlay button mode
+- ✅ **Property2 (Kariv)** - Overlay button mode
+- ✅ **Property3 (A동, B동)** - Fullscreen kiosk mode
+- ✅ **Property4 (Camp)** - Fullscreen kiosk mode
 
-1. **Firebase Setup** (5 minutes)
-   - Create Firebase project with Realtime Database
-   - Download service account key
-   - See [docs/FIREBASE_SETUP.md](docs/FIREBASE_SETUP.md)
+### Overlay Button System (Property1 & Property2)
 
-2. **Environment Variables**
-   - Add Firebase credentials to Vercel (Vars section in v0)
-   - See [.env.example](.env.example)
+- 🔘 Always-on-top button over existing EXE kiosk program
+- 🪟 Popup window for reservation check-in
+- 🔄 Automatic focus restoration to PMS program after check-in
+- ⚡ Seamless integration with legacy systems
 
-3. **Local PMS Listener**
-   - Install Python and Firebase Admin SDK
-   - Run `python scripts/pms_firebase_listener.py`
-   - See [docs/QUICK_START.md](docs/QUICK_START.md)
+### PMS Integration
 
-### Features
-
-- ✅ Real-time check-in notifications (no polling)
+- ✅ Real-time check-in notifications via Firebase
 - ✅ Automatic PMS room status updates via AutoHotkey
 - ✅ No API rate limits
 - ✅ Free Firebase tier sufficient for small properties
 - ✅ **Remote printing from external web apps**
 
-### Documentation
+### Hardware Integration
 
-- [Quick Start Guide](docs/QUICK_START.md) - Get started in 15 minutes
-- [Firebase Setup](docs/FIREBASE_SETUP.md) - Detailed Firebase configuration
-- [PMS Integration](docs/PMS_INTEGRATION.md) - Architecture and troubleshooting
-- [Remote Printing](docs/REMOTE_PRINTING.md) - Print room info from other apps
+- 🖨️ Receipt printer support (BK3-3, SAM4S)
+- 💵 Bill acceptor integration
+- 💸 Bill dispenser support
+- 🔌 Serial port communication via Electron
+
+---
+
+## Quick Setup
+
+### 1. Environment Variables
+
+Copy `.env.local.template` to `.env.local` and configure:
+
+\`\`\`env
+# Property Configuration
+KIOSK_PROPERTY=property1  # property1, property2, property3, property4
+OVERLAY_MODE=true         # true for Property1/2, false for Property3/4
+PMS_WINDOW_TITLE=Property1 PMS
+
+# Firebase & Google Sheets
+FIREBASE_PROJECT_ID=your-project-id
+GOOGLE_SHEETS_SPREADSHEET_ID=your-sheet-id
+# ... see .env.local.template for full list
+\`\`\`
+
+### 2. Development Mode
+
+\`\`\`bash
+npm install
+npm run electron:dev
+\`\`\`
+
+### 3. Production Build
+
+\`\`\`bash
+npm run electron:build
+\`\`\`
+
+Output: `dist/TheBeachStay Kiosk Setup 1.0.0.exe`
+
+---
+
+## Documentation
+
+- 📘 [Overlay Button System](docs/OVERLAY_BUTTON_SYSTEM.md) - Property1/2 overlay mode
+- 🏨 [Property Configuration](docs/PROPERTY_CONFIGURATION.md) - Multi-property setup
+- 🚀 [Deployment Guide](docs/DEPLOYMENT_GUIDE.md) - Production deployment
+- 🔧 [Electron Setup](ELECTRON_SETUP.md) - Hardware integration
+- 🌐 [Environment Setup](ENV_SETUP_GUIDE.md) - Environment variables
+- 🔥 [Firebase Setup](docs/FIREBASE_SETUP.md) - Firebase configuration
+- 🖨️ [Remote Printing](docs/REMOTE_PRINTING.md) - Print API documentation
+
+---
+
+## Architecture
+
+### Property1 & Property2 (Overlay Mode)
+
+\`\`\`
+┌─────────────────────────────────┐
+│  Existing EXE Kiosk Program     │
+│  ┌──────────────────┐           │
+│  │ Overlay Button   │ ← Electron│
+│  └──────────────────┘           │
+└─────────────────────────────────┘
+         ↓ Click
+┌─────────────────────────────────┐
+│  Popup Window (Web Kiosk)       │
+│  - Reservation Check            │
+│  - Check-in Process             │
+└─────────────────────────────────┘
+         ↓ Complete
+┌─────────────────────────────────┐
+│  Focus restored to EXE Program  │
+└─────────────────────────────────┘
+\`\`\`
+
+### Property3 & Property4 (Fullscreen Mode)
+
+\`\`\`
+┌─────────────────────────────────┐
+│  Fullscreen Kiosk App           │
+│  - Idle Screen                  │
+│  - Standby Screen               │
+│  - Reservation Flow             │
+│  - Check-in Complete            │
+└─────────────────────────────────┘
+\`\`\`
 
 ---
 
@@ -86,7 +166,20 @@ curl -X POST https://your-kiosk-app.vercel.app/api/remote-print \
 - 🖨️ Print room number and password remotely
 - 🔒 Secure API key authentication
 - 🔥 Real-time Firebase synchronization
-- 🏨 Automatic property routing (A/B → property3, CAMP → property4)
+- 🏨 Automatic property routing
 - 🚫 No guest names printed (privacy protection)
 
-See [docs/REMOTE_PRINTING.md](docs/REMOTE_PRINTING.md) for complete documentation.
+---
+
+## Support
+
+For issues or questions:
+1. Check documentation in `/docs` folder
+2. Review troubleshooting sections
+3. Contact development team
+
+---
+
+## License
+
+Private - All rights reserved
