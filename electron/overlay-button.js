@@ -1,77 +1,101 @@
 const { BrowserWindow, ipcMain } = require("electron")
 const path = require("path")
 const { exec } = require("child_process")
+const ref = require("ref-napi") // Declare the variable before using it
 
 let overlayButton = null
 let kioskPopup = null
-let topmostInterval = null
+let lightCheckInterval = null
+
+let user32 = null
+let SetWindowPos = null
+
+try {
+  const ffi = require("ffi-napi")
+
+  user32 = ffi.Library("user32", {
+    SetWindowPos: ["bool", ["pointer", "pointer", "int", "int", "int", "int", "uint"]],
+    SetForegroundWindow: ["bool", ["pointer"]],
+  })
+
+  SetWindowPos = user32.SetWindowPos
+  console.log("[v0] FFI loaded successfully - using native Windows API")
+} catch (error) {
+  console.warn("[v0] FFI not available, will use fallback methods:", error.message)
+}
 
 /**
- * PowerShell을 사용하여 강제로 최상위 유지 (FFI 없이)
+ * Windows API를 직접 호출하여 최상위 설정 (한 번만 호출, 매우 효율적)
  */
-function forceWindowToTop(window) {
-  if (!window || window.isDestroyed()) return
-
-  window.setAlwaysOnTop(true, "screen-saver", 1)
-  window.moveTop()
-  window.focus()
+function setWindowTopmostNative(window) {
+  if (!window || window.isDestroyed()) return false
 
   try {
     const hwnd = window.getNativeWindowHandle()
-    if (hwnd) {
-      const hwndValue = hwnd.readInt32LE ? hwnd.readInt32LE(0) : hwnd
+    if (!hwnd || !SetWindowPos) return false
 
-      // SetWindowPos를 사용하여 HWND_TOPMOST (-1) 설정
-      const psCommand = `
-        Add-Type -TypeDefinition @"
-          using System;
-          using System.Runtime.InteropServices;
-          public class Win32 {
-            [DllImport("user32.dll")]
-            public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-          }
-"@
-        [Win32]::SetWindowPos([IntPtr]${hwndValue}, [IntPtr](-1), 0, 0, 0, 0, 0x0003)
-      `
+    const HWND_TOPMOST = ref.alloc("pointer", -1)
+    const SWP_NOMOVE = 0x0002
+    const SWP_NOSIZE = 0x0001
+    const SWP_SHOWWINDOW = 0x0040
 
-      exec(`powershell -command "${psCommand.replace(/"/g, '\\"')}"`, (error) => {
-        if (error) {
-          console.error("[v0] PowerShell SetWindowPos failed:", error.message)
-        } else {
-          console.log("[v0] Successfully set window to HWND_TOPMOST")
-        }
-      })
-    }
+    const result = SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+
+    console.log("[v0] Native SetWindowPos called, result:", result)
+    return result
   } catch (error) {
-    console.error("[v0] Error in forceWindowToTop:", error)
+    console.error("[v0] Native SetWindowPos failed:", error)
+    return false
   }
 }
 
 /**
- * 주기적으로 최상위 유지 (50ms마다 - 더 공격적으로)
+ * Electron 내장 메서드로 최상위 유지 (가벼운 대체 방법)
+ */
+function keepOnTopLight(window) {
+  if (!window || window.isDestroyed()) return
+
+  window.setAlwaysOnTop(true, "screen-saver", 1)
+  window.moveTop()
+}
+
+/**
+ * 최상위 유지 시작 (FFI 사용 시 매우 가벼움)
  */
 function startTopmostKeeper(window) {
-  if (topmostInterval) {
-    clearInterval(topmostInterval)
+  stopTopmostKeeper()
+
+  // FFI 사용 가능하면 한 번만 호출
+  if (SetWindowPos) {
+    setWindowTopmostNative(window)
+
+    // 5초마다 한 번씩만 확인 (매우 가벼움)
+    lightCheckInterval = setInterval(() => {
+      if (window && !window.isDestroyed()) {
+        keepOnTopLight(window)
+      }
+    }, 5000)
+
+    console.log("[v0] Using FFI native method (very efficient, 5s check)")
+  } else {
+    // FFI 없으면 Electron 메서드만 사용 (1초마다)
+    lightCheckInterval = setInterval(() => {
+      if (window && !window.isDestroyed()) {
+        keepOnTopLight(window)
+      }
+    }, 1000)
+
+    console.log("[v0] Using Electron fallback method (1s check)")
   }
-
-  topmostInterval = setInterval(() => {
-    if (window && !window.isDestroyed()) {
-      forceWindowToTop(window)
-    }
-  }, 50)
-
-  console.log("[v0] Started aggressive topmost keeper (50ms interval)")
 }
 
 /**
  * 최상위 유지 중지
  */
 function stopTopmostKeeper() {
-  if (topmostInterval) {
-    clearInterval(topmostInterval)
-    topmostInterval = null
-    console.log("[v0] Stopped topmost keeper interval")
+  if (lightCheckInterval) {
+    clearInterval(lightCheckInterval)
+    lightCheckInterval = null
   }
 }
 
@@ -111,17 +135,22 @@ function createOverlayButton() {
 
   overlayButton.webContents.on("did-finish-load", () => {
     console.log("[v0] Overlay button page loaded")
-    forceWindowToTop(overlayButton)
+    if (SetWindowPos) {
+      setWindowTopmostNative(overlayButton)
+    } else {
+      keepOnTopLight(overlayButton)
+    }
   })
 
-  overlayButton.webContents.openDevTools({ mode: "detach" })
+  if (process.env.NODE_ENV !== "production") {
+    overlayButton.webContents.openDevTools({ mode: "detach" })
+  }
 
   overlayButton.setIgnoreMouseEvents(false)
 
-  forceWindowToTop(overlayButton)
   startTopmostKeeper(overlayButton)
 
-  console.log("[v0] Overlay button created with aggressive topmost")
+  console.log("[v0] Overlay button created with efficient topmost")
 
   return overlayButton
 }
@@ -159,7 +188,11 @@ function createKioskPopup() {
   kioskPopup.loadURL(startUrl)
 
   kioskPopup.webContents.on("did-finish-load", () => {
-    forceWindowToTop(kioskPopup)
+    if (SetWindowPos) {
+      setWindowTopmostNative(kioskPopup)
+    } else {
+      keepOnTopLight(kioskPopup)
+    }
     startTopmostKeeper(kioskPopup)
   })
 
@@ -168,13 +201,17 @@ function createKioskPopup() {
     kioskPopup = null
     if (overlayButton) {
       overlayButton.show()
-      forceWindowToTop(overlayButton)
+      if (SetWindowPos) {
+        setWindowTopmostNative(overlayButton)
+      } else {
+        keepOnTopLight(overlayButton)
+      }
       startTopmostKeeper(overlayButton)
     }
     console.log("[v0] Kiosk popup closed")
   })
 
-  console.log("[v0] Kiosk popup created with aggressive topmost")
+  console.log("[v0] Kiosk popup created with efficient topmost")
 
   return kioskPopup
 }
