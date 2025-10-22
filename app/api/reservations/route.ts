@@ -10,8 +10,9 @@ export async function GET(request: NextRequest) {
     const guestName = searchParams.get("name")
     const todayOnly = searchParams.get("todayOnly") === "true"
     const kioskProperty = searchParams.get("kioskProperty")
+    const searchAllProperties = searchParams.get("searchAll") === "true"
 
-    console.log("[v0] Reservations API called with kioskProperty:", kioskProperty)
+    console.log("[v0] Reservations API called with kioskProperty:", kioskProperty, "searchAll:", searchAllProperties)
 
     const sheets = createSheetsClient()
     const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID || ""
@@ -60,7 +61,7 @@ export async function GET(request: NextRequest) {
         continue
       }
 
-      if (kioskProperty) {
+      if (kioskProperty && !searchAllProperties) {
         const place = row[SHEET_COLUMNS.PLACE] || ""
         const roomNumber = row[SHEET_COLUMNS.ROOM_NUMBER] || ""
 
@@ -95,8 +96,15 @@ export async function GET(request: NextRequest) {
         console.log("[v0] Including reservation - property match!")
       }
 
+      const place = row[SHEET_COLUMNS.PLACE] || ""
+      const roomNumber = row[SHEET_COLUMNS.ROOM_NUMBER] || ""
+      let detectedProperty = getPropertyFromRoomNumber(roomNumber)
+      if (!detectedProperty) {
+        detectedProperty = getPropertyFromPlace(place)
+      }
+
       reservations.push({
-        place: row[SHEET_COLUMNS.PLACE] || "",
+        place: place,
         guestName: rowGuestName,
         reservationId: row[SHEET_COLUMNS.RESERVATION_ID] || "",
         bookingPlatform: row[SHEET_COLUMNS.BOOKING_PLATFORM] || "",
@@ -105,11 +113,12 @@ export async function GET(request: NextRequest) {
         phoneNumber: row[SHEET_COLUMNS.PHONE_NUMBER] || "",
         checkInDate: checkInDate,
         checkOutDate: checkOutDate,
-        roomNumber: row[SHEET_COLUMNS.ROOM_NUMBER] || "",
+        roomNumber: roomNumber,
         password: row[SHEET_COLUMNS.PASSWORD] || "",
         checkInStatus: checkInStatus,
         checkInTime: row[SHEET_COLUMNS.CHECK_IN_TIME] || "",
         floor: row[SHEET_COLUMNS.FLOOR] || "",
+        property: detectedProperty,
       })
     }
 

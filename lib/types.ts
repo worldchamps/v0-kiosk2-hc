@@ -36,3 +36,21 @@ export interface RoomStatus {
   checkOutDate?: string
   lastUpdated: string
 }
+
+export interface Reservation {
+  place: string
+  guestName: string
+  reservationId: string
+  bookingPlatform: string
+  roomType: string
+  price: string
+  phoneNumber: string
+  checkInDate: string
+  checkOutDate: string
+  roomNumber: string
+  password: string
+  checkInStatus: string
+  checkInTime: string
+  floor: string
+  property?: "property1" | "property2" | "property3" | "property4"
+}

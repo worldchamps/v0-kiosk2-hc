@@ -17,6 +17,7 @@ import { stopAllAudio, pauseBGM, resumeBGM } from "@/lib/audio-utils"
 import { PrintQueueListener } from "@/components/print-queue-listener"
 import { getKioskPropertyId, type PropertyId } from "@/lib/property-utils"
 import PropertyMismatchDialog from "@/components/property-mismatch-dialog"
+import PropertyRedirectDialog from "@/components/property-redirect-dialog"
 
 interface KioskLayoutProps {
   onChangeMode: () => void
@@ -44,6 +45,8 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     kioskProperty: PropertyId
   } | null>(null)
   const [adminOverride, setAdminOverride] = useState(false)
+  const [showPropertyRedirect, setShowPropertyRedirect] = useState(false)
+  const [redirectTargetProperty, setRedirectTargetProperty] = useState<PropertyId | null>(null)
   const router = useRouter()
 
   const adminPassword = "KIM1334**"
@@ -56,20 +59,16 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     setKioskProperty(savedProperty)
 
     if (typeof window !== "undefined") {
-      // Check URL for popup parameter
       const urlParams = new URLSearchParams(window.location.search)
       const popupMode = urlParams.get("popup") === "true"
       setIsPopupMode(popupMode)
 
-      // If popup mode via URL, start directly at reservation confirm screen
       if (popupMode) {
         console.log("[v0] Popup mode detected from URL, starting at reservation confirm")
         setCurrentScreen("reservationConfirm")
       } else {
-        // Normal kiosk mode - always start at idle screen
         console.log("[v0] Normal kiosk mode, starting at idle screen")
         setCurrentScreen("idle")
-        // Clear any old popup mode setting
         localStorage.removeItem("popupMode")
       }
     }
@@ -155,7 +154,31 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
           setCurrentScreen("reservationDetails")
         }
       } else {
-        setCurrentScreen("reservationNotFound")
+        console.log("[v0] No reservation found in current property, searching all properties...")
+        const allPropertiesResponse = await fetch(
+          `/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false&searchAll=true`,
+          {
+            method: "GET",
+          },
+        )
+
+        if (!allPropertiesResponse.ok) {
+          throw new Error(`API error: ${allPropertiesResponse.status}`)
+        }
+
+        const allPropertiesData = await allPropertiesResponse.json()
+
+        if (allPropertiesData.reservations && allPropertiesData.reservations.length > 0) {
+          const foundReservation = allPropertiesData.reservations[0]
+          const targetProperty = foundReservation.property
+
+          console.log("[v0] Reservation found in different property:", targetProperty)
+
+          setRedirectTargetProperty(targetProperty)
+          setShowPropertyRedirect(true)
+        } else {
+          setCurrentScreen("reservationNotFound")
+        }
       }
     } catch (err) {
       console.error("Error checking reservation:", err)
@@ -228,7 +251,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   const handleAdminOverride = () => {
     setShowPropertyMismatch(false)
     setAdminOverride(true)
-    // Retry check-in with admin override
     handleCheckIn()
   }
 
@@ -336,6 +358,18 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             setCurrentScreen("reservationConfirm")
           }}
           onAdminOverride={handleAdminOverride}
+        />
+      )}
+
+      {showPropertyRedirect && redirectTargetProperty && (
+        <PropertyRedirectDialog
+          targetProperty={redirectTargetProperty}
+          guestName={guestName}
+          onClose={() => {
+            setShowPropertyRedirect(false)
+            setRedirectTargetProperty(null)
+            setCurrentScreen("reservationConfirm")
+          }}
         />
       )}
 
