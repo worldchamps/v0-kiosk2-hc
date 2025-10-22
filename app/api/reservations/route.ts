@@ -2,12 +2,14 @@ import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { createSheetsClient, SHEET_COLUMNS } from "@/lib/google-sheets"
 import { getCurrentDateKST, normalizeDate } from "@/lib/date-utils"
+import { getPropertyFromPlace, getPropertyFromRoomNumber } from "@/lib/property-utils"
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const guestName = searchParams.get("name")
     const todayOnly = searchParams.get("todayOnly") === "true"
+    const kioskProperty = searchParams.get("kioskProperty")
 
     const sheets = createSheetsClient()
     const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID || ""
@@ -54,6 +56,19 @@ export async function GET(request: NextRequest) {
       // Filter 3: if todayOnly, skip if check-in date is before today
       if (todayOnly && checkInDate < today) {
         continue
+      }
+
+      if (kioskProperty) {
+        const place = row[SHEET_COLUMNS.PLACE] || ""
+        const roomNumber = row[SHEET_COLUMNS.ROOM_NUMBER] || ""
+
+        // Determine property from place or room number
+        const reservationProperty = place ? getPropertyFromPlace(place) : getPropertyFromRoomNumber(roomNumber)
+
+        // Skip if property doesn't match
+        if (reservationProperty !== kioskProperty) {
+          continue
+        }
       }
 
       reservations.push({

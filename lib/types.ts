@@ -2,7 +2,7 @@
 
 export interface PMSAction {
   id: string
-  property: "property3" | "property4"
+  property: "property1" | "property2" | "property3" | "property4"
   action: "checkin" | "checkout" | "payment-checkin" | "remote-print"
   roomNumber: string
   guestName?: string // remote-print에서는 선택사항
@@ -23,7 +23,7 @@ export interface PrintJob {
   roomNumber: string
   password: string
   status: "pending" | "completed"
-  property: "property3" | "property4"
+  property: "property1" | "property2" | "property3" | "property4"
   createdAt: string
   completedAt: string | null
 }

@@ -3,6 +3,8 @@ import type { NextRequest } from "next/server"
 import { headers } from "next/headers"
 import { createSheetsClient, SHEET_COLUMNS } from "@/lib/google-sheets"
 import { addToPMSQueue } from "@/lib/firebase-admin"
+import { getPropertyFromPlace, getPropertyFromRoomNumber, canCheckInAtKiosk } from "@/lib/property-utils"
+import type { PropertyId } from "@/lib/property-utils"
 
 // API Key for authentication
 const API_KEY = process.env.API_KEY || ""
@@ -28,7 +30,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { reservationId } = body
+    const { reservationId, kioskProperty, adminOverride = false } = body
 
     if (!reservationId) {
       return NextResponse.json({ error: "Reservation ID is required" }, { status: 400 })
@@ -67,10 +69,37 @@ export async function POST(request: NextRequest) {
     }
 
     const roomNumber = reservationData[SHEET_COLUMNS.ROOM_NUMBER] || ""
+    const place = reservationData[SHEET_COLUMNS.PLACE] || ""
     const guestName = reservationData[SHEET_COLUMNS.GUEST_NAME] || ""
     const checkInDate = reservationData[SHEET_COLUMNS.CHECK_IN_DATE] || ""
     const password = reservationData[SHEET_COLUMNS.PASSWORD] || ""
     const floor = reservationData[SHEET_COLUMNS.FLOOR] || ""
+
+    if (kioskProperty) {
+      const reservationProperty = place ? getPropertyFromPlace(place) : getPropertyFromRoomNumber(roomNumber)
+
+      const validation = canCheckInAtKiosk(
+        reservationProperty as PropertyId,
+        kioskProperty as PropertyId,
+        adminOverride,
+      )
+
+      if (!validation.allowed) {
+        return NextResponse.json(
+          {
+            error: "Property mismatch",
+            message: validation.reason,
+            reservationProperty,
+            kioskProperty,
+          },
+          { status: 403 },
+        )
+      }
+
+      if (adminOverride) {
+        console.log(`[v0] Admin override used for check-in: ${reservationId} at ${kioskProperty}`)
+      }
+    }
 
     const checkInTime = new Date().toISOString()
 

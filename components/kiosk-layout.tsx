@@ -15,6 +15,8 @@ import { useRouter } from "next/navigation"
 import AdminKeypad from "@/components/admin-keypad"
 import { stopAllAudio, pauseBGM, resumeBGM } from "@/lib/audio-utils"
 import { PrintQueueListener } from "@/components/print-queue-listener"
+import { getKioskPropertyId, type PropertyId } from "@/lib/property-utils"
+import PropertyMismatchDialog from "@/components/property-mismatch-dialog"
 
 interface KioskLayoutProps {
   onChangeMode: () => void
@@ -35,6 +37,13 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   const [showAdminKeypad, setShowAdminKeypad] = useState(false)
   const [kioskLocation, setKioskLocation] = useState<KioskLocation>("A")
   const [isPopupMode, setIsPopupMode] = useState(false)
+  const [kioskProperty, setKioskProperty] = useState<PropertyId>("property3")
+  const [showPropertyMismatch, setShowPropertyMismatch] = useState(false)
+  const [mismatchData, setMismatchData] = useState<{
+    reservationProperty: PropertyId
+    kioskProperty: PropertyId
+  } | null>(null)
+  const [adminOverride, setAdminOverride] = useState(false)
   const router = useRouter()
 
   const adminPassword = "KIM1334**"
@@ -42,6 +51,9 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   useEffect(() => {
     const savedLocation = getKioskLocation()
     setKioskLocation(savedLocation)
+
+    const savedProperty = getKioskPropertyId()
+    setKioskProperty(savedProperty)
 
     if (typeof window !== "undefined") {
       const popupMode = localStorage.getItem("popupMode") === "true"
@@ -112,9 +124,12 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     setError("")
 
     try {
-      const response = await fetch(`/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false`, {
-        method: "GET",
-      })
+      const response = await fetch(
+        `/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false&kioskProperty=${kioskProperty}`,
+        {
+          method: "GET",
+        },
+      )
 
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`)
@@ -157,8 +172,21 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         },
         body: JSON.stringify({
           reservationId: reservationData.reservationId,
+          kioskProperty: kioskProperty,
+          adminOverride: adminOverride,
         }),
       })
+
+      if (response.status === 403) {
+        const errorData = await response.json()
+        setMismatchData({
+          reservationProperty: errorData.reservationProperty,
+          kioskProperty: errorData.kioskProperty,
+        })
+        setShowPropertyMismatch(true)
+        setLoading(false)
+        return
+      }
 
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`)
@@ -174,6 +202,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         })
       }
 
+      setAdminOverride(false)
       setCurrentScreen("checkInComplete")
     } catch (err) {
       console.error("Error during check-in:", err)
@@ -186,6 +215,13 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   const handleSelectReservation = (reservation) => {
     setReservationData(reservation)
     setCurrentScreen("reservationDetails")
+  }
+
+  const handleAdminOverride = () => {
+    setShowPropertyMismatch(false)
+    setAdminOverride(true)
+    // Retry check-in with admin override
+    handleCheckIn()
   }
 
   return (
@@ -281,6 +317,18 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             adminPassword={adminPassword}
           />
         </div>
+      )}
+
+      {showPropertyMismatch && mismatchData && (
+        <PropertyMismatchDialog
+          reservationProperty={mismatchData.reservationProperty}
+          kioskProperty={mismatchData.kioskProperty}
+          onClose={() => {
+            setShowPropertyMismatch(false)
+            setCurrentScreen("reservationConfirm")
+          }}
+          onAdminOverride={handleAdminOverride}
+        />
       )}
 
       <PrintQueueListener />

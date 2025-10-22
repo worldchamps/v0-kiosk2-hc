@@ -67,14 +67,14 @@ function createOverlayButton() {
   const { width: screenWidth, height: screenHeight } = primaryDisplay.bounds
   const buttonWidth = 220
   const buttonHeight = 100
-  const centerX = Math.floor((screenWidth - buttonWidth) / 2)
-  const centerY = Math.floor((screenHeight - buttonHeight) / 2)
+  const topLeftX = 20 // 20px from left edge
+  const topLeftY = 20 // 20px from top edge
 
   overlayButton = new BrowserWindow({
     width: buttonWidth,
     height: buttonHeight,
-    x: centerX, // Center horizontally
-    y: centerY, // Center vertically
+    x: topLeftX, // Top-left positioning
+    y: topLeftY, // Top-left positioning
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -245,19 +245,17 @@ ipcMain.on("overlay-button-clicked", () => {
 })
 
 ipcMain.on("checkin-complete", () => {
-  console.log("[v0] IPC: checkin-complete received, preparing to close popup")
+  console.log("[v0] IPC: checkin-complete received, closing popup immediately")
 
-  setTimeout(() => {
-    if (kioskPopup) {
-      kioskPopup.close()
-    }
+  if (kioskPopup) {
+    kioskPopup.close()
+  }
 
-    restorePMSFocus()
+  restorePMSFocus()
 
-    if (overlayButton) {
-      overlayButton.show()
-    }
-  }, 5000)
+  if (overlayButton) {
+    overlayButton.show()
+  }
 })
 
 ipcMain.on("close-popup", () => {
