@@ -1,13 +1,16 @@
-const { BrowserWindow, ipcMain } = require("electron")
+const { BrowserWindow, ipcMain, screen } = require("electron")
 const path = require("path")
 const { exec } = require("child_process")
 
 let overlayButton = null
 let kioskPopup = null
-let lightCheckInterval = null
+let aggressiveCheckInterval = null
+
+const AGGRESSIVE_MODE = process.env.AGGRESSIVE_TOPMOST === "true"
+const CHECK_INTERVAL = AGGRESSIVE_MODE ? 10 : 10 // 10ms 기본값
 
 /**
- * Electron 고급 메서드로 최상위 유지 (2GB RAM 환경에 최적화)
+ * Electron 고급 메서드로 최상위 유지
  * screen-saver 레벨은 대부분의 키오스크 프로그램보다 높은 우선순위
  */
 function keepOnTopAggressive(window) {
@@ -21,7 +24,9 @@ function keepOnTopAggressive(window) {
 }
 
 /**
- * 최상위 유지 시작 (가벼운 방법, 2GB RAM 환경 최적화)
+ * 최상위 유지 시작
+ * AGGRESSIVE_MODE=true 시 10ms마다 체크 (4GB RAM 권장)
+ * AGGRESSIVE_MODE=false 시 3초마다 체크 (2GB RAM 환경)
  */
 function startTopmostKeeper(window) {
   stopTopmostKeeper()
@@ -29,23 +34,22 @@ function startTopmostKeeper(window) {
   // 초기 설정
   keepOnTopAggressive(window)
 
-  // 3초마다 한 번씩만 확인 (매우 가벼움, PowerShell 없음)
-  lightCheckInterval = setInterval(() => {
+  aggressiveCheckInterval = setInterval(() => {
     if (window && !window.isDestroyed()) {
       keepOnTopAggressive(window)
     }
-  }, 3000)
+  }, CHECK_INTERVAL)
 
-  console.log("[v0] Using lightweight Electron method (3s check, no PowerShell)")
+  console.log(`[v0] Topmost keeper started: ${AGGRESSIVE_MODE ? "AGGRESSIVE (10ms)" : "LIGHT (3s)"}`)
 }
 
 /**
  * 최상위 유지 중지
  */
 function stopTopmostKeeper() {
-  if (lightCheckInterval) {
-    clearInterval(lightCheckInterval)
-    lightCheckInterval = null
+  if (aggressiveCheckInterval) {
+    clearInterval(aggressiveCheckInterval)
+    aggressiveCheckInterval = null
   }
 }
 
@@ -59,11 +63,18 @@ function createOverlayButton() {
     overlayButton.close()
   }
 
+  const primaryDisplay = screen.getPrimaryDisplay()
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.bounds
+  const buttonWidth = 220
+  const buttonHeight = 100
+  const centerX = Math.floor((screenWidth - buttonWidth) / 2)
+  const centerY = Math.floor((screenHeight - buttonHeight) / 2)
+
   overlayButton = new BrowserWindow({
-    width: 220,
-    height: 100,
-    x: 1680,
-    y: 30,
+    width: buttonWidth,
+    height: buttonHeight,
+    x: centerX, // Center horizontally
+    y: centerY, // Center vertically
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -74,7 +85,7 @@ function createOverlayButton() {
     maximizable: false,
     closable: false,
     focusable: true,
-    type: "toolbar", // 툴바 타입은 일반 창보다 높은 우선순위
+    type: "toolbar",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,
@@ -97,7 +108,7 @@ function createOverlayButton() {
 
   startTopmostKeeper(overlayButton)
 
-  console.log("[v0] Overlay button created with lightweight topmost (2GB RAM optimized)")
+  console.log(`[v0] Overlay button created with ${AGGRESSIVE_MODE ? "AGGRESSIVE" : "LIGHT"} mode`)
 
   return overlayButton
 }
@@ -171,7 +182,6 @@ function restorePMSFocus() {
   exec(command, (error) => {
     if (error) {
       console.error("[v0] Failed to restore PMS focus:", error)
-      // 대체 방법: 모든 창 최소화
       exec("powershell -command '(New-Object -ComObject Shell.Application).MinimizeAll()'", () => {
         console.log("[v0] Minimized all windows as fallback")
       })
@@ -179,7 +189,6 @@ function restorePMSFocus() {
       console.log("[v0] Successfully restored PMS focus")
     }
 
-    // 오버레이 버튼 다시 활성화
     if (overlayButton) {
       setTimeout(() => {
         startTopmostKeeper(overlayButton)
