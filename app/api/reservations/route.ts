@@ -37,20 +37,21 @@ export async function GET(request: NextRequest) {
     for (const row of rows) {
       const rowGuestName = row[SHEET_COLUMNS.GUEST_NAME] || ""
       const checkInStatus = row[SHEET_COLUMNS.CHECK_IN_STATUS] || ""
-      const checkInDate = row[SHEET_COLUMNS.CHECK_IN_DATE] ? normalizeDate(row[SHEET_COLUMNS.CHECK_IN_DATE]) : ""
-      const checkOutDate = row[SHEET_COLUMNS.CHECK_OUT_DATE] ? normalizeDate(row[SHEET_COLUMNS.CHECK_OUT_DATE]) : ""
 
-      // Filter: skip if already checked in
+      // Filter 1: skip if already checked in (no date normalization needed)
       if (checkInStatus && checkInStatus.trim() !== "") {
         continue
       }
 
-      // Filter: if searching by name, only include matching names
+      // Filter 2: if searching by name, only include matching names (no date normalization needed)
       if (guestName && rowGuestName !== guestName) {
         continue
       }
 
-      // Filter: if todayOnly, skip if check-in date is before today
+      const checkInDate = row[SHEET_COLUMNS.CHECK_IN_DATE] ? normalizeDate(row[SHEET_COLUMNS.CHECK_IN_DATE]) : ""
+      const checkOutDate = row[SHEET_COLUMNS.CHECK_OUT_DATE] ? normalizeDate(row[SHEET_COLUMNS.CHECK_OUT_DATE]) : ""
+
+      // Filter 3: if todayOnly, skip if check-in date is before today
       if (todayOnly && checkInDate < today) {
         continue
       }
