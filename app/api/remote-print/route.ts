@@ -7,8 +7,8 @@ import { db, getPropertyFromRoomNumber } from "@/lib/firebase-admin"
 const API_KEY = process.env.API_KEY || ""
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || ""
 
-function authenticateRequest(request: NextRequest) {
-  const headersList = headers()
+async function authenticateRequest(request: NextRequest) {
+  const headersList = await headers()
   const apiKey = headersList.get("x-api-key")
 
   if (!apiKey) {
@@ -21,7 +21,7 @@ function authenticateRequest(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Authenticate the request
-    if (!authenticateRequest(request)) {
+    if (!(await authenticateRequest(request))) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 

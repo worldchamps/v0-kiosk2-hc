@@ -8,9 +8,8 @@ import { addToPMSQueue } from "@/lib/firebase-admin"
 const API_KEY = process.env.API_KEY || ""
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || ""
 
-// Update the authentication function
-function authenticateRequest(request: NextRequest) {
-  const headersList = headers()
+async function authenticateRequest(request: NextRequest) {
+  const headersList = await headers()
   const apiKey = headersList.get("x-api-key")
 
   // 클라이언트에서 API 키 없이 호출할 수 있도록 허용
@@ -24,7 +23,7 @@ function authenticateRequest(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Authenticate the request
-    if (!authenticateRequest(request)) {
+    if (!(await authenticateRequest(request))) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
@@ -42,10 +41,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Spreadsheet ID not configured" }, { status: 500 })
     }
 
-    // First, get all reservations to find the row index
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "Reservations!A2:C", // Just need place, guestName, and reservationId columns
+      range: "Reservations!A94:C",
     })
 
     const rows = response.data.values
@@ -57,7 +55,7 @@ export async function POST(request: NextRequest) {
     let rowIndex = -1
     for (let i = 0; i < rows.length; i++) {
       if (rows[i][SHEET_COLUMNS.RESERVATION_ID] === reservationId) {
-        rowIndex = i + 2 // +2 because we start at A2 (1-indexed)
+        rowIndex = i + 94 // +94 because we start at A94
         break
       }
     }
@@ -66,38 +64,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Reservation not found" }, { status: 404 })
     }
 
-    // Get the reservation data to return the room number
+    // Get the full reservation data for the matched row
     const reservationResponse = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `Reservations!A${rowIndex}:N${rowIndex}`, // 범위를 N열까지 확장
+      range: `Reservations!A${rowIndex}:N${rowIndex}`,
     })
 
     const reservationData = reservationResponse.data.values?.[0] || []
     const roomNumber = reservationData[SHEET_COLUMNS.ROOM_NUMBER] || ""
     const guestName = reservationData[SHEET_COLUMNS.GUEST_NAME] || ""
     const checkInDate = reservationData[SHEET_COLUMNS.CHECK_IN_DATE] || ""
-
     const password = reservationData[SHEET_COLUMNS.PASSWORD] || ""
     const floor = reservationData[SHEET_COLUMNS.FLOOR] || ""
 
-    // Update the check-in status
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `Reservations!${String.fromCharCode(65 + SHEET_COLUMNS.CHECK_IN_STATUS)}${rowIndex}`,
-      valueInputOption: "USER_ENTERED",
-      requestBody: {
-        values: [["Checked In"]],
-      },
-    })
-
-    // Update the check-in timestamp
     const checkInTime = new Date().toISOString()
-    await sheets.spreadsheets.values.update({
+    await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId,
-      range: `Reservations!${String.fromCharCode(65 + SHEET_COLUMNS.CHECK_IN_TIME)}${rowIndex}`,
-      valueInputOption: "USER_ENTERED",
       requestBody: {
-        values: [[checkInTime]],
+        valueInputOption: "USER_ENTERED",
+        data: [
+          {
+            range: `Reservations!${String.fromCharCode(65 + SHEET_COLUMNS.CHECK_IN_STATUS)}${rowIndex}`,
+            values: [["Checked In"]],
+          },
+          {
+            range: `Reservations!${String.fromCharCode(65 + SHEET_COLUMNS.CHECK_IN_TIME)}${rowIndex}`,
+            values: [[checkInTime]],
+          },
+        ],
       },
     })
 
