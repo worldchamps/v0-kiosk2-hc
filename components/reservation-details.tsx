@@ -33,6 +33,7 @@ interface ReservationDetailsProps {
     roomNumber?: string
     password?: string
   }
+  isPopupMode?: boolean
 }
 
 export default function ReservationDetails({
@@ -41,6 +42,7 @@ export default function ReservationDetails({
   onNavigate,
   loading = false,
   revealedInfo = {},
+  isPopupMode = false,
 }: ReservationDetailsProps) {
   const [checkInComplete, setCheckInComplete] = useState(false)
   const [roomImagePath, setRoomImagePath] = useState("/hotel-floor-plan.png")
@@ -56,21 +58,16 @@ export default function ReservationDetails({
     enabled: true,
   })
 
-  // 객실 이미지 경로 설정
   useEffect(() => {
     setCheckInComplete(false)
 
-    // Reset image state
     setRoomImagePath("/hotel-floor-plan.png")
     setImageExists(true)
 
-    // 예약이 확인되었을 때 음성 재생
     playAudio("RESERVATION_FOUND")
 
-    // Update room image when reservation or revealed info changes
     const updateRoomImage = async () => {
       try {
-        // Check-in complete after object number has been revealed
         const roomNumber = revealedInfo?.roomNumber || reservation?.roomNumber || ""
 
         if (roomNumber && reservation?.roomType) {
@@ -79,7 +76,6 @@ export default function ReservationDetails({
           const imagePath = getRoomImagePath(reservation.roomType, roomNumber)
           console.log("Generated image path:", imagePath)
 
-          // Check if image exists
           const exists = await checkImageExists(imagePath)
           console.log("Image exists:", exists)
 
@@ -88,7 +84,7 @@ export default function ReservationDetails({
             setImageExists(true)
           } else {
             console.warn(`Room image not found: ${imagePath}`)
-            setRoomImagePath("/hotel-floor-plan.png") // Default image
+            setRoomImagePath("/hotel-floor-plan.png")
           }
         } else {
           console.log("Missing room number or type:", { roomNumber, roomType: reservation?.roomType })
@@ -105,15 +101,34 @@ export default function ReservationDetails({
   if (!reservation) return null
 
   const handleCheckIn = async () => {
-    // 체크인 처리 후 객실 번호와 비밀번호 표시
-    await onCheckIn()
-    setCheckInComplete(true)
+    if (isPopupMode) {
+      // Popup mode: Close window directly without showing check-in complete screen
+      await onCheckIn()
+
+      if (typeof window !== "undefined" && window.electronAPI) {
+        window.electronAPI.send("checkin-complete")
+      }
+    } else {
+      // Normal mode: Show check-in complete screen
+      await onCheckIn()
+      setCheckInComplete(true)
+    }
   }
 
-  // 객실 번호와 비밀번호가 공개되었는지 확인
+  const handleBackClick = () => {
+    if (isPopupMode) {
+      // Close Electron popup window
+      if (typeof window !== "undefined" && window.electronAPI) {
+        window.electronAPI.send("checkin-complete")
+      }
+    } else {
+      // Normal mode: navigate to standby
+      onNavigate("standby")
+    }
+  }
+
   const hasRevealedInfo = !!(revealedInfo?.roomNumber || revealedInfo?.password)
 
-  // 표시할 객실 번호와 비밀번호 (체크인 완료 후에만 표시)
   const displayRoomNumber = revealedInfo?.roomNumber || reservation.roomNumber || ""
   const displayPassword = revealedInfo?.password || reservation.password || ""
 
@@ -168,7 +183,6 @@ export default function ReservationDetails({
                   <p className="font-medium">{formatDateKorean(reservation.checkOutDate)}</p>
                 </div>
 
-                {/* 객실 번호와 비밀번호 표시 영역 - 체크인 완료 후에만 표시 */}
                 {hasRevealedInfo && (
                   <>
                     <div className="col-span-2 mt-2 border-t pt-2">
@@ -241,7 +255,7 @@ export default function ReservationDetails({
             variant="outline"
             size="lg"
             className="h-12 text-lg bg-transparent"
-            onClick={() => onNavigate("standby")}
+            onClick={handleBackClick}
             disabled={loading}
           >
             돌아가기

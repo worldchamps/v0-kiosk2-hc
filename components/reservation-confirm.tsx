@@ -16,6 +16,7 @@ interface ReservationConfirmProps {
   setGuestName: (name: string) => void
   loading?: boolean
   kioskLocation: KioskLocation
+  isPopupMode?: boolean
 }
 
 export default function ReservationConfirm({
@@ -25,13 +26,11 @@ export default function ReservationConfirm({
   setGuestName,
   loading = false,
   kioskLocation,
+  isPopupMode = false,
 }: ReservationConfirmProps) {
-  // Always show keyboard by default
   const [showKeyboard, setShowKeyboard] = useState(true)
-  // 입력창에 대한 ref 추가
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // 위치에 따른 제목
   const locationTitle = getLocationTitle(kioskLocation)
 
   useIdleTimer({
@@ -39,23 +38,32 @@ export default function ReservationConfirm({
       console.log("[v0] Reservation confirm idle, navigating to idle screen")
       onNavigate("idle")
     },
-    idleTime: 60000, // 60 seconds
+    idleTime: 60000,
     enabled: true,
   })
 
-  // 컴포넌트가 마운트될 때 자동으로 입력창에 포커스
   useEffect(() => {
     if (inputRef.current) {
       inputRef.current.focus()
     }
 
-    // 컴포넌트 마운트 시 음성 재생
     playAudio("RESERVATION_PROMPT")
   }, [])
 
   const handleCheckReservation = () => {
     if (guestName.trim() && !loading) {
       onCheckReservation(guestName)
+    }
+  }
+
+  const handleBackClick = () => {
+    if (isPopupMode) {
+      if (typeof window !== "undefined" && window.electronAPI) {
+        window.electronAPI.send("checkin-complete")
+      }
+    } else {
+      onNavigate("standby")
+      setGuestName("")
     }
   }
 
@@ -84,7 +92,6 @@ export default function ReservationConfirm({
             />
           </div>
 
-          {/* Always show keyboard */}
           <div className="mt-8">
             <KoreanKeyboard
               text={guestName}
@@ -112,11 +119,8 @@ export default function ReservationConfirm({
 
             <Button
               variant="outline"
-              onClick={() => {
-                onNavigate("standby")
-                setGuestName("")
-              }}
-              className="h-20 text-2xl border-3 border-gray-300 font-bold rounded-xl"
+              onClick={handleBackClick}
+              className="h-20 text-2xl border-3 border-gray-300 font-bold rounded-xl bg-transparent"
               disabled={loading}
             >
               돌아가기

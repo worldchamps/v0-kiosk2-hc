@@ -19,11 +19,21 @@ interface PrintJob {
 export function PrintQueueListener() {
   const [pendingJobs, setPendingJobs] = useState<number>(0)
   const [lastPrintTime, setLastPrintTime] = useState<string>("")
+  const [isPopupMode, setIsPopupMode] = useState(false)
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const popupMode = localStorage.getItem("popupMode") === "true"
+      setIsPopupMode(popupMode)
+
+      if (popupMode) {
+        console.log("[PrintQueue] Popup mode detected, skipping print queue listener")
+        return
+      }
+    }
+
     console.log("[PrintQueue] Initializing print queue listener...")
 
-    // Auto-connect printer on mount
     autoConnectPrinter().then((connected) => {
       if (connected) {
         console.log("[PrintQueue] Printer auto-connected successfully")
@@ -32,7 +42,6 @@ export function PrintQueueListener() {
       }
     })
 
-    // Listen to both property3 and property4 queues
     const property3Ref = ref(database, "print_queue/property3")
     const property4Ref = ref(database, "print_queue/property4")
 
@@ -40,7 +49,6 @@ export function PrintQueueListener() {
       if (job.status === "pending" && job.action === "remote-print") {
         console.log(`[PrintQueue] New print job detected in ${property}:`, job)
 
-        // Ensure printer is connected
         if (!isPrinterConnected()) {
           console.log("[PrintQueue] Printer not connected, attempting to connect...")
           const connected = await autoConnectPrinter()
@@ -50,7 +58,6 @@ export function PrintQueueListener() {
           }
         }
 
-        // Extract floor from room number (e.g., A201 -> 2F)
         const roomNumber = job.roomNumber
         let floor = "1F"
         if (roomNumber.length >= 2) {
@@ -60,7 +67,6 @@ export function PrintQueueListener() {
           }
         }
 
-        // Print the receipt
         const printData = {
           roomNumber: job.roomNumber,
           password: job.password,
@@ -72,7 +78,6 @@ export function PrintQueueListener() {
 
         if (success) {
           console.log("[PrintQueue] Print successful, updating status...")
-          // Update status to completed
           const jobRef = ref(database, `print_queue/${property}/${jobId}`)
           await update(jobRef, {
             status: "completed",
@@ -117,7 +122,6 @@ export function PrintQueueListener() {
       }
     })
 
-    // Cleanup listeners on unmount
     return () => {
       console.log("[PrintQueue] Cleaning up print queue listeners...")
       off(property3Ref)
@@ -125,7 +129,10 @@ export function PrintQueueListener() {
     }
   }, [])
 
-  // Don't render anything visible, just show status in console
+  if (isPopupMode) {
+    return null
+  }
+
   if (pendingJobs === 0 && !lastPrintTime) {
     return null
   }

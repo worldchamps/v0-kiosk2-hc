@@ -207,6 +207,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             setGuestName={setGuestName}
             loading={loading}
             kioskLocation={kioskLocation}
+            isPopupMode={isPopupMode}
           />
         )}
 
@@ -235,6 +236,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             onNavigate={handleNavigate}
             loading={loading}
             revealedInfo={revealedInfo}
+            isPopupMode={isPopupMode}
           />
         )}
 

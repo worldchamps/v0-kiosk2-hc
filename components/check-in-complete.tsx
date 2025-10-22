@@ -161,6 +161,14 @@ export default function CheckInComplete({
 
   // Auto print receipt attempt
   useEffect(() => {
+    if (isPopupMode) {
+      logDebug("Popup mode: skipping auto print")
+      setAutoPrintAttempted(true)
+      setPrintStatus("idle")
+      startRedirectCountdown()
+      return
+    }
+
     if (autoPrintAttempted) return
 
     logDebug("Setting up auto print timer (1 second)")
@@ -181,7 +189,7 @@ export default function CheckInComplete({
         printTimerRef.current = null
       }
     }
-  }, [autoPrintAttempted])
+  }, [autoPrintAttempted, isPopupMode])
 
   // Auto print function
   const autoPrintReceipt = async () => {
@@ -361,13 +369,15 @@ export default function CheckInComplete({
               </div>
 
               <div className="w-full flex justify-between mt-6">
-                <Button
-                  className="text-xl font-bold flex items-center space-x-2 h-16 px-6"
-                  onClick={() => setShowPrinter(true)}
-                >
-                  <Printer className="h-6 w-6" />
-                  <span>영수증 인쇄</span>
-                </Button>
+                {!isPopupMode && (
+                  <Button
+                    className="text-xl font-bold flex items-center space-x-2 h-16 px-6"
+                    onClick={() => setShowPrinter(true)}
+                  >
+                    <Printer className="h-6 w-6" />
+                    <span>영수증 인쇄</span>
+                  </Button>
+                )}
 
                 <Button
                   variant="outline"
