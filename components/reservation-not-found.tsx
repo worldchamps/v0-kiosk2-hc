@@ -13,9 +13,15 @@ interface ReservationNotFoundProps {
   onRecheck: () => void
   onNavigate: (screen: string) => void
   kioskLocation: KioskLocation
+  isPopupMode?: boolean
 }
 
-export default function ReservationNotFound({ onRecheck, onNavigate, kioskLocation }: ReservationNotFoundProps) {
+export default function ReservationNotFound({
+  onRecheck,
+  onNavigate,
+  kioskLocation,
+  isPopupMode = false,
+}: ReservationNotFoundProps) {
   const today = getCurrentDateKST()
   const formattedDate = formatDateKorean(today)
 
@@ -33,6 +39,16 @@ export default function ReservationNotFound({ onRecheck, onNavigate, kioskLocati
   useEffect(() => {
     playAudio("RESERVATION_NOT_FOUND")
   }, [])
+
+  const handleBackClick = () => {
+    if (isPopupMode && typeof window !== "undefined" && window.electronAPI) {
+      // Popup mode: Close the Electron window
+      window.electronAPI.send("checkin-complete")
+    } else {
+      // Normal mode: Navigate to standby
+      onNavigate("standby")
+    }
+  }
 
   return (
     <div className="flex items-start justify-start w-full h-full">
@@ -61,12 +77,7 @@ export default function ReservationNotFound({ onRecheck, onNavigate, kioskLocati
             다시 확인
           </Button>
 
-          <Button
-            variant="outline"
-            size="lg"
-            className="h-12 text-lg bg-transparent"
-            onClick={() => onNavigate("standby")}
-          >
+          <Button variant="outline" size="lg" className="h-12 text-lg bg-transparent" onClick={handleBackClick}>
             돌아가기
           </Button>
         </div>

@@ -95,6 +95,20 @@ function createOverlayButton() {
 
   overlayButton.loadFile(path.join(__dirname, "overlay-button.html"))
 
+  overlayButton.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        "Content-Security-Policy": [
+          "default-src 'self'; " +
+            "script-src 'self' 'unsafe-inline'; " +
+            "style-src 'self' 'unsafe-inline'; " +
+            "img-src 'self' data:;",
+        ],
+      },
+    })
+  })
+
   overlayButton.webContents.on("did-finish-load", () => {
     console.log("[v0] Overlay button page loaded")
     keepOnTopAggressive(overlayButton)
@@ -136,6 +150,23 @@ function createKioskPopup() {
       nodeIntegration: false,
       contextIsolation: true,
     },
+  })
+
+  kioskPopup.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        "Content-Security-Policy": [
+          "default-src 'self'; " +
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+            "style-src 'self' 'unsafe-inline'; " +
+            "img-src 'self' data: https: blob:; " +
+            "font-src 'self' data:; " +
+            "connect-src 'self' http://localhost:* https://*; " +
+            "frame-src 'self';",
+        ],
+      },
+    })
   })
 
   const isDev = process.env.NODE_ENV !== "production"

@@ -218,6 +218,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             onNavigate={handleNavigate}
             kioskLocation={kioskLocation}
             guestName={guestName}
+            isPopupMode={isPopupMode}
           />
         )}
 
@@ -255,6 +256,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             onRecheck={() => setCurrentScreen("reservationConfirm")}
             onNavigate={handleNavigate}
             kioskLocation={kioskLocation}
+            isPopupMode={isPopupMode}
           />
         )}
       </div>

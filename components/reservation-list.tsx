@@ -30,6 +30,7 @@ interface ReservationListProps {
   onNavigate: (screen: string) => void
   kioskLocation: KioskLocation
   guestName: string
+  isPopupMode?: boolean
 }
 
 export default function ReservationList({
@@ -38,6 +39,7 @@ export default function ReservationList({
   onNavigate,
   kioskLocation,
   guestName,
+  isPopupMode = false,
 }: ReservationListProps) {
   const locationTitle = getLocationTitle(kioskLocation)
 
@@ -53,6 +55,16 @@ export default function ReservationList({
   useEffect(() => {
     playAudio("MULTIPLE_RESERVATIONS")
   }, [])
+
+  const handleBackClick = () => {
+    if (isPopupMode && typeof window !== "undefined" && window.electronAPI) {
+      // Popup mode: Close the Electron window
+      window.electronAPI.send("checkin-complete")
+    } else {
+      // Normal mode: Navigate back to reservation confirm
+      onNavigate("reservationConfirm")
+    }
+  }
 
   return (
     <div className="flex items-start justify-start w-full h-full">
@@ -110,8 +122,8 @@ export default function ReservationList({
           <div className="pt-6">
             <Button
               variant="outline"
-              onClick={() => onNavigate("reservationConfirm")}
-              className="w-full h-20 text-2xl border-3 border-gray-300 font-bold rounded-xl"
+              onClick={handleBackClick}
+              className="w-full h-20 text-2xl border-3 border-gray-300 font-bold rounded-xl bg-transparent"
             >
               돌아가기
             </Button>
