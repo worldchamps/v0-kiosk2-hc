@@ -16,14 +16,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Spreadsheet ID not configured" }, { status: 500 })
     }
 
-    const response = await sheets.spreadsheets.values.get({
+    const searchResponse = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "Reservations!A2:M",
+      range: "Reservations!A94:C",
     })
 
-    const rows = response.data.values
+    const searchRows = searchResponse.data.values
 
-    if (!rows || rows.length === 0) {
+    if (!searchRows || searchRows.length === 0) {
       return NextResponse.json({
         reservations: [],
         today: getCurrentDateKST(),
@@ -31,17 +31,57 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    const matchingRowNumbers: number[] = []
+
+    searchRows.forEach((row, index) => {
+      const rowGuestName = row[1] || "" // Column B (index 1)
+
+      // If searching by name, only include matching names
+      if (guestName) {
+        if (rowGuestName === guestName) {
+          matchingRowNumbers.push(94 + index) // Actual row number (starting from 94)
+        }
+      } else {
+        // If no name filter, include all rows
+        matchingRowNumbers.push(94 + index)
+      }
+    })
+
+    if (matchingRowNumbers.length === 0) {
+      return NextResponse.json({
+        reservations: [],
+        today: getCurrentDateKST(),
+        message: guestName ? `No reservations found for guest: ${guestName}` : "No reservations found",
+      })
+    }
+
+    const reservations = []
     const today = getCurrentDateKST()
 
-    const reservations = rows.map((row) => {
-      if (row.length < 9) {
-        console.error("Row has insufficient data:", row)
-      }
+    for (const rowNumber of matchingRowNumbers) {
+      const detailResponse = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `Reservations!A${rowNumber}:N${rowNumber}`,
+      })
+
+      const row = detailResponse.data.values?.[0]
+      if (!row) continue
 
       const checkInDate = row[SHEET_COLUMNS.CHECK_IN_DATE] ? normalizeDate(row[SHEET_COLUMNS.CHECK_IN_DATE]) : ""
       const checkOutDate = row[SHEET_COLUMNS.CHECK_OUT_DATE] ? normalizeDate(row[SHEET_COLUMNS.CHECK_OUT_DATE]) : ""
+      const checkInStatus = row[SHEET_COLUMNS.CHECK_IN_STATUS] || ""
 
-      return {
+      // Filter: skip if already checked in
+      if (checkInStatus && checkInStatus.trim() !== "") {
+        continue
+      }
+
+      // Filter: if todayOnly, skip if check-in date is before today
+      if (todayOnly && checkInDate < today) {
+        continue
+      }
+
+      reservations.push({
         place: row[SHEET_COLUMNS.PLACE] || "",
         guestName: row[SHEET_COLUMNS.GUEST_NAME] || "",
         reservationId: row[SHEET_COLUMNS.RESERVATION_ID] || "",
@@ -53,26 +93,14 @@ export async function GET(request: NextRequest) {
         checkOutDate: checkOutDate,
         roomNumber: row[SHEET_COLUMNS.ROOM_NUMBER] || "",
         password: row[SHEET_COLUMNS.PASSWORD] || "",
-        checkInStatus: row[SHEET_COLUMNS.CHECK_IN_STATUS] || "",
+        checkInStatus: checkInStatus,
         checkInTime: row[SHEET_COLUMNS.CHECK_IN_TIME] || "",
         floor: row[SHEET_COLUMNS.FLOOR] || "",
-      }
-    })
-
-    let filteredReservations = [...reservations]
-
-    if (todayOnly) {
-      filteredReservations = filteredReservations.filter((res) => res.checkInDate >= today)
+      })
     }
-
-    if (guestName) {
-      filteredReservations = filteredReservations.filter((res) => res.guestName === guestName)
-    }
-
-    filteredReservations = filteredReservations.filter((res) => !res.checkInStatus || res.checkInStatus.trim() === "")
 
     return NextResponse.json({
-      reservations: filteredReservations,
+      reservations,
     })
   } catch (error) {
     console.error("Error fetching reservations:", error)

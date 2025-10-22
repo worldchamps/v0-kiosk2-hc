@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { headers } from "next/headers"
-import { createSheetsClient, SHEET_COLUMNS, getRoomInfoFromStatus } from "@/lib/google-sheets"
+import { createSheetsClient, SHEET_COLUMNS } from "@/lib/google-sheets"
 import { addToPMSQueue } from "@/lib/firebase-admin"
 
 // API Key for authentication
@@ -21,7 +21,6 @@ function authenticateRequest(request: NextRequest) {
   return apiKey === API_KEY || apiKey === ADMIN_API_KEY
 }
 
-// 체크인 API에서 층수 정보도 함께 반환하도록 수정
 export async function POST(request: NextRequest) {
   try {
     // Authenticate the request
@@ -78,23 +77,8 @@ export async function POST(request: NextRequest) {
     const guestName = reservationData[SHEET_COLUMNS.GUEST_NAME] || ""
     const checkInDate = reservationData[SHEET_COLUMNS.CHECK_IN_DATE] || ""
 
-    // Beach Room Status 시트에서 객실 정보 조회
-    const roomInfo = await getRoomInfoFromStatus(spreadsheetId, roomNumber)
-
-    let password = ""
-    let floor = ""
-
-    if (roomInfo) {
-      // Beach Room Status에서 정보를 찾은 경우
-      password = roomInfo.password
-      floor = roomInfo.floor
-      console.log("Room info from Beach Room Status:", roomInfo)
-    } else {
-      // Beach Room Status에서 정보를 찾지 못한 경우 기존 예약 정보 사용
-      password = reservationData[SHEET_COLUMNS.PASSWORD] || ""
-      floor = reservationData[SHEET_COLUMNS.FLOOR] || ""
-      console.warn("Using reservation data as fallback for room info")
-    }
+    const password = reservationData[SHEET_COLUMNS.PASSWORD] || ""
+    const floor = reservationData[SHEET_COLUMNS.FLOOR] || ""
 
     // Update the check-in status
     await sheets.spreadsheets.values.update({
