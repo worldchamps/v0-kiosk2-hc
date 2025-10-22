@@ -71,26 +71,24 @@ export function getPropertyDisplayName(propertyId: PropertyId): string {
 }
 
 /**
- * 키오스크 Property ID 가져오기 (환경변수 또는 localStorage)
+ * 키오스크 Property ID 가져오기 (환경변수)
  */
 export function getKioskPropertyId(): PropertyId {
-  // 서버 사이드에서는 환경변수 사용
   if (typeof window === "undefined") {
-    return (process.env.KIOSK_PROPERTY as PropertyId) || "property3"
+    // 서버 사이드
+    return (process.env.KIOSK_PROPERTY_ID as PropertyId) || "property3"
   }
 
-  // 클라이언트 사이드에서는 localStorage 사용
-  const saved = localStorage.getItem("kioskProperty") as PropertyId
-  return saved || "property3"
+  // 클라이언트 사이드 - NEXT_PUBLIC_ 접두사 필요
+  return (process.env.NEXT_PUBLIC_KIOSK_PROPERTY_ID as PropertyId) || "property3"
 }
 
 /**
  * 키오스크 Property ID 저장
+ * @deprecated 환경변수를 사용하므로 더 이상 필요하지 않음
  */
 export function setKioskPropertyId(propertyId: PropertyId): void {
-  if (typeof window !== "undefined") {
-    localStorage.setItem("kioskProperty", propertyId)
-  }
+  console.warn("[v0] setKioskPropertyId is deprecated. Use KIOSK_PROPERTY_ID environment variable instead.")
 }
 
 /**
