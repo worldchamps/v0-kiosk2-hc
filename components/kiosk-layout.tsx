@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import StandbyScreen from "@/components/standby-screen"
 import IdleScreen from "@/components/idle-screen"
 import ReservationConfirm from "@/components/reservation-confirm"
@@ -48,6 +48,8 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   const [showPropertyRedirect, setShowPropertyRedirect] = useState(false)
   const [redirectTargetProperty, setRedirectTargetProperty] = useState<PropertyId | null>(null)
   const router = useRouter()
+  const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const INACTIVITY_TIMEOUT = 30000 // 30 seconds
 
   const adminPassword = "KIM1334**"
 
@@ -89,6 +91,51 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       pauseBGM()
     }
   }, [currentScreen])
+
+  useEffect(() => {
+    if (!isPopupMode) return
+
+    console.log("[v0] Overlay mode detected - starting 30s auto-close timer")
+
+    const resetTimer = () => {
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current)
+      }
+
+      inactivityTimerRef.current = setTimeout(() => {
+        console.log("[v0] 30s inactivity timeout - closing popup")
+        if (typeof window !== "undefined" && (window as any).electronAPI) {
+          ;(window as any).electronAPI.send("close-popup")
+        }
+      }, INACTIVITY_TIMEOUT)
+    }
+
+    // Start initial timer
+    resetTimer()
+
+    // Reset timer on any user interaction
+    const handleUserActivity = () => {
+      console.log("[v0] User activity detected - resetting timer")
+      resetTimer()
+    }
+
+    // Listen to various user interaction events
+    window.addEventListener("click", handleUserActivity)
+    window.addEventListener("touchstart", handleUserActivity)
+    window.addEventListener("keydown", handleUserActivity)
+    window.addEventListener("mousemove", handleUserActivity)
+
+    // Cleanup
+    return () => {
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current)
+      }
+      window.removeEventListener("click", handleUserActivity)
+      window.removeEventListener("touchstart", handleUserActivity)
+      window.removeEventListener("keydown", handleUserActivity)
+      window.removeEventListener("mousemove", handleUserActivity)
+    }
+  }, [isPopupMode])
 
   const handleNavigate = (screen) => {
     stopAllAudio(false)

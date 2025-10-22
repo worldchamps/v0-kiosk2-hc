@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { AlertTriangle } from "lucide-react"
 import { getPropertyDisplayName } from "@/lib/property-utils"
 import type { PropertyId } from "@/lib/property-utils"
+import { useEffect, useState, useRef } from "react"
 
 interface PropertyMismatchDialogProps {
   reservationProperty: PropertyId
@@ -20,6 +21,59 @@ export default function PropertyMismatchDialog({
 }: PropertyMismatchDialogProps) {
   const correctPropertyName = getPropertyDisplayName(reservationProperty)
   const currentPropertyName = getPropertyDisplayName(kioskProperty)
+
+  const [countdown, setCountdown] = useState(30)
+  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const redirectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  useEffect(() => {
+    // Start countdown
+    countdownIntervalRef.current = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    // Auto-close after 30 seconds
+    redirectTimeoutRef.current = setTimeout(() => {
+      onClose()
+    }, 30000)
+
+    // Cleanup
+    return () => {
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current)
+      }
+      if (redirectTimeoutRef.current) {
+        clearTimeout(redirectTimeoutRef.current)
+      }
+    }
+  }, [onClose])
+
+  const handleClose = () => {
+    // Clear timers when manually closing
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current)
+    }
+    if (redirectTimeoutRef.current) {
+      clearTimeout(redirectTimeoutRef.current)
+    }
+    onClose()
+  }
+
+  const handleAdminOverride = () => {
+    // Clear timers when using admin override
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current)
+    }
+    if (redirectTimeoutRef.current) {
+      clearTimeout(redirectTimeoutRef.current)
+    }
+    onAdminOverride()
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -48,11 +102,13 @@ export default function PropertyMismatchDialog({
 
           <p className="text-gray-600">올바른 키오스크로 이동하여 다시 시도해 주세요.</p>
 
+          <div className="text-sm text-gray-500">{countdown}초 후 자동으로 처음 화면으로 돌아갑니다</div>
+
           <div className="flex gap-4 w-full pt-4">
-            <Button onClick={onClose} className="flex-1 h-14 text-lg bg-transparent" variant="outline">
+            <Button onClick={handleClose} className="flex-1 h-14 text-lg bg-transparent" variant="outline">
               확인
             </Button>
-            <Button onClick={onAdminOverride} className="flex-1 h-14 text-lg bg-amber-600 hover:bg-amber-700">
+            <Button onClick={handleAdminOverride} className="flex-1 h-14 text-lg bg-amber-600 hover:bg-amber-700">
               관리자 권한으로 진행
             </Button>
           </div>
