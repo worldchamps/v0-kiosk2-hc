@@ -1,3 +1,5 @@
+require("dotenv").config({ path: require("path").join(__dirname, "..", ".env.local") })
+
 const { app, BrowserWindow, ipcMain } = require("electron")
 const path = require("path")
 const { SerialPort } = require("serialport")
@@ -8,24 +10,24 @@ let billAcceptorPort = null
 let billDispenserPort = null
 
 const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
-const KIOSK_PROPERTY = process.env.KIOSK_PROPERTY || "property3"
+const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"
 
-console.log(`[v0] Starting in ${OVERLAY_MODE ? "OVERLAY" : "FULLSCREEN"} mode for ${KIOSK_PROPERTY}`)
+console.log(`[v0] Starting in ${OVERLAY_MODE ? "OVERLAY" : "FULLSCREEN"} mode for ${KIOSK_PROPERTY_ID}`)
 
 const BILL_ACCEPTOR_CONFIG = {
-  path: "COM3", // Windows 기본값, 실제 포트로 변경 필요
-  baudRate: 9600,
-  dataBits: 8,
-  stopBits: 1,
-  parity: "none",
+  path: process.env.BILL_ACCEPTOR_PATH || "COM3", // Windows 기본값, 실제 포트로 변경 필요
+  baudRate: process.env.BILL_ACCEPTOR_BAUD_RATE || 9600,
+  dataBits: process.env.BILL_ACCEPTOR_DATA_BITS || 8,
+  stopBits: process.env.BILL_ACCEPTOR_STOP_BITS || 1,
+  parity: process.env.BILL_ACCEPTOR_PARITY || "none",
 }
 
 const BILL_DISPENSER_CONFIG = {
-  path: "COM4", // Windows 기본값, 실제 포트로 변경 필요
-  baudRate: 9600,
-  dataBits: 8,
-  stopBits: 1,
-  parity: "none",
+  path: process.env.BILL_DISPENSER_PATH || "COM4", // Windows 기본값, 실제 포트로 변경 필요
+  baudRate: process.env.BILL_DISPENSER_BAUD_RATE || 9600,
+  dataBits: process.env.BILL_DISPENSER_DATA_BITS || 8,
+  stopBits: process.env.BILL_DISPENSER_STOP_BITS || 1,
+  parity: process.env.BILL_DISPENSER_PARITY || "none",
 }
 
 function createWindow() {

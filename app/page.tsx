@@ -35,7 +35,6 @@ function HomeContent() {
       setAppMode("kiosk")
       if (typeof window !== "undefined") {
         localStorage.setItem("appMode", "kiosk")
-        localStorage.setItem("popupMode", "true")
       }
       setIsLoading(false)
       return
@@ -50,6 +49,7 @@ function HomeContent() {
         setAppMode("kiosk")
         localStorage.setItem("appMode", "kiosk")
       }
+      localStorage.removeItem("popupMode")
       setIsLoading(false)
     }
   }, [router, searchParams])

@@ -56,13 +56,21 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     setKioskProperty(savedProperty)
 
     if (typeof window !== "undefined") {
-      const popupMode = localStorage.getItem("popupMode") === "true"
+      // Check URL for popup parameter
+      const urlParams = new URLSearchParams(window.location.search)
+      const popupMode = urlParams.get("popup") === "true"
       setIsPopupMode(popupMode)
 
-      // If popup mode, start directly at reservation confirm screen
+      // If popup mode via URL, start directly at reservation confirm screen
       if (popupMode) {
-        console.log("[v0] Popup mode detected, starting at reservation confirm")
+        console.log("[v0] Popup mode detected from URL, starting at reservation confirm")
         setCurrentScreen("reservationConfirm")
+      } else {
+        // Normal kiosk mode - always start at idle screen
+        console.log("[v0] Normal kiosk mode, starting at idle screen")
+        setCurrentScreen("idle")
+        // Clear any old popup mode setting
+        localStorage.removeItem("popupMode")
       }
     }
   }, [])

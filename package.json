@@ -28,6 +28,7 @@
     "child_process": "latest",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "dotenv": "latest",
     "firebase": "latest",
     "firebase-admin": "latest",
     "googleapis": "latest",
@@ -70,7 +71,8 @@
       "electron/**/*",
       "electron-config.json",
       "package.json",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      ".env.local"
     ],
     "win": {
       "target": "nsis",
