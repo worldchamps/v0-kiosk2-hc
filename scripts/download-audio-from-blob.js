@@ -1,10 +1,15 @@
-import { list } from "@vercel/blob"
-import fs from "fs"
-import path from "path"
+import dotenv from "dotenv"
 import { fileURLToPath } from "url"
+import path from "path"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+// Load environment variables from .env.local
+dotenv.config({ path: path.join(__dirname, "..", ".env.local") })
+
+import { list } from "@vercel/blob"
+import fs from "fs"
 
 async function downloadAudioFiles() {
   try {
