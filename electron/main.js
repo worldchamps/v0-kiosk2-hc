@@ -61,15 +61,19 @@ function createWindow() {
     })
 
     const isDev = process.env.NODE_ENV !== "production"
-    const startUrl = isDev
-      ? "http://localhost:3000"
-      : `file://${path.join(__dirname, "../.next/server/app/index.html")}`
+    const startUrl = "http://localhost:3000"
 
+    console.log("[v0] Loading URL:", startUrl)
     mainWindow.loadURL(startUrl)
 
     if (isDev) {
       mainWindow.webContents.openDevTools()
     }
+
+    mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription) => {
+      console.error("[v0] Failed to load:", errorCode, errorDescription)
+      console.log("[v0] Make sure Next.js server is running on http://localhost:3000")
+    })
 
     setTimeout(() => {
       connectBillAcceptor()

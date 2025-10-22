@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { headers } from "next/headers"
-import { db, getPropertyFromRoomNumber } from "@/lib/firebase-admin"
+import { getDB, getPropertyFromRoomNumber } from "@/lib/firebase-admin"
 
 // API Key for authentication
 const API_KEY = process.env.API_KEY || ""
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
     // Determine property from room number
     const property = getPropertyFromRoomNumber(roomNumber)
 
-    // Add to print queue in Firebase
+    const db = getDB()
     const ref = db.ref(`print_queue/${property}`)
     const newRef = ref.push()
 
