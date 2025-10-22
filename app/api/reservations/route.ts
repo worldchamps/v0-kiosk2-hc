@@ -16,14 +16,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Spreadsheet ID not configured" }, { status: 500 })
     }
 
-    const searchResponse = await sheets.spreadsheets.values.get({
+    const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "Reservations!A94:C",
+      range: "Reservations!A94:N",
     })
 
-    const searchRows = searchResponse.data.values
+    const rows = response.data.values
 
-    if (!searchRows || searchRows.length === 0) {
+    if (!rows || rows.length === 0) {
       return NextResponse.json({
         reservations: [],
         today: getCurrentDateKST(),
@@ -31,48 +31,22 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    const matchingRowNumbers: number[] = []
-
-    searchRows.forEach((row, index) => {
-      const rowGuestName = row[1] || "" // Column B (index 1)
-
-      // If searching by name, only include matching names
-      if (guestName) {
-        if (rowGuestName === guestName) {
-          matchingRowNumbers.push(94 + index) // Actual row number (starting from 94)
-        }
-      } else {
-        // If no name filter, include all rows
-        matchingRowNumbers.push(94 + index)
-      }
-    })
-
-    if (matchingRowNumbers.length === 0) {
-      return NextResponse.json({
-        reservations: [],
-        today: getCurrentDateKST(),
-        message: guestName ? `No reservations found for guest: ${guestName}` : "No reservations found",
-      })
-    }
-
     const reservations = []
     const today = getCurrentDateKST()
 
-    for (const rowNumber of matchingRowNumbers) {
-      const detailResponse = await sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: `Reservations!A${rowNumber}:N${rowNumber}`,
-      })
-
-      const row = detailResponse.data.values?.[0]
-      if (!row) continue
-
+    for (const row of rows) {
+      const rowGuestName = row[SHEET_COLUMNS.GUEST_NAME] || ""
+      const checkInStatus = row[SHEET_COLUMNS.CHECK_IN_STATUS] || ""
       const checkInDate = row[SHEET_COLUMNS.CHECK_IN_DATE] ? normalizeDate(row[SHEET_COLUMNS.CHECK_IN_DATE]) : ""
       const checkOutDate = row[SHEET_COLUMNS.CHECK_OUT_DATE] ? normalizeDate(row[SHEET_COLUMNS.CHECK_OUT_DATE]) : ""
-      const checkInStatus = row[SHEET_COLUMNS.CHECK_IN_STATUS] || ""
 
       // Filter: skip if already checked in
       if (checkInStatus && checkInStatus.trim() !== "") {
+        continue
+      }
+
+      // Filter: if searching by name, only include matching names
+      if (guestName && rowGuestName !== guestName) {
         continue
       }
 
@@ -83,7 +57,7 @@ export async function GET(request: NextRequest) {
 
       reservations.push({
         place: row[SHEET_COLUMNS.PLACE] || "",
-        guestName: row[SHEET_COLUMNS.GUEST_NAME] || "",
+        guestName: rowGuestName,
         reservationId: row[SHEET_COLUMNS.RESERVATION_ID] || "",
         bookingPlatform: row[SHEET_COLUMNS.BOOKING_PLATFORM] || "",
         roomType: row[SHEET_COLUMNS.ROOM_TYPE] || "",

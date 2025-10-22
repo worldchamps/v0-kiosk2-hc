@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "Reservations!A94:C",
+      range: "Reservations!A94:N",
     })
 
     const rows = response.data.values
@@ -51,11 +51,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No reservations found" }, { status: 404 })
     }
 
-    // Find the row with the matching reservation ID
     let rowIndex = -1
+    let reservationData: string[] = []
+
     for (let i = 0; i < rows.length; i++) {
       if (rows[i][SHEET_COLUMNS.RESERVATION_ID] === reservationId) {
         rowIndex = i + 94 // +94 because we start at A94
+        reservationData = rows[i]
         break
       }
     }
@@ -64,13 +66,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Reservation not found" }, { status: 404 })
     }
 
-    // Get the full reservation data for the matched row
-    const reservationResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `Reservations!A${rowIndex}:N${rowIndex}`,
-    })
-
-    const reservationData = reservationResponse.data.values?.[0] || []
     const roomNumber = reservationData[SHEET_COLUMNS.ROOM_NUMBER] || ""
     const guestName = reservationData[SHEET_COLUMNS.GUEST_NAME] || ""
     const checkInDate = reservationData[SHEET_COLUMNS.CHECK_IN_DATE] || ""
@@ -78,6 +73,7 @@ export async function POST(request: NextRequest) {
     const floor = reservationData[SHEET_COLUMNS.FLOOR] || ""
 
     const checkInTime = new Date().toISOString()
+
     await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId,
       requestBody: {
@@ -95,24 +91,14 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    try {
-      console.log("[v0] Attempting to add to Firebase PMS Queue...")
-      console.log("[v0] Room Number:", roomNumber)
-      console.log("[v0] Guest Name:", guestName)
-      console.log("[v0] Check-in Date:", checkInDate)
-
-      await addToPMSQueue({
-        roomNumber,
-        guestName,
-        checkInDate,
-      })
-      console.log("[v0] ✅ Successfully added to Firebase PMS Queue:", { roomNumber, guestName })
-    } catch (firebaseError) {
-      console.error("[v0] ❌ Failed to add to Firebase PMS Queue:", firebaseError)
-      console.error("[v0] Error details:", (firebaseError as Error).message)
-      console.error("[v0] Error stack:", (firebaseError as Error).stack)
-      // Firebase 추가 실패해도 체크인은 계속 진행
-    }
+    addToPMSQueue({
+      roomNumber,
+      guestName,
+      checkInDate,
+    }).catch((firebaseError) => {
+      console.error("[v0] Firebase PMS Queue failed:", firebaseError)
+      console.error("[v0] Room:", roomNumber, "Guest:", guestName)
+    })
 
     return NextResponse.json({
       success: true,
