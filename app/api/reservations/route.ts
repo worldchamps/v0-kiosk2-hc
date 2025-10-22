@@ -11,6 +11,8 @@ export async function GET(request: NextRequest) {
     const todayOnly = searchParams.get("todayOnly") === "true"
     const kioskProperty = searchParams.get("kioskProperty")
 
+    console.log("[v0] Reservations API called with kioskProperty:", kioskProperty)
+
     const sheets = createSheetsClient()
     const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID || ""
 
@@ -62,13 +64,35 @@ export async function GET(request: NextRequest) {
         const place = row[SHEET_COLUMNS.PLACE] || ""
         const roomNumber = row[SHEET_COLUMNS.ROOM_NUMBER] || ""
 
-        // Determine property from place or room number
-        const reservationProperty = place ? getPropertyFromPlace(place) : getPropertyFromRoomNumber(roomNumber)
+        console.log("[v0] Checking reservation:", {
+          guestName: rowGuestName,
+          place,
+          roomNumber,
+          kioskProperty,
+        })
+
+        let reservationProperty = getPropertyFromRoomNumber(roomNumber)
+
+        // If room number doesn't give us a property, try place
+        if (!reservationProperty) {
+          reservationProperty = getPropertyFromPlace(place)
+        }
+
+        // If still no property detected, skip this reservation
+        if (!reservationProperty) {
+          console.log("[v0] Could not detect property for reservation, skipping")
+          continue
+        }
+
+        console.log("[v0] Detected property:", reservationProperty, "Expected:", kioskProperty)
 
         // Skip if property doesn't match
         if (reservationProperty !== kioskProperty) {
+          console.log("[v0] Skipping reservation - property mismatch")
           continue
         }
+
+        console.log("[v0] Including reservation - property match!")
       }
 
       reservations.push({
@@ -88,6 +112,8 @@ export async function GET(request: NextRequest) {
         floor: row[SHEET_COLUMNS.FLOOR] || "",
       })
     }
+
+    console.log("[v0] Total reservations found:", reservations.length)
 
     return NextResponse.json({
       reservations,

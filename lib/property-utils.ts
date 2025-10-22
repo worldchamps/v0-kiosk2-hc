@@ -5,56 +5,59 @@ export type PropertyId = "property1" | "property2" | "property3" | "property4"
 /**
  * 객실 번호로부터 Property 감지
  */
-export function getPropertyFromRoomNumber(roomNumber: string): PropertyId {
+export function getPropertyFromRoomNumber(roomNumber: string): PropertyId | null {
+  if (!roomNumber) return null
+
   const upperRoom = roomNumber.toUpperCase().trim()
 
-  // Property 1: C### or D### pattern
-  if (upperRoom.match(/^[CD]\d{3}$/)) {
+  // Property 1: C### or D### pattern (C101, C 101, C-101, etc.)
+  if (upperRoom.match(/^[CD][\s-]?\d{3}$/)) {
     return "property1"
   }
 
-  // Property 2: Kariv ### pattern
-  if (upperRoom.match(/^KARIV\s*\d+$/i)) {
+  // Property 2: Kariv ### pattern (Kariv301, Kariv 301, etc.)
+  if (upperRoom.match(/^KARIV[\s-]?\d+$/i)) {
     return "property2"
   }
 
-  // Property 3: A### 또는 B### 형식
-  if (upperRoom.match(/^[AB]\d{3}$/)) {
+  // Property 3: A### or B### pattern (A101, B202, etc.)
+  if (upperRoom.match(/^[AB][\s-]?\d{3}$/)) {
     return "property3"
   }
 
-  // Property 4: Camp ### 형식
-  if (upperRoom.match(/^CAMP\s*\d+$/i)) {
+  // Property 4: Camp ### pattern (Camp101, Camp 101, etc.)
+  if (upperRoom.match(/^CAMP[\s-]?\d+$/i)) {
     return "property4"
   }
 
-  // 기본값: property3
-  return "property3"
+  return null
 }
 
 /**
  * Place 필드로부터 Property 감지
  */
-export function getPropertyFromPlace(place: string): PropertyId {
+export function getPropertyFromPlace(place: string): PropertyId | null {
+  if (!place) return null
+
   const upperPlace = place.toUpperCase().trim()
 
-  if (upperPlace.includes("C") || upperPlace.includes("D")) {
-    return "property1"
-  }
-
+  // Property 2: Kariv Hotel
   if (upperPlace.includes("KARIV")) {
     return "property2"
   }
 
-  if (upperPlace.includes("A") || upperPlace.includes("B")) {
-    return "property3"
-  }
-
-  if (upperPlace.includes("CAMP")) {
+  // Property 4: 더 캠프스테이 / Camp
+  if (upperPlace.includes("CAMP") || upperPlace.includes("캠프")) {
     return "property4"
   }
 
-  return "property3"
+  // Property 1 & 3: 더 비치스테이 (need to check room number to distinguish)
+  // Return null so we can check room number instead
+  if (upperPlace.includes("비치") || upperPlace.includes("BEACH")) {
+    return null // Will be determined by room number
+  }
+
+  return null
 }
 
 /**
