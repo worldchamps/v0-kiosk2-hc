@@ -6,6 +6,7 @@
   "scripts": {
     "build": "next build",
     "dev": "next dev",
+    "download-audio": "node scripts/download-audio-files.js",
     "electron": "electron .",
     "electron:build": "next build && electron-builder",
     "electron:dev": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
@@ -31,8 +32,11 @@
     "dotenv": "latest",
     "firebase": "latest",
     "firebase-admin": "latest",
+    "fs": "latest",
     "googleapis": "latest",
     "hangul-js": "latest",
+    "http": "latest",
+    "https": "latest",
     "lucide-react": "^0.454.0",
     "next": "15.2.4",
     "next-themes": "latest",
@@ -81,6 +85,9 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "extraMetadata": {
+      "main": "electron/main.js"
     }
   }
 }

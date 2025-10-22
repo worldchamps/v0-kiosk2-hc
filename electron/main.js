@@ -11,8 +11,11 @@ let billDispenserPort = null
 
 const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
 const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"
+const isDev = process.env.NODE_ENV !== "production"
 
-console.log(`[v0] Starting in ${OVERLAY_MODE ? "OVERLAY" : "FULLSCREEN"} mode for ${KIOSK_PROPERTY_ID}`)
+if (isDev) {
+  console.log(`[v0] Starting in ${OVERLAY_MODE ? "OVERLAY" : "FULLSCREEN"} mode for ${KIOSK_PROPERTY_ID}`)
+}
 
 const BILL_ACCEPTOR_CONFIG = {
   path: process.env.BILL_ACCEPTOR_PATH || "COM3", // Windows 기본값, 실제 포트로 변경 필요
@@ -36,12 +39,14 @@ function createWindow() {
       width: 1920,
       height: 1080,
       fullscreen: true,
-      kiosk: false, // 개발 중에는 false, 배포 시 true
-      frame: true, // 개발 중에는 true, 배포 시 false
+      kiosk: !isDev,
+      frame: isDev,
+      show: false,
       webPreferences: {
         preload: path.join(__dirname, "preload.js"),
         nodeIntegration: false,
         contextIsolation: true,
+        devTools: isDev,
       },
     })
 
@@ -62,19 +67,34 @@ function createWindow() {
       })
     })
 
-    const isDev = process.env.NODE_ENV !== "production"
-    const startUrl = "http://localhost:3000"
+    const startUrl = isDev
+      ? "http://localhost:3000"
+      : `file://${path.join(__dirname, "../.next/server/app/index.html")}`
 
-    console.log("[v0] Loading URL:", startUrl)
+    if (isDev) {
+      console.log("[v0] Loading URL:", startUrl)
+    }
+
     mainWindow.loadURL(startUrl)
 
     if (isDev) {
       mainWindow.webContents.openDevTools()
     }
 
+    mainWindow.once("ready-to-show", () => {
+      mainWindow.show()
+    })
+
     mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription) => {
-      console.error("[v0] Failed to load:", errorCode, errorDescription)
-      console.log("[v0] Make sure Next.js server is running on http://localhost:3000")
+      if (isDev) {
+        console.error("[v0] Failed to load:", errorCode, errorDescription)
+        console.log("[v0] Make sure Next.js server is running on http://localhost:3000")
+      }
+      if (!isDev) {
+        setTimeout(() => {
+          mainWindow.loadURL(startUrl)
+        }, 3000)
+      }
     })
 
     setTimeout(() => {
@@ -82,7 +102,9 @@ function createWindow() {
       connectBillDispenser()
     }, 2000)
   } else {
-    console.log("[v0] Creating overlay button for Property1/2")
+    if (isDev) {
+      console.log("[v0] Creating overlay button for Property1/2")
+    }
     overlayButtonModule.createOverlayButton()
   }
 }
@@ -104,7 +126,9 @@ async function connectBillAcceptor() {
 
     billAcceptorPort.open((err) => {
       if (err) {
-        console.error("[v0] 지폐 인식기 연결 실패:", err.message)
+        if (isDev) {
+          console.error("[v0] 지폐 인식기 연결 실패:", err.message)
+        }
         if (mainWindow && mainWindow.webContents) {
           mainWindow.webContents.send("bill-acceptor-status", {
             connected: false,
@@ -115,7 +139,9 @@ async function connectBillAcceptor() {
         return
       }
 
-      console.log("[v0] 지폐 인식기 연결 성공")
+      if (isDev) {
+        console.log("[v0] 지폐 인식기 연결 성공")
+      }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("bill-acceptor-status", {
           connected: true,
@@ -124,7 +150,9 @@ async function connectBillAcceptor() {
     })
 
     billAcceptorPort.on("data", (data) => {
-      console.log("[v0] 지폐 인식기 데이터:", data)
+      if (isDev) {
+        console.log("[v0] 지폐 인식기 데이터:", data)
+      }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("bill-acceptor-data", {
           data: Array.from(data),
@@ -133,7 +161,9 @@ async function connectBillAcceptor() {
     })
 
     billAcceptorPort.on("error", (err) => {
-      console.error("[v0] 지폐 인식기 에러:", err)
+      if (isDev) {
+        console.error("[v0] 지폐 인식기 에러:", err)
+      }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("bill-acceptor-status", {
           connected: false,
@@ -143,7 +173,9 @@ async function connectBillAcceptor() {
     })
 
     billAcceptorPort.on("close", () => {
-      console.log("[v0] 지폐 인식기 연결 끊김")
+      if (isDev) {
+        console.log("[v0] 지폐 인식기 연결 끊김")
+      }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("bill-acceptor-status", {
           connected: false,
@@ -152,7 +184,9 @@ async function connectBillAcceptor() {
       setTimeout(connectBillAcceptor, 5000)
     })
   } catch (error) {
-    console.error("[v0] 지폐 인식기 초기화 실패:", error)
+    if (isDev) {
+      console.error("[v0] 지폐 인식기 초기화 실패:", error)
+    }
     setTimeout(connectBillAcceptor, 10000)
   }
 }
@@ -174,7 +208,9 @@ async function connectBillDispenser() {
 
     billDispenserPort.open((err) => {
       if (err) {
-        console.error("[v0] 지폐 방출기 연결 실패:", err.message)
+        if (isDev) {
+          console.error("[v0] 지폐 방출기 연결 실패:", err.message)
+        }
         if (mainWindow && mainWindow.webContents) {
           mainWindow.webContents.send("bill-dispenser-status", {
             connected: false,
@@ -185,7 +221,9 @@ async function connectBillDispenser() {
         return
       }
 
-      console.log("[v0] 지폐 방출기 연결 성공")
+      if (isDev) {
+        console.log("[v0] 지폐 방출기 연결 성공")
+      }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("bill-dispenser-status", {
           connected: true,
@@ -194,7 +232,9 @@ async function connectBillDispenser() {
     })
 
     billDispenserPort.on("data", (data) => {
-      console.log("[v0] 지폐 방출기 데이터:", data)
+      if (isDev) {
+        console.log("[v0] 지폐 방출기 데이터:", data)
+      }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("bill-dispenser-data", {
           data: Array.from(data),
@@ -203,7 +243,9 @@ async function connectBillDispenser() {
     })
 
     billDispenserPort.on("error", (err) => {
-      console.error("[v0] 지폐 방출기 에러:", err)
+      if (isDev) {
+        console.error("[v0] 지폐 방출기 에러:", err)
+      }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("bill-dispenser-status", {
           connected: false,
@@ -213,7 +255,9 @@ async function connectBillDispenser() {
     })
 
     billDispenserPort.on("close", () => {
-      console.log("[v0] 지폐 방출기 연결 끊김")
+      if (isDev) {
+        console.log("[v0] 지폐 방출기 연결 끊김")
+      }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("bill-dispenser-status", {
           connected: false,
@@ -222,7 +266,9 @@ async function connectBillDispenser() {
       setTimeout(connectBillDispenser, 5000)
     })
   } catch (error) {
-    console.error("[v0] 지폐 방출기 초기화 실패:", error)
+    if (isDev) {
+      console.error("[v0] 지폐 방출기 초기화 실패:", error)
+    }
     setTimeout(connectBillDispenser, 10000)
   }
 }
