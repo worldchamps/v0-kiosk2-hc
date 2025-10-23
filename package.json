@@ -72,10 +72,9 @@
       "output": "dist"
     },
     "files": [
-      "out/**/*",
+      ".next/**/*",
       "public/**/*",
       "electron/**/*",
-      "electron-config.json",
       "package.json",
       "node_modules/**/*",
       ".env.local"

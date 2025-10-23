@@ -4,6 +4,7 @@ const { app, BrowserWindow, ipcMain } = require("electron")
 const path = require("path")
 const { SerialPort } = require("serialport")
 const overlayButtonModule = require("./overlay-button")
+const { startNextServer, stopNextServer } = require("./server")
 
 let mainWindow
 let billAcceptorPort = null
@@ -33,7 +34,7 @@ const BILL_DISPENSER_CONFIG = {
   parity: process.env.BILL_DISPENSER_PARITY || "none",
 }
 
-function createWindow() {
+async function createWindow() {
   if (!OVERLAY_MODE) {
     mainWindow = new BrowserWindow({
       width: 1920,
@@ -67,23 +68,26 @@ function createWindow() {
       })
     })
 
-    const startUrl = isDev ? "http://localhost:3000" : `file://${path.join(app.getAppPath(), "out/index.html")}`
-
+    let startUrl
     if (isDev) {
-      console.log("[v0] Loading URL:", startUrl)
+      startUrl = "http://localhost:3000"
+      console.log("[v0] Development mode - connecting to:", startUrl)
     } else {
-      console.log("[v0] Production mode - Loading from:", startUrl)
-      console.log("[v0] App path:", app.getAppPath())
+      console.log("[v0] Production mode - starting Next.js server...")
+      try {
+        startUrl = await startNextServer(3000)
+        console.log("[v0] Next.js server started successfully")
+      } catch (error) {
+        console.error("[v0] Failed to start Next.js server:", error)
+        app.quit()
+        return
+      }
     }
 
     mainWindow.loadURL(startUrl)
 
     if (isDev) {
       mainWindow.webContents.openDevTools()
-    } else {
-      // Temporarily open DevTools in production to debug
-      mainWindow.webContents.openDevTools()
-      console.log("[v0] DevTools opened for debugging")
     }
 
     mainWindow.once("ready-to-show", () => {
@@ -91,12 +95,10 @@ function createWindow() {
     })
 
     mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription) => {
+      console.error("[v0] Failed to load:", errorCode, errorDescription)
       if (isDev) {
-        console.error("[v0] Failed to load:", errorCode, errorDescription)
         console.log("[v0] Make sure Next.js server is running on http://localhost:3000")
-      }
-      if (!isDev) {
-        console.error("[v0] Production load failed:", errorCode, errorDescription)
+      } else {
         console.log("[v0] Retrying in 3 seconds...")
         setTimeout(() => {
           mainWindow.loadURL(startUrl)
@@ -109,9 +111,7 @@ function createWindow() {
       connectBillDispenser()
     }, 2000)
   } else {
-    if (isDev) {
-      console.log("[v0] Creating overlay button for Property1/2")
-    }
+    console.log("[v0] Creating overlay button for Property1/2")
     overlayButtonModule.createOverlayButton()
   }
 }
@@ -345,6 +345,10 @@ app.on("window-all-closed", () => {
   }
   if (billDispenserPort && billDispenserPort.isOpen) {
     billDispenserPort.close()
+  }
+
+  if (!isDev) {
+    stopNextServer()
   }
 
   if (process.platform !== "darwin") {
