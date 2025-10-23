@@ -72,7 +72,7 @@
       "output": "dist"
     },
     "files": [
-      ".next/**/*",
+      "out/**/*",
       "public/**/*",
       "electron/**/*",
       "electron-config.json",

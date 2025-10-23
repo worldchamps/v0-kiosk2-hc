@@ -67,9 +67,7 @@ function createWindow() {
       })
     })
 
-    const startUrl = isDev
-      ? "http://localhost:3000"
-      : `file://${path.join(__dirname, "../.next/server/app/index.html")}`
+    const startUrl = isDev ? "http://localhost:3000" : `file://${path.join(__dirname, "../out/index.html")}`
 
     if (isDev) {
       console.log("[v0] Loading URL:", startUrl)
@@ -91,6 +89,8 @@ function createWindow() {
         console.log("[v0] Make sure Next.js server is running on http://localhost:3000")
       }
       if (!isDev) {
+        console.error("[v0] Production load failed:", errorCode, errorDescription)
+        console.log("[v0] Retrying in 3 seconds...")
         setTimeout(() => {
           mainWindow.loadURL(startUrl)
         }, 3000)
