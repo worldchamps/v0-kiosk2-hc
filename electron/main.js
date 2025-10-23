@@ -67,16 +67,23 @@ function createWindow() {
       })
     })
 
-    const startUrl = isDev ? "http://localhost:3000" : `file://${path.join(__dirname, "../out/index.html")}`
+    const startUrl = isDev ? "http://localhost:3000" : `file://${path.join(app.getAppPath(), "out/index.html")}`
 
     if (isDev) {
       console.log("[v0] Loading URL:", startUrl)
+    } else {
+      console.log("[v0] Production mode - Loading from:", startUrl)
+      console.log("[v0] App path:", app.getAppPath())
     }
 
     mainWindow.loadURL(startUrl)
 
     if (isDev) {
       mainWindow.webContents.openDevTools()
+    } else {
+      // Temporarily open DevTools in production to debug
+      mainWindow.webContents.openDevTools()
+      console.log("[v0] DevTools opened for debugging")
     }
 
     mainWindow.once("ready-to-show", () => {
