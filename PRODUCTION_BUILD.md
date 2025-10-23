@@ -23,9 +23,8 @@ GOOGLE_SHEETS_CLIENT_EMAIL=your-client-email
 GOOGLE_SHEETS_PRIVATE_KEY=your-private-key
 GOOGLE_SHEETS_SPREADSHEET_ID=your-spreadsheet-id
 
-# API 키
-API_KEY=your-api-key
-NEXT_PUBLIC_API_KEY=your-api-key
+# API 키 (서버 측 전용)
+API_KEY=your-server-api-key
 ADMIN_API_KEY=your-admin-api-key
 
 # 프린터 설정
@@ -35,6 +34,8 @@ FORCE_SIMPLE_FOR_BK3=true
 # Vercel Blob
 BLOB_READ_WRITE_TOKEN=your-blob-token
 \`\`\`
+
+**보안 참고**: 민감한 API 키는 서버 측 환경변수로만 설정하세요. 클라이언트에 노출되는 변수(`NEXT_PUBLIC_*`)에는 민감한 정보를 포함하지 마세요.
 
 ### 2. 오디오 파일 확인
 
