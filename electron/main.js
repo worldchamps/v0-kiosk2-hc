@@ -1,10 +1,30 @@
-require("dotenv").config({ path: require("path").join(__dirname, "..", ".env.local") })
-
-const { app, BrowserWindow, ipcMain } = require("electron")
 const path = require("path")
+const fs = require("fs")
+const { app, BrowserWindow, ipcMain } = require("electron")
 const { SerialPort } = require("serialport")
 const overlayButtonModule = require("./overlay-button")
 const { startNextServer, stopNextServer } = require("./server")
+
+// Try to load .env.local from multiple locations
+const possibleEnvPaths = [
+  path.join(__dirname, "..", ".env.local"),
+  path.join(process.resourcesPath, ".env.local"),
+  path.join(process.cwd(), ".env.local"),
+]
+
+let envLoaded = false
+for (const envPath of possibleEnvPaths) {
+  if (fs.existsSync(envPath)) {
+    console.log("[v0] Loading environment from:", envPath)
+    require("dotenv").config({ path: envPath })
+    envLoaded = true
+    break
+  }
+}
+
+if (!envLoaded) {
+  console.error("[v0] No environment file found")
+}
 
 let mainWindow
 let billAcceptorPort = null
@@ -47,7 +67,7 @@ async function createWindow() {
         preload: path.join(__dirname, "preload.js"),
         nodeIntegration: false,
         contextIsolation: true,
-        devTools: isDev,
+        devTools: true, // Always enable DevTools for debugging
       },
     })
 
@@ -74,28 +94,132 @@ async function createWindow() {
       console.log("[v0] Development mode - connecting to:", startUrl)
     } else {
       console.log("[v0] Production mode - starting Next.js server...")
+
+      // Show loading screen while server starts
+      mainWindow.loadURL(
+        "data:text/html;charset=utf-8," +
+          encodeURIComponent(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <style>
+              body {
+                margin: 0;
+                padding: 0;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+              }
+              .loader {
+                text-align: center;
+                color: white;
+              }
+              .spinner {
+                border: 4px solid rgba(255,255,255,0.3);
+                border-top: 4px solid white;
+                border-radius: 50%;
+                width: 50px;
+                height: 50px;
+                animation: spin 1s linear infinite;
+                margin: 0 auto 20px;
+              }
+              @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+              }
+              h1 { font-size: 24px; margin: 0 0 10px 0; }
+              p { font-size: 14px; opacity: 0.9; }
+            </style>
+          </head>
+          <body>
+            <div class="loader">
+              <div class="spinner"></div>
+              <h1>TheBeachStay Kiosk</h1>
+              <p>서버를 시작하는 중입니다...</p>
+            </div>
+          </body>
+        </html>
+      `),
+      )
+
+      mainWindow.show()
+
       try {
         startUrl = await startNextServer(3000)
-        console.log("[v0] Next.js server started successfully")
+        console.log("[v0] Next.js server started successfully, loading app...")
+
+        // Wait a bit for server to be fully ready
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+
+        await mainWindow.loadURL(startUrl)
+        console.log("[v0] App loaded successfully")
       } catch (error) {
         console.error("[v0] Failed to start Next.js server:", error)
-        app.quit()
+
+        // Show error screen
+        mainWindow.loadURL(
+          "data:text/html;charset=utf-8," +
+            encodeURIComponent(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <style>
+                body {
+                  margin: 0;
+                  padding: 0;
+                  display: flex;
+                  justify-content: center;
+                  align-items: center;
+                  height: 100vh;
+                  background: #1a1a1a;
+                  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                  color: white;
+                }
+                .error {
+                  text-align: center;
+                  max-width: 600px;
+                  padding: 40px;
+                }
+                h1 { color: #ff6b6b; margin-bottom: 20px; }
+                p { line-height: 1.6; margin-bottom: 10px; }
+                code {
+                  background: #2a2a2a;
+                  padding: 2px 8px;
+                  border-radius: 4px;
+                  font-size: 12px;
+                }
+              </style>
+            </head>
+            <body>
+              <div class="error">
+                <h1>⚠️ 서버 시작 실패</h1>
+                <p>Next.js 서버를 시작할 수 없습니다.</p>
+                <p><code>${error.message}</code></p>
+                <p style="margin-top: 30px; font-size: 14px; opacity: 0.7;">
+                  앱을 다시 시작하거나 관리자에게 문의하세요.
+                </p>
+              </div>
+            </body>
+          </html>
+        `),
+        )
         return
       }
     }
 
-    mainWindow.loadURL(startUrl)
-
-    if (isDev) {
-      mainWindow.webContents.openDevTools()
-    }
+    mainWindow.webContents.openDevTools()
 
     mainWindow.once("ready-to-show", () => {
-      mainWindow.show()
+      if (!mainWindow.isVisible()) {
+        mainWindow.show()
+      }
     })
 
-    mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription) => {
-      console.error("[v0] Failed to load:", errorCode, errorDescription)
+    mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription, validatedURL) => {
+      console.error("[v0] Failed to load:", errorCode, errorDescription, validatedURL)
       if (isDev) {
         console.log("[v0] Make sure Next.js server is running on http://localhost:3000")
       } else {
@@ -104,6 +228,10 @@ async function createWindow() {
           mainWindow.loadURL(startUrl)
         }, 3000)
       }
+    })
+
+    mainWindow.webContents.on("console-message", (event, level, message, line, sourceId) => {
+      console.log(`[v0] Browser console [${level}]:`, message)
     })
 
     setTimeout(() => {

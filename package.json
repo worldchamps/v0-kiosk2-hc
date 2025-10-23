@@ -72,12 +72,25 @@
       "output": "dist"
     },
     "files": [
+      "!**/*",
       ".next/**/*",
+      "!.next/cache/**/*",
       "public/**/*",
       "electron/**/*",
       "package.json",
-      "node_modules/**/*",
-      ".env.local"
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": ".env.local",
+        "to": ".env.local",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      ".next/**/*"
     ],
     "win": {
       "target": "nsis",
