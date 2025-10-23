@@ -89,8 +89,6 @@ npm install
 npm run electron:dev
 \`\`\`
 
-**Note**: Audio files are automatically downloaded from Vercel Blob during `npm install`. If you cloned from GitHub and audio files are missing, they will be fetched automatically.
-
 ### 3. Production Build
 
 \`\`\`bash
