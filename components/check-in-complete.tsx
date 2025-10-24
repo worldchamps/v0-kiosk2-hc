@@ -371,7 +371,7 @@ export default function CheckInComplete({
               <div className="w-full flex justify-between mt-6">
                 {!isPopupMode && (
                   <Button
-                    className="text-xl font-bold flex items-center space-x-2 h-16 px-6"
+                    className="h-20 text-2xl text-black bg-[#42c0ff] hover:bg-[#3ab0e8] shadow-md font-bold rounded-xl flex items-center space-x-2 px-6"
                     onClick={() => setShowPrinter(true)}
                   >
                     <Printer className="h-6 w-6" />
@@ -381,7 +381,7 @@ export default function CheckInComplete({
 
                 <Button
                   variant="outline"
-                  className="text-xl font-bold h-16 px-6 bg-transparent"
+                  className="h-20 text-2xl border-3 border-gray-300 font-bold rounded-xl bg-transparent px-6"
                   onClick={() => {
                     logDebug("Back button clicked: clearing all timers")
                     clearAllTimers()

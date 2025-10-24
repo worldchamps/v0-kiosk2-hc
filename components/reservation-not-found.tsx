@@ -112,12 +112,19 @@ export default function ReservationNotFound({
           </Card>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 w-full mt-auto">
-          <Button size="lg" className="h-12 text-lg" onClick={handleRecheck}>
+        <div className="grid grid-cols-2 gap-8 w-full mt-auto">
+          <Button
+            onClick={handleRecheck}
+            className="h-20 text-2xl text-black bg-[#42c0ff] hover:bg-[#3ab0e8] shadow-md font-bold rounded-xl"
+          >
             다시 확인
           </Button>
 
-          <Button variant="outline" size="lg" className="h-12 text-lg bg-transparent" onClick={handleBackClick}>
+          <Button
+            variant="outline"
+            onClick={handleBackClick}
+            className="h-20 text-2xl border-3 border-gray-300 font-bold rounded-xl bg-transparent"
+          >
             돌아가기
           </Button>
         </div>

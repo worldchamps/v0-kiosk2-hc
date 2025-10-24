@@ -57,7 +57,7 @@ function createWindow() {
           ...details.responseHeaders,
           "Content-Security-Policy": [
             "default-src 'self'; " +
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; " +
               "style-src 'self' 'unsafe-inline'; " +
               "img-src 'self' data: https: blob:; " +
               "font-src 'self' data:; " +

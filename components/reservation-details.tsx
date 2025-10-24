@@ -258,16 +258,15 @@ export default function ReservationDetails({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 w-full mt-auto">
+        <div className="grid grid-cols-2 gap-8 w-full mt-auto">
           <Button
-            size="lg"
-            className="h-12 text-lg"
             onClick={handleCheckIn}
             disabled={loading || checkInComplete || hasRevealedInfo}
+            className="h-20 text-2xl text-black bg-[#42c0ff] hover:bg-[#3ab0e8] shadow-md font-bold rounded-xl"
           >
             {loading ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 className="mr-3 h-8 w-8 animate-spin" />
                 처리 중...
               </>
             ) : checkInComplete || hasRevealedInfo ? (
@@ -279,9 +278,8 @@ export default function ReservationDetails({
 
           <Button
             variant="outline"
-            size="lg"
-            className="h-12 text-lg bg-transparent"
             onClick={handleBackClick}
+            className="h-20 text-2xl border-3 border-gray-300 font-bold rounded-xl bg-transparent"
             disabled={loading}
           >
             돌아가기

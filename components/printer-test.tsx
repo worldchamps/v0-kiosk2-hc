@@ -33,19 +33,6 @@ export default function PrinterTest() {
     setSimplePrintMode(newMode)
   }
 
-  // iconv-lite 라이브러리 로드
-  useEffect(() => {
-    const loadIconvLite = () => {
-      if (typeof window !== "undefined" && !(window as any).iconv) {
-        const script = document.createElement("script")
-        script.src = "https://cdn.jsdelivr.net/npm/iconv-lite@0.6.3/lib/index.min.js"
-        document.head.appendChild(script)
-      }
-    }
-
-    loadIconvLite()
-  }, [])
-
   // 시리얼 프린터 연결 함수 (COM2 자동 연결 시도)
   const handleSerialConnect = async () => {
     setIsConnecting(true)

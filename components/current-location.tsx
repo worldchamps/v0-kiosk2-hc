@@ -57,7 +57,7 @@ export default function CurrentLocation({ onNavigate, kioskLocation }: CurrentLo
         <Button
           variant="outline"
           onClick={() => onNavigate("standby")}
-          className="h-20 text-2xl w-full border-3 border-gray-300 mt-auto font-bold"
+          className="h-20 text-2xl w-full border-3 border-gray-300 font-bold rounded-xl bg-transparent mt-auto"
         >
           돌아가기
         </Button>
