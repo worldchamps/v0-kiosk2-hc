@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { createSheetsClient, SHEET_COLUMNS } from "@/lib/google-sheets"
 import { getCurrentDateKST, normalizeDate } from "@/lib/date-utils"
-import { getPropertyFromPlace, getPropertyFromRoomNumber } from "@/lib/property-utils"
+import { getPropertyFromReservation } from "@/lib/property-utils"
 
 export async function GET(request: NextRequest) {
   try {
@@ -72,12 +72,10 @@ export async function GET(request: NextRequest) {
           kioskProperty,
         })
 
-        let reservationProperty = getPropertyFromRoomNumber(roomNumber)
-
-        // If room number doesn't give us a property, try place
-        if (!reservationProperty) {
-          reservationProperty = getPropertyFromPlace(place)
-        }
+        const reservationProperty = getPropertyFromReservation({
+          place,
+          roomNumber,
+        } as any)
 
         // If still no property detected, skip this reservation
         if (!reservationProperty) {
@@ -98,10 +96,10 @@ export async function GET(request: NextRequest) {
 
       const place = row[SHEET_COLUMNS.PLACE] || ""
       const roomNumber = row[SHEET_COLUMNS.ROOM_NUMBER] || ""
-      let detectedProperty = getPropertyFromRoomNumber(roomNumber)
-      if (!detectedProperty) {
-        detectedProperty = getPropertyFromPlace(place)
-      }
+      const detectedProperty = getPropertyFromReservation({
+        place,
+        roomNumber,
+      } as any)
 
       reservations.push({
         place: place,

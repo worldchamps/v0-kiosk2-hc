@@ -72,15 +72,11 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     const savedProperty = getKioskPropertyId()
     setKioskProperty(savedProperty)
 
-    console.log("[v0] ========================================")
-    console.log("[v0] 🏢 Kiosk Initialization")
-    console.log("[v0] ========================================")
-    console.log("[v0] Property ID:", savedProperty)
-    console.log("[v0] Property Name:", getPropertyDisplayName(savedProperty))
-    console.log("[v0] Location:", savedLocation)
-    console.log("[v0] Environment:", typeof window === "undefined" ? "Server" : "Client")
-    console.log("[v0] Is Electron:", typeof window !== "undefined" && !!(window as any).electronAPI)
-    console.log("[v0] ========================================")
+    console.log("[v0] Kiosk initialized:", {
+      property: getPropertyDisplayName(savedProperty),
+      location: savedLocation,
+      isElectron: typeof window !== "undefined" && !!(window as any).electronAPI,
+    })
   }, [])
 
   useEffect(() => {
@@ -102,37 +98,29 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   useEffect(() => {
     if (!isPopupMode) return
 
-    console.log("[v0] Overlay mode detected - starting 30s auto-close timer")
-
     const resetTimer = () => {
       if (inactivityTimerRef.current) {
         clearTimeout(inactivityTimerRef.current)
       }
 
       inactivityTimerRef.current = setTimeout(() => {
-        console.log("[v0] 30s inactivity timeout - closing popup")
         if (typeof window !== "undefined" && (window as any).electronAPI) {
           ;(window as any).electronAPI.send("close-popup")
         }
       }, INACTIVITY_TIMEOUT)
     }
 
-    // Start initial timer
     resetTimer()
 
-    // Reset timer on any user interaction
     const handleUserActivity = () => {
-      console.log("[v0] User activity detected - resetting timer")
       resetTimer()
     }
 
-    // Listen to various user interaction events
     window.addEventListener("click", handleUserActivity)
     window.addEventListener("touchstart", handleUserActivity)
     window.addEventListener("keydown", handleUserActivity)
     window.addEventListener("mousemove", handleUserActivity)
 
-    // Cleanup
     return () => {
       if (inactivityTimerRef.current) {
         clearTimeout(inactivityTimerRef.current)
@@ -208,7 +196,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
           setCurrentScreen("reservationDetails")
         }
       } else {
-        console.log("[v0] No reservation found in current property, searching all properties...")
         const allPropertiesResponse = await fetch(
           `/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false&searchAll=true`,
           {
@@ -226,8 +213,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
           const foundReservation = allPropertiesData.reservations[0]
           const targetProperty = foundReservation.property
 
-          console.log("[v0] Reservation found in different property:", targetProperty)
-
           setRedirectTargetProperty(targetProperty)
           setShowPropertyRedirect(true)
         } else {
@@ -235,7 +220,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         }
       }
     } catch (err) {
-      console.error("Error checking reservation:", err)
+      console.error("[v0] Reservation check error:", err)
       setError("예약 확인 중 오류가 발생했습니다. 다시 시도해 주세요.")
       setCurrentScreen("reservationNotFound")
     } finally {
@@ -250,8 +235,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     setError("")
 
     try {
-      console.log("[v0] Starting check-in process for:", reservationData.reservationId)
-
       const response = await fetch("/api/check-in", {
         method: "POST",
         headers: {
@@ -290,7 +273,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       }
 
       const data = await response.json()
-      console.log("[v0] Check-in API response:", data)
 
       if (data.data) {
         setRevealedInfo({
@@ -303,13 +285,10 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       setAdminOverride(false)
 
       if (!isPopupMode) {
-        console.log("[v0] Normal mode: Navigating to check-in complete")
         setCurrentScreen("checkInComplete")
-      } else {
-        console.log("[v0] Popup mode: Check-in complete, window will close")
       }
     } catch (err) {
-      console.error("[v0] Error during check-in:", err)
+      console.error("[v0] Check-in error:", err)
       setError("체크인 중 오류가 발생했습니다. 다시 시도해 주세요.")
 
       if (isPopupMode) {

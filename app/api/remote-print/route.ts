@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { headers } from "next/headers"
-import { getDB, getPropertyFromRoomNumber } from "@/lib/firebase-admin"
+import { getDB } from "@/lib/firebase-admin"
+import { getPropertyFromRoomNumber } from "@/lib/property-utils"
 
 // API Key for authentication
 const API_KEY = process.env.API_KEY || ""

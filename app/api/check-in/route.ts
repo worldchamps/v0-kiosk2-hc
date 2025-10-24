@@ -89,14 +89,8 @@ export async function POST(request: NextRequest) {
         place,
       })
 
-      console.log("[v0] 🏢 Property Validation:")
-      console.log("[v0]   Detected Property:", reservationProperty)
-      console.log("[v0]   Kiosk Property:", kioskProperty)
-      console.log("[v0]   Admin Override:", adminOverride)
-
-      // Property를 감지할 수 없는 경우 체크인 허용
       if (!reservationProperty) {
-        console.log("[v0] ⚠️ Could not detect reservation property - allowing check-in")
+        console.log("[v0] Could not detect reservation property - allowing check-in")
       } else {
         const validation = canCheckInAtKiosk(
           reservationProperty as PropertyId,
@@ -104,12 +98,7 @@ export async function POST(request: NextRequest) {
           adminOverride,
         )
 
-        console.log("[v0]   Validation Result:", validation.allowed ? "✅ ALLOWED" : "❌ DENIED")
-        console.log("[v0]   Reason:", validation.reason)
-        console.log("[v0] ========================================")
-
         if (!validation.allowed) {
-          console.log("[v0] ❌ Property mismatch - returning 403")
           return NextResponse.json(
             {
               error: "Property mismatch",
@@ -122,11 +111,9 @@ export async function POST(request: NextRequest) {
         }
 
         if (adminOverride) {
-          console.log(`[v0] ⚠️ Admin override used for check-in`)
+          console.log("[v0] Admin override used for check-in")
         }
       }
-    } else {
-      console.log("[v0] ⚠️ No kiosk property specified - allowing check-in")
     }
 
     const checkInTime = new Date().toISOString()
@@ -159,7 +146,7 @@ export async function POST(request: NextRequest) {
       })
       console.log("[v0] ✅ Firebase PMS Queue added")
     } catch (firebaseError) {
-      console.error("[v0] ❌ Firebase failed:", firebaseError)
+      console.error("[v0] ❌ Firebase PMS Queue failed:", firebaseError)
     }
 
     console.log("[v0] ✅ Check-in completed successfully!")
@@ -178,7 +165,7 @@ export async function POST(request: NextRequest) {
       },
     })
   } catch (error) {
-    console.error("[v0] ❌ Error during check-in:", error)
+    console.error("[v0] Check-in error:", error)
     return NextResponse.json(
       { error: "Failed to complete check-in", details: (error as Error).message },
       { status: 500 },

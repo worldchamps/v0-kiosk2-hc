@@ -1,5 +1,6 @@
 import { initializeApp, getApps, cert } from "firebase-admin/app"
 import { getDatabase, type Database } from "firebase-admin/database"
+import { getPropertyFromRoomNumber } from "@/lib/property-utils"
 
 let dbInstance: Database | null = null
 
@@ -57,33 +58,6 @@ export const db = new Proxy({} as Database, {
   },
 })
 
-export function getPropertyFromRoomNumber(roomNumber: string): string {
-  const upperRoom = roomNumber.toUpperCase().trim()
-
-  // Property 1: C### or D### pattern
-  if (upperRoom.match(/^[CD]\d{3}$/)) {
-    return "property1"
-  }
-
-  // Property 3: A### 또는 B### 형식
-  if (upperRoom.match(/^[AB]\d{3}$/)) {
-    return "property3"
-  }
-
-  // Property 4: Camp ### 형식 (공백 있거나 없거나)
-  if (upperRoom.match(/^CAMP\s*\d+$/i)) {
-    return "property4"
-  }
-
-  // Property 2: Kariv ### pattern
-  if (upperRoom.match(/^KARIV\s*\d+$/i)) {
-    return "property2"
-  }
-
-  // 기본값: property3 (기존 동작 유지)
-  return "property3"
-}
-
 export async function addToPMSQueue(data: {
   roomNumber: string
   guestName: string
@@ -91,7 +65,6 @@ export async function addToPMSQueue(data: {
 }) {
   console.log("[Firebase] addToPMSQueue called with:", data)
 
-  // 호실 번호로 속성 결정
   const property = getPropertyFromRoomNumber(data.roomNumber)
   console.log("[Firebase] Detected property:", property, "for room:", data.roomNumber)
 

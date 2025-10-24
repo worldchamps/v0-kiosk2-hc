@@ -87,30 +87,20 @@ export function getPropertyFromReservation(reservation: {
   place?: string
   roomNumber?: string
 }): PropertyId | null {
-  console.log("[v0] 🔍 Property 감지 시작:", {
-    place: reservation.place,
-    roomNumber: reservation.roomNumber,
-  })
-
   if (reservation.roomNumber) {
     const propertyFromRoom = getPropertyFromRoomNumber(reservation.roomNumber)
-    console.log("[v0] 객실번호로 감지:", propertyFromRoom)
     if (propertyFromRoom) {
-      console.log("[v0] ✅ 객실번호로 Property 확정:", propertyFromRoom)
       return propertyFromRoom
     }
   }
 
   if (reservation.place) {
     const propertyFromPlace = getPropertyFromPlace(reservation.place)
-    console.log("[v0] Place로 감지:", propertyFromPlace)
     if (propertyFromPlace) {
-      console.log("[v0] ✅ Place로 Property 확정:", propertyFromPlace)
       return propertyFromPlace
     }
   }
 
-  console.warn("[v0] ⚠️ Property 감지 실패 - place와 roomNumber 모두 매칭 안됨")
   return null
 }
 
@@ -133,34 +123,24 @@ export function getPropertyDisplayName(propertyId: PropertyId): string {
  */
 export function getKioskPropertyId(): PropertyId {
   if (typeof window !== "undefined" && (window as any).__KIOSK_PROPERTY_ID__) {
-    const propertyId = (window as any).__KIOSK_PROPERTY_ID__ as PropertyId
-    console.log("[v0] 🖥️ Electron environment - Property ID from window:", propertyId)
-    return propertyId
+    return (window as any).__KIOSK_PROPERTY_ID__ as PropertyId
   }
-
-  let propertyId: PropertyId
 
   const nextPublicPropertyId = process.env.NEXT_PUBLIC_KIOSK_PROPERTY_ID
   const regularPropertyId = process.env.KIOSK_PROPERTY_ID
 
-  console.log("[v0] 🔍 Environment variables check:")
-  console.log("[v0]   NEXT_PUBLIC_KIOSK_PROPERTY_ID:", nextPublicPropertyId)
-  console.log("[v0]   KIOSK_PROPERTY_ID:", regularPropertyId)
-  console.log("[v0]   typeof window:", typeof window)
+  let propertyId: PropertyId
 
   if (typeof window === "undefined") {
     // 서버 사이드 - 둘 다 사용 가능
     propertyId = (nextPublicPropertyId || regularPropertyId || "property3") as PropertyId
-    console.log("[v0] 🖥️ Server-side - Using property:", propertyId)
   } else {
     // 클라이언트 사이드 - NEXT_PUBLIC_ 만 사용 가능
     propertyId = (nextPublicPropertyId || "property3") as PropertyId
-    console.log("[v0] 🌐 Client-side - Using property:", propertyId)
   }
 
-  if (propertyId === "property3") {
-    console.warn("[v0] ⚠️ Using default property3 - NEXT_PUBLIC_KIOSK_PROPERTY_ID not set!")
-    console.warn("[v0] ⚠️ Please set NEXT_PUBLIC_KIOSK_PROPERTY_ID in .env.local")
+  if (propertyId === "property3" && !nextPublicPropertyId && !regularPropertyId) {
+    console.warn("[v0] Using default property3 - NEXT_PUBLIC_KIOSK_PROPERTY_ID not set")
   }
 
   return propertyId
@@ -171,7 +151,7 @@ export function getKioskPropertyId(): PropertyId {
  * @deprecated 환경변수를 사용하므로 더 이상 필요하지 않음
  */
 export function setKioskPropertyId(propertyId: PropertyId): void {
-  console.warn("[v0] setKioskPropertyId is deprecated. Use KIOSK_PROPERTY_ID environment variable instead.")
+  throw new Error("setKioskPropertyId is deprecated. Use NEXT_PUBLIC_KIOSK_PROPERTY_ID environment variable instead.")
 }
 
 /**
