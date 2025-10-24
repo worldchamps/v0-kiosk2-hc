@@ -15,7 +15,13 @@ import { useRouter } from "next/navigation"
 import AdminKeypad from "@/components/admin-keypad"
 import { stopAllAudio, pauseBGM, resumeBGM } from "@/lib/audio-utils"
 import { PrintQueueListener } from "@/components/print-queue-listener"
-import { getKioskPropertyId, type PropertyId, getPropertyDisplayName } from "@/lib/property-utils"
+import {
+  getKioskPropertyId,
+  type PropertyId,
+  getPropertyDisplayName,
+  getPropertyFromRoomNumber,
+  getPropertyFromPlace,
+} from "@/lib/property-utils"
 import PropertyMismatchDialog from "@/components/property-mismatch-dialog"
 import PropertyRedirectDialog from "@/components/property-redirect-dialog"
 
@@ -43,6 +49,12 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   const [mismatchData, setMismatchData] = useState<{
     reservationProperty: PropertyId
     kioskProperty: PropertyId
+    debugInfo?: {
+      roomNumber: string
+      place: string
+      detectedFromRoom: PropertyId | null
+      detectedFromPlace: PropertyId | null
+    }
   } | null>(null)
   const [adminOverride, setAdminOverride] = useState(false)
   const [showPropertyRedirect, setShowPropertyRedirect] = useState(false)
@@ -263,9 +275,19 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
 
       if (response.status === 403) {
         const errorData = await response.json()
+
+        const detectedFromRoom = getPropertyFromRoomNumber(reservationData.roomNumber)
+        const detectedFromPlace = getPropertyFromPlace(reservationData.place)
+
         setMismatchData({
           reservationProperty: errorData.reservationProperty,
           kioskProperty: errorData.kioskProperty,
+          debugInfo: {
+            roomNumber: reservationData.roomNumber,
+            place: reservationData.place,
+            detectedFromRoom,
+            detectedFromPlace,
+          },
         })
         setShowPropertyMismatch(true)
         setLoading(false)
@@ -423,6 +445,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             setCurrentScreen("reservationConfirm")
           }}
           onAdminOverride={handleAdminOverride}
+          debugInfo={mismatchData.debugInfo}
         />
       )}
 

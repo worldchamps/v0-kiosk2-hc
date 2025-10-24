@@ -61,6 +61,40 @@ export function getPropertyFromPlace(place: string): PropertyId | null {
 }
 
 /**
+ * 예약 정보로부터 Property 감지
+ */
+export function getPropertyFromReservation(reservation: {
+  place?: string
+  roomNumber?: string
+}): PropertyId | null {
+  console.log("[v0] 🔍 Property 감지 시작:", {
+    place: reservation.place,
+    roomNumber: reservation.roomNumber,
+  })
+
+  // 1. Place 필드 우선 확인
+  if (reservation.place) {
+    const propertyFromPlace = getPropertyFromPlace(reservation.place)
+    console.log("[v0] Place로 감지:", propertyFromPlace)
+    if (propertyFromPlace) {
+      return propertyFromPlace
+    }
+  }
+
+  // 2. 객실 번호로 확인
+  if (reservation.roomNumber) {
+    const propertyFromRoom = getPropertyFromRoomNumber(reservation.roomNumber)
+    console.log("[v0] 객실번호로 감지:", propertyFromRoom)
+    if (propertyFromRoom) {
+      return propertyFromRoom
+    }
+  }
+
+  console.warn("[v0] ⚠️ Property 감지 실패 - place와 roomNumber 모두 매칭 안됨")
+  return null
+}
+
+/**
  * Property ID를 사람이 읽을 수 있는 이름으로 변환
  */
 export function getPropertyDisplayName(propertyId: PropertyId): string {

@@ -7,10 +7,16 @@ import type { PropertyId } from "@/lib/property-utils"
 import { useEffect, useState, useRef } from "react"
 
 interface PropertyMismatchDialogProps {
-  reservationProperty: PropertyId
+  reservationProperty: PropertyId | null
   kioskProperty: PropertyId
   onClose: () => void
   onAdminOverride: () => void
+  debugInfo?: {
+    roomNumber?: string
+    place?: string
+    detectedFromRoom?: PropertyId | null
+    detectedFromPlace?: PropertyId | null
+  }
 }
 
 export default function PropertyMismatchDialog({
@@ -18,8 +24,9 @@ export default function PropertyMismatchDialog({
   kioskProperty,
   onClose,
   onAdminOverride,
+  debugInfo,
 }: PropertyMismatchDialogProps) {
-  const correctPropertyName = getPropertyDisplayName(reservationProperty)
+  const correctPropertyName = reservationProperty ? getPropertyDisplayName(reservationProperty) : "알 수 없음"
   const currentPropertyName = getPropertyDisplayName(kioskProperty)
 
   const [countdown, setCountdown] = useState(30)
@@ -99,6 +106,24 @@ export default function PropertyMismatchDialog({
               <span className="text-lg font-bold text-blue-600">{correctPropertyName}</span>
             </div>
           </div>
+
+          {debugInfo && (
+            <div className="w-full bg-red-50 rounded-xl p-4 space-y-2 text-left text-sm">
+              <p className="font-bold text-red-900">디버그 정보:</p>
+              <div className="space-y-1 text-red-800">
+                <p>객실 번호: {debugInfo.roomNumber || "없음"}</p>
+                <p>Place 필드: {debugInfo.place || "없음"}</p>
+                <p>
+                  객실번호로 감지:{" "}
+                  {debugInfo.detectedFromRoom ? getPropertyDisplayName(debugInfo.detectedFromRoom) : "감지 실패"}
+                </p>
+                <p>
+                  Place로 감지:{" "}
+                  {debugInfo.detectedFromPlace ? getPropertyDisplayName(debugInfo.detectedFromPlace) : "감지 실패"}
+                </p>
+              </div>
+            </div>
+          )}
 
           <p className="text-gray-600">올바른 키오스크로 이동하여 다시 시도해 주세요.</p>
 
