@@ -26,9 +26,12 @@ const AUDIO_FILES = {
 // 오디오 객체 캐시
 const audioCache: { [key: string]: HTMLAudioElement } = {}
 
+const audioPlayPromises: { [key: string]: Promise<void> | null } = {}
+
 // BGM 관련 변수
 let bgmPlaying = false
 let bgmAudio: HTMLAudioElement | null = null
+let bgmPlayPromise: Promise<void> | null = null
 
 let idleWelcomePlayed = false
 
@@ -53,9 +56,11 @@ export function playAudio(audioKey: keyof typeof AUDIO_FILES): void {
     // 볼륨 설정 (0.0 ~ 1.0)
     audio.volume = 0.8
 
-    // 재생 시작
-    audio.play().catch((error) => {
-      console.error(`오디오 재생 오류 (${audioKey}):`, error)
+    audioPlayPromises[audioKey] = audio.play().catch((error) => {
+      // Ignore AbortError which happens when play is interrupted
+      if (error.name !== "AbortError") {
+        console.error(`오디오 재생 오류 (${audioKey}):`, error)
+      }
     })
   } catch (error) {
     console.error(`오디오 재생 중 오류 발생 (${audioKey}):`, error)
@@ -116,7 +121,11 @@ export function startBGM(volume = 0.3): void {
         console.log("BGM ended, restarting...")
         if (bgmAudio) {
           bgmAudio.currentTime = 0
-          bgmAudio.play().catch((err) => console.error("Error restarting BGM:", err))
+          bgmPlayPromise = bgmAudio.play().catch((err) => {
+            if (err.name !== "AbortError") {
+              console.error("Error restarting BGM:", err)
+            }
+          })
         }
       })
     } else {
@@ -124,15 +133,16 @@ export function startBGM(volume = 0.3): void {
       bgmAudio.volume = volume
     }
 
-    // 재생 시작
-    bgmAudio
+    bgmPlayPromise = bgmAudio
       .play()
       .then(() => {
         console.log("BGM started successfully")
         bgmPlaying = true
       })
       .catch((error) => {
-        console.error("BGM 재생 오류:", error)
+        if (error.name !== "AbortError") {
+          console.error("BGM 재생 오류:", error)
+        }
         bgmPlaying = false
       })
   } catch (error) {
@@ -147,9 +157,24 @@ export function startBGM(volume = 0.3): void {
 export function pauseBGM(): void {
   try {
     if (bgmAudio && bgmPlaying) {
-      bgmAudio.pause()
-      bgmPlaying = false
-      console.log("BGM paused")
+      if (bgmPlayPromise) {
+        bgmPlayPromise
+          .then(() => {
+            if (bgmAudio) {
+              bgmAudio.pause()
+              bgmPlaying = false
+              console.log("BGM paused")
+            }
+          })
+          .catch(() => {
+            // Play was already interrupted, just update state
+            bgmPlaying = false
+          })
+      } else {
+        bgmAudio.pause()
+        bgmPlaying = false
+        console.log("BGM paused")
+      }
     }
   } catch (error) {
     console.error("BGM 일시 중지 중 오류 발생:", error)
@@ -162,14 +187,16 @@ export function pauseBGM(): void {
 export function resumeBGM(): void {
   try {
     if (bgmAudio && !bgmPlaying) {
-      bgmAudio
+      bgmPlayPromise = bgmAudio
         .play()
         .then(() => {
           bgmPlaying = true
           console.log("BGM resumed")
         })
         .catch((error) => {
-          console.error("BGM 재개 오류:", error)
+          if (error.name !== "AbortError") {
+            console.error("BGM 재개 오류:", error)
+          }
         })
     }
   } catch (error) {
@@ -183,10 +210,29 @@ export function resumeBGM(): void {
 export function stopBGM(): void {
   try {
     if (bgmAudio) {
-      bgmAudio.pause()
-      bgmAudio.currentTime = 0
-      bgmPlaying = false
-      console.log("BGM stopped")
+      if (bgmPlayPromise) {
+        bgmPlayPromise
+          .then(() => {
+            if (bgmAudio) {
+              bgmAudio.pause()
+              bgmAudio.currentTime = 0
+              bgmPlaying = false
+              console.log("BGM stopped")
+            }
+          })
+          .catch(() => {
+            // Play was already interrupted, just reset
+            if (bgmAudio) {
+              bgmAudio.currentTime = 0
+            }
+            bgmPlaying = false
+          })
+      } else {
+        bgmAudio.pause()
+        bgmAudio.currentTime = 0
+        bgmPlaying = false
+        console.log("BGM stopped")
+      }
     }
   } catch (error) {
     console.error("BGM 중지 중 오류 발생:", error)
@@ -241,14 +287,16 @@ export function playIdleWelcome(): void {
       startBGM(0.3)
     }
 
-    audio
+    audioPlayPromises["IDLE_WELCOME"] = audio
       .play()
       .then(() => {
         console.log("Idle welcome audio started")
         idleWelcomePlayed = true
       })
       .catch((error) => {
-        console.error("Idle welcome audio playback error:", error)
+        if (error.name !== "AbortError") {
+          console.error("Idle welcome audio playback error:", error)
+        }
         // 재생 실패 시 바로 BGM 시작
         startBGM(0.3)
       })
@@ -272,12 +320,25 @@ export function resetIdleWelcome(): void {
  * @param includeBGM BGM도 중지할지 여부 (기본값: true)
  */
 export function stopAllAudio(includeBGM = true): void {
-  // BGM 제외한 모든 오디오 중지
   Object.entries(audioCache).forEach(([key, audio]) => {
     try {
       if (key !== "BGM") {
-        audio.pause()
-        audio.currentTime = 0
+        const playPromise = audioPlayPromises[key]
+        if (playPromise) {
+          playPromise
+            .then(() => {
+              audio.pause()
+              audio.currentTime = 0
+            })
+            .catch(() => {
+              // Play was already interrupted, just reset
+              audio.currentTime = 0
+            })
+          audioPlayPromises[key] = null
+        } else {
+          audio.pause()
+          audio.currentTime = 0
+        }
       }
     } catch (error) {
       console.error(`오디오 중지 중 오류 발생 (${key}):`, error)
