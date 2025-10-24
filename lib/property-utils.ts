@@ -62,6 +62,7 @@ export function getPropertyFromPlace(place: string): PropertyId | null {
 
 /**
  * 예약 정보로부터 Property 감지
+ * 객실 번호를 우선으로 확인하고, 실패하면 Place 필드로 확인
  */
 export function getPropertyFromReservation(reservation: {
   place?: string
@@ -72,23 +73,21 @@ export function getPropertyFromReservation(reservation: {
     roomNumber: reservation.roomNumber,
   })
 
-  // Place 필드 우선 확인
-  if (reservation.place) {
-    const propertyFromPlace = getPropertyFromPlace(reservation.place)
-    console.log("[v0] Place로 감지:", propertyFromPlace)
-    // Place에서 명확한 property를 감지한 경우에만 반환 (null이 아닌 경우)
-    if (propertyFromPlace) {
-      return propertyFromPlace
-    }
-    // Place에서 null이 반환되면 객실 번호로 계속 진행
-  }
-
-  // 2. 객실 번호로 확인
   if (reservation.roomNumber) {
     const propertyFromRoom = getPropertyFromRoomNumber(reservation.roomNumber)
     console.log("[v0] 객실번호로 감지:", propertyFromRoom)
     if (propertyFromRoom) {
+      console.log("[v0] ✅ 객실번호로 Property 확정:", propertyFromRoom)
       return propertyFromRoom
+    }
+  }
+
+  if (reservation.place) {
+    const propertyFromPlace = getPropertyFromPlace(reservation.place)
+    console.log("[v0] Place로 감지:", propertyFromPlace)
+    if (propertyFromPlace) {
+      console.log("[v0] ✅ Place로 Property 확정:", propertyFromPlace)
+      return propertyFromPlace
     }
   }
 
