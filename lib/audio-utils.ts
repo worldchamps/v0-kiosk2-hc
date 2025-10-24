@@ -1,16 +1,26 @@
 // 음성 파일 URL 정의
 const AUDIO_FILES = {
-  RESERVATION_PROMPT: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/mZHweH32-TqyfNVT_a9Z6C/public/audio/reservation-prompt.mp3",
-  RESERVATION_FOUND: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/KZ4LgKUHDIO8rZ845xzfor/public/audio/reservation-found.mp3",
-  RESERVATION_NOT_FOUND: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/CLCXgY19xdzysGAprC0hKc/public/audio/reservation-not-found.mp3",
-  MULTIPLE_RESERVATIONS: "/audio/multiple-reservations.mp3",
-  BUILDING_A_GUIDE: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/LNrgY62XtffvLFvKevce1A/public/audio/building-a-guide.mp3",
-  BUILDING_B_GUIDE: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/FHSsTLB9J7i_etpWSNfONg/public/audio/building-b-guide.mp3",
-  BUILDING_C_GUIDE: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/a1MxnOhjSIdmxW17kXakxv/public/audio/building-c-guide.mp3",
-  BUILDING_D_GUIDE: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/bJqLHSgZQOvgyGuw6xEcz2/public/audio/building-d-guide.mp3",
-  BUILDING_CAMP_GUIDE: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/7x-Q7CDb_yuX0tut1Ibkh1/public/audio/building-camp-guide.mp3",
-  IDLE_WELCOME: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/mNdMrZbzz-4gTjlwKQv-HA/public/audio/idle-welcome.mp3",
-  BGM: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/nDdjE6zkx427zPIWVDKHi8/public/audio/bgm.mp3",
+  RESERVATION_PROMPT:
+    "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/reservation-name-prompt-zcaqHjGBPyJZKNZgnVApwZ7cukEdsl.mp3",
+  RESERVATION_FOUND:
+    "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/reservation-found-oTy6pTQIOIfKoNpx2wV1OqyYQJF2du.mp3",
+  RESERVATION_NOT_FOUND:
+    "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/reservation-not-found-J8rDxth77zZYtrjy4l48njNLsKby6F.mp3",
+  // 건물별 안내 음성 추가
+  BUILDING_A_GUIDE:
+    "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/ABuilding%20Guide-AJMNdkfrBlHQLsxTDV3VupIqSlwBQu.mp3",
+  BUILDING_B_GUIDE:
+    "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/BBuilding%20Guide-s0cl1NrNbJshr89OuAVo4ZPRTaQKGA.mp3",
+  BUILDING_C_GUIDE:
+    "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/CBuilding%20Guide-aLyl8nvSxR4nNxBHZ7PTRQVsBtjYJl.mp3",
+  BUILDING_D_GUIDE:
+    "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/DBuilding%20Guide-i4zaRn19m3BbOUWUQLUgF1k9EhcQAq.mp3",
+  BUILDING_CAMP_GUIDE:
+    "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/CampBuilding%20Guide-gvNhIVPE0CyFXD9mfRCq81J5ENz0bu.mp3",
+  IDLE_WELCOME:
+    "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/ElevenLabs_2025-10-11T06_11_56_JiYoung_pvc_sp103_s72_sb93_se0_b_m2-7MVHQLf0Vc79ckFUIUkJRHLdsBMe50.mp3",
+  // BGM 추가
+  BGM: "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/BGM-KxDaQotYetSNviIMu8k9fN0pnce4X3.mp3",
 }
 
 // 오디오 객체 캐시
@@ -34,10 +44,6 @@ export function playAudio(audioKey: keyof typeof AUDIO_FILES): void {
     // 캐시에 없으면 새로 생성
     if (!audioCache[audioKey]) {
       audioCache[audioKey] = new Audio(AUDIO_FILES[audioKey])
-      // 오디오 파일 로드 오류 핸들러 추가
-      audioCache[audioKey].addEventListener("error", (e) => {
-        console.error(`오디오 파일 로드 오류 (${audioKey}):`, AUDIO_FILES[audioKey], e)
-      })
     }
 
     // 오디오 재생
