@@ -95,6 +95,14 @@ function createWindow() {
       }
     })
 
+    mainWindow.webContents.on("did-finish-load", () => {
+      mainWindow.webContents.executeJavaScript(`
+        window.__KIOSK_PROPERTY_ID__ = "${KIOSK_PROPERTY_ID}";
+        window.__OVERLAY_MODE__ = ${OVERLAY_MODE};
+        console.log("[v0] 🔧 Injected KIOSK_PROPERTY_ID:", "${KIOSK_PROPERTY_ID}");
+      `)
+    })
+
     setTimeout(() => {
       connectBillAcceptor()
       connectBillDispenser()
