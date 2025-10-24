@@ -61,6 +61,7 @@ function createWindow() {
               "img-src 'self' data: https: blob:; " +
               "font-src 'self' data:; " +
               "connect-src 'self' http://localhost:* https://*; " +
+              "media-src 'self' https://jdpd8txarrh2yidl.public.blob.vercel-storage.com https://*.blob.vercel-storage.com blob: data:; " +
               "frame-src 'self';",
           ],
         },
