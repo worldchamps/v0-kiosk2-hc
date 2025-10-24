@@ -164,12 +164,12 @@ function createKioskPopup() {
       nodeIntegration: false,
       contextIsolation: true,
       autoplayPolicy: "no-user-gesture-required",
-      zoomFactor: 1.0,
+      zoomFactor: 0.7,
     },
   })
 
   kioskPopup.webContents.on("did-finish-load", () => {
-    kioskPopup.webContents.setZoomFactor(1.0)
+    kioskPopup.webContents.setZoomFactor(0.7)
     keepOnTopAggressive(kioskPopup)
     startTopmostKeeper(kioskPopup)
   })
