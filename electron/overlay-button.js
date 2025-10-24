@@ -194,8 +194,8 @@ function createKioskPopup() {
 
   const isDev = process.env.NODE_ENV !== "production"
   const startUrl = isDev
-    ? "http://localhost:3000?mode=kiosk&popup=true"
-    : `file://${path.join(__dirname, "../.next/server/app/index.html")}?mode=kiosk&popup=true`
+    ? "http://localhost:3000?mode=kiosk&popup=true&direct=reservationConfirm"
+    : `file://${path.join(__dirname, "../.next/server/app/index.html")}?mode=kiosk&popup=true&direct=reservationConfirm`
 
   console.log("[v0] Loading popup URL:", startUrl)
   kioskPopup.loadURL(startUrl)

@@ -74,13 +74,9 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
 
     const checkPopupMode = () => {
       if (typeof window !== "undefined") {
-        // Check URL parameter
         const urlParams = new URLSearchParams(window.location.search)
         const isPopup = urlParams.get("popup") === "true"
-
-        // Or check if opened by Electron overlay button
         const isElectronPopup = !!(window as any).electronAPI && window.opener
-
         return isPopup || isElectronPopup
       }
       return false
@@ -89,11 +85,22 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     const popupMode = checkPopupMode()
     setIsPopupMode(popupMode)
 
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search)
+      const directScreen = urlParams.get("direct")
+
+      if (popupMode && directScreen) {
+        setCurrentScreen(directScreen)
+      } else if (popupMode) {
+        setCurrentScreen("reservationConfirm")
+      }
+    }
+
     console.log("[v0] Kiosk initialized:", {
       property: getPropertyDisplayName(savedProperty),
       location: savedLocation,
       isPopupMode: popupMode,
-      isElectron: typeof window !== "undefined" && !!(window as any).electronAPI,
+      initialScreen: popupMode ? "reservationConfirm" : "idle",
     })
   }, [])
 
