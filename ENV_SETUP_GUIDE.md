@@ -46,11 +46,10 @@ GOOGLE_SHEETS_SPREADSHEET_ID=your-spreadsheet-id
 #### API Keys
 
 \`\`\`env
-API_KEY=your-server-api-key
+API_KEY=your-api-key
+NEXT_PUBLIC_API_KEY=your-public-api-key
 ADMIN_API_KEY=your-admin-key
 \`\`\`
-
-**보안 참고**: API 키는 서버 측에서만 사용하세요. 클라이언트에 노출되는 환경변수는 `NEXT_PUBLIC_` prefix를 사용하지만, 민감한 정보는 포함하지 마세요.
 
 ### 4. 환경변수 확인
 
