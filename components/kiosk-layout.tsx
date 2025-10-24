@@ -15,7 +15,7 @@ import { useRouter } from "next/navigation"
 import AdminKeypad from "@/components/admin-keypad"
 import { stopAllAudio, pauseBGM, resumeBGM } from "@/lib/audio-utils"
 import { PrintQueueListener } from "@/components/print-queue-listener"
-import { getKioskPropertyId, type PropertyId } from "@/lib/property-utils"
+import { getKioskPropertyId, type PropertyId, getPropertyDisplayName } from "@/lib/property-utils"
 import PropertyMismatchDialog from "@/components/property-mismatch-dialog"
 import PropertyRedirectDialog from "@/components/property-redirect-dialog"
 
@@ -59,6 +59,10 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
 
     const savedProperty = getKioskPropertyId()
     setKioskProperty(savedProperty)
+
+    console.log("[v0] 🏢 Kiosk initialized with property:", savedProperty)
+    console.log("[v0] 📍 Kiosk location:", savedLocation)
+    console.log("[v0] 🔧 Property display name:", getPropertyDisplayName(savedProperty))
 
     if (typeof window !== "undefined") {
       const urlParams = new URLSearchParams(window.location.search)

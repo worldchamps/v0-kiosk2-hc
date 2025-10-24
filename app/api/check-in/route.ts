@@ -32,6 +32,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { reservationId, kioskProperty, adminOverride = false } = body
 
+    console.log("[v0] 🔍 Check-in request received:", { reservationId, kioskProperty, adminOverride })
+
     if (!reservationId) {
       return NextResponse.json({ error: "Reservation ID is required" }, { status: 400 })
     }
@@ -75,8 +77,17 @@ export async function POST(request: NextRequest) {
     const password = reservationData[SHEET_COLUMNS.PASSWORD] || ""
     const floor = reservationData[SHEET_COLUMNS.FLOOR] || ""
 
+    console.log("[v0] 📋 Reservation data:", { roomNumber, place, guestName })
+
     if (kioskProperty) {
       const reservationProperty = place ? getPropertyFromPlace(place) : getPropertyFromRoomNumber(roomNumber)
+
+      console.log("[v0] 🏢 Property validation:")
+      console.log("  - Room number:", roomNumber)
+      console.log("  - Place:", place)
+      console.log("  - Detected reservation property:", reservationProperty)
+      console.log("  - Kiosk property:", kioskProperty)
+      console.log("  - Admin override:", adminOverride)
 
       const validation = canCheckInAtKiosk(
         reservationProperty as PropertyId,
@@ -84,7 +95,10 @@ export async function POST(request: NextRequest) {
         adminOverride,
       )
 
+      console.log("[v0] ✅ Validation result:", validation)
+
       if (!validation.allowed) {
+        console.log("[v0] ❌ Property mismatch detected!")
         return NextResponse.json(
           {
             error: "Property mismatch",
@@ -97,12 +111,13 @@ export async function POST(request: NextRequest) {
       }
 
       if (adminOverride) {
-        console.log(`[v0] Admin override used for check-in: ${reservationId} at ${kioskProperty}`)
+        console.log(`[v0] ⚠️ Admin override used for check-in: ${reservationId} at ${kioskProperty}`)
       }
     }
 
     const checkInTime = new Date().toISOString()
 
+    console.log("[v0] 📝 Updating Google Sheets...")
     await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId,
       requestBody: {
@@ -119,9 +134,10 @@ export async function POST(request: NextRequest) {
         ],
       },
     })
+    console.log("[v0] ✅ Google Sheets updated successfully")
 
     try {
-      console.log("[v0] Adding to Firebase PMS Queue:", { roomNumber, guestName, checkInDate })
+      console.log("[v0] 🔥 Adding to Firebase PMS Queue:", { roomNumber, guestName, checkInDate })
       await addToPMSQueue({
         roomNumber,
         guestName,
@@ -137,6 +153,8 @@ export async function POST(request: NextRequest) {
       // Don't throw error - check-in should still succeed even if Firebase fails
     }
 
+    console.log("[v0] ✅ Check-in completed successfully!")
+
     return NextResponse.json({
       success: true,
       message: "Check-in completed successfully",
@@ -150,7 +168,7 @@ export async function POST(request: NextRequest) {
       },
     })
   } catch (error) {
-    console.error("Error during check-in:", error)
+    console.error("[v0] ❌ Error during check-in:", error)
     return NextResponse.json(
       { error: "Failed to complete check-in", details: (error as Error).message },
       { status: 500 },

@@ -77,13 +77,25 @@ export function getPropertyDisplayName(propertyId: PropertyId): string {
  * 키오스크 Property ID 가져오기 (환경변수)
  */
 export function getKioskPropertyId(): PropertyId {
+  let propertyId: PropertyId
+
   if (typeof window === "undefined") {
     // 서버 사이드
-    return (process.env.KIOSK_PROPERTY_ID as PropertyId) || "property3"
+    propertyId = (process.env.KIOSK_PROPERTY_ID as PropertyId) || "property3"
+  } else {
+    // 클라이언트 사이드 - NEXT_PUBLIC_ 접두사 필요
+    propertyId = (process.env.NEXT_PUBLIC_KIOSK_PROPERTY_ID as PropertyId) || "property3"
   }
 
-  // 클라이언트 사이드 - NEXT_PUBLIC_ 접두사 필요
-  return (process.env.NEXT_PUBLIC_KIOSK_PROPERTY_ID as PropertyId) || "property3"
+  console.log("[v0] 🏢 Kiosk Property ID:", propertyId)
+  console.log("[v0] 📍 Environment:", typeof window === "undefined" ? "Server" : "Client")
+
+  if (propertyId === "property3") {
+    console.warn("[v0] ⚠️ Using default property3 - NEXT_PUBLIC_KIOSK_PROPERTY_ID may not be set!")
+    console.warn("[v0] 💡 Set NEXT_PUBLIC_KIOSK_PROPERTY_ID environment variable to fix this")
+  }
+
+  return propertyId
 }
 
 /**
