@@ -129,7 +129,7 @@ export function getPropertyDisplayName(propertyId: PropertyId): string {
 
 /**
  * 키오스크 Property ID 가져오기 (동기 버전)
- * Electron 환경에서는 window.__KIOSK_PROPERTY_ID__를 사용
+ * NEXT_PUBLIC_ 환경변수를 우선적으로 사용
  */
 export function getKioskPropertyId(): PropertyId {
   if (typeof window !== "undefined" && (window as any).__KIOSK_PROPERTY_ID__) {
@@ -140,20 +140,27 @@ export function getKioskPropertyId(): PropertyId {
 
   let propertyId: PropertyId
 
+  const nextPublicPropertyId = process.env.NEXT_PUBLIC_KIOSK_PROPERTY_ID
+  const regularPropertyId = process.env.KIOSK_PROPERTY_ID
+
+  console.log("[v0] 🔍 Environment variables check:")
+  console.log("[v0]   NEXT_PUBLIC_KIOSK_PROPERTY_ID:", nextPublicPropertyId)
+  console.log("[v0]   KIOSK_PROPERTY_ID:", regularPropertyId)
+  console.log("[v0]   typeof window:", typeof window)
+
   if (typeof window === "undefined") {
-    // 서버 사이드
-    propertyId = (process.env.KIOSK_PROPERTY_ID as PropertyId) || "property3"
-    console.log("[v0] 🖥️ Server-side environment - Property ID:", propertyId)
+    // 서버 사이드 - 둘 다 사용 가능
+    propertyId = (nextPublicPropertyId || regularPropertyId || "property3") as PropertyId
+    console.log("[v0] 🖥️ Server-side - Using property:", propertyId)
   } else {
-    // 클라이언트 사이드 - NEXT_PUBLIC_ 접두사 필요
-    const envValue = process.env.NEXT_PUBLIC_KIOSK_PROPERTY_ID
-    propertyId = (envValue as PropertyId) || "property3"
-    console.log("[v0] 🌐 Client-side environment - Property ID:", propertyId)
-    console.log("[v0] 🌐 NEXT_PUBLIC_KIOSK_PROPERTY_ID:", envValue)
+    // 클라이언트 사이드 - NEXT_PUBLIC_ 만 사용 가능
+    propertyId = (nextPublicPropertyId || "property3") as PropertyId
+    console.log("[v0] 🌐 Client-side - Using property:", propertyId)
   }
 
   if (propertyId === "property3") {
-    console.warn("[v0] ⚠️ Using default property3 - environment variable not set!")
+    console.warn("[v0] ⚠️ Using default property3 - NEXT_PUBLIC_KIOSK_PROPERTY_ID not set!")
+    console.warn("[v0] ⚠️ Please set NEXT_PUBLIC_KIOSK_PROPERTY_ID in .env.local")
   }
 
   return propertyId

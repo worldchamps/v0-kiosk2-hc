@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server"
 import { headers } from "next/headers"
 import { createSheetsClient, SHEET_COLUMNS } from "@/lib/google-sheets"
 import { addToPMSQueue } from "@/lib/firebase-admin"
-import { getPropertyFromPlace, getPropertyFromRoomNumber, canCheckInAtKiosk } from "@/lib/property-utils"
+import { getPropertyFromReservation, canCheckInAtKiosk } from "@/lib/property-utils"
 import type { PropertyId } from "@/lib/property-utils"
 
 // API Key for authentication
@@ -14,17 +14,13 @@ async function authenticateRequest(request: NextRequest) {
   const headersList = await headers()
   const apiKey = headersList.get("x-api-key")
 
-  // 클라이언트에서 API 키 없이 호출할 수 있도록 허용
-  // 이 API는 공개적으로 접근 가능하지만, 서버 측에서 요청을 검증합니다
   if (!apiKey) return true
 
-  // 관리자 키가 제공된 경우 검증
   return apiKey === API_KEY || apiKey === ADMIN_API_KEY
 }
 
 export async function POST(request: NextRequest) {
   try {
-    // Authenticate the request
     if (!(await authenticateRequest(request))) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
@@ -32,7 +28,12 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { reservationId, kioskProperty, adminOverride = false } = body
 
-    console.log("[v0] 🔍 Check-in request received:", { reservationId, kioskProperty, adminOverride })
+    console.log("[v0] ========================================")
+    console.log("[v0] 🔍 Check-in Request")
+    console.log("[v0] ========================================")
+    console.log("[v0] Reservation ID:", reservationId)
+    console.log("[v0] Kiosk Property:", kioskProperty)
+    console.log("[v0] Admin Override:", adminOverride)
 
     if (!reservationId) {
       return NextResponse.json({ error: "Reservation ID is required" }, { status: 400 })
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
 
     for (let i = 0; i < rows.length; i++) {
       if (rows[i][SHEET_COLUMNS.RESERVATION_ID] === reservationId) {
-        rowIndex = i + 94 // +94 because we start at A94
+        rowIndex = i + 94
         reservationData = rows[i]
         break
       }
@@ -77,42 +78,55 @@ export async function POST(request: NextRequest) {
     const password = reservationData[SHEET_COLUMNS.PASSWORD] || ""
     const floor = reservationData[SHEET_COLUMNS.FLOOR] || ""
 
-    console.log("[v0] 📋 Reservation data:", { roomNumber, place, guestName })
+    console.log("[v0] 📋 Reservation Data:")
+    console.log("[v0]   Room Number:", roomNumber)
+    console.log("[v0]   Place:", place)
+    console.log("[v0]   Guest Name:", guestName)
 
     if (kioskProperty) {
-      const reservationProperty = place ? getPropertyFromPlace(place) : getPropertyFromRoomNumber(roomNumber)
+      const reservationProperty = getPropertyFromReservation({
+        roomNumber,
+        place,
+      })
 
-      console.log("[v0] 🏢 Property validation:")
-      console.log("  - Room number:", roomNumber)
-      console.log("  - Place:", place)
-      console.log("  - Detected reservation property:", reservationProperty)
-      console.log("  - Kiosk property:", kioskProperty)
-      console.log("  - Admin override:", adminOverride)
+      console.log("[v0] 🏢 Property Validation:")
+      console.log("[v0]   Detected Property:", reservationProperty)
+      console.log("[v0]   Kiosk Property:", kioskProperty)
+      console.log("[v0]   Admin Override:", adminOverride)
 
-      const validation = canCheckInAtKiosk(
-        reservationProperty as PropertyId,
-        kioskProperty as PropertyId,
-        adminOverride,
-      )
-
-      console.log("[v0] ✅ Validation result:", validation)
-
-      if (!validation.allowed) {
-        console.log("[v0] ❌ Property mismatch detected!")
-        return NextResponse.json(
-          {
-            error: "Property mismatch",
-            message: validation.reason,
-            reservationProperty,
-            kioskProperty,
-          },
-          { status: 403 },
+      // Property를 감지할 수 없는 경우 체크인 허용
+      if (!reservationProperty) {
+        console.log("[v0] ⚠️ Could not detect reservation property - allowing check-in")
+      } else {
+        const validation = canCheckInAtKiosk(
+          reservationProperty as PropertyId,
+          kioskProperty as PropertyId,
+          adminOverride,
         )
-      }
 
-      if (adminOverride) {
-        console.log(`[v0] ⚠️ Admin override used for check-in: ${reservationId} at ${kioskProperty}`)
+        console.log("[v0]   Validation Result:", validation.allowed ? "✅ ALLOWED" : "❌ DENIED")
+        console.log("[v0]   Reason:", validation.reason)
+        console.log("[v0] ========================================")
+
+        if (!validation.allowed) {
+          console.log("[v0] ❌ Property mismatch - returning 403")
+          return NextResponse.json(
+            {
+              error: "Property mismatch",
+              message: validation.reason,
+              reservationProperty,
+              kioskProperty,
+            },
+            { status: 403 },
+          )
+        }
+
+        if (adminOverride) {
+          console.log(`[v0] ⚠️ Admin override used for check-in`)
+        }
       }
+    } else {
+      console.log("[v0] ⚠️ No kiosk property specified - allowing check-in")
     }
 
     const checkInTime = new Date().toISOString()
@@ -134,26 +148,22 @@ export async function POST(request: NextRequest) {
         ],
       },
     })
-    console.log("[v0] ✅ Google Sheets updated successfully")
+    console.log("[v0] ✅ Google Sheets updated")
 
     try {
-      console.log("[v0] 🔥 Adding to Firebase PMS Queue:", { roomNumber, guestName, checkInDate })
+      console.log("[v0] 🔥 Adding to Firebase PMS Queue")
       await addToPMSQueue({
         roomNumber,
         guestName,
         checkInDate,
       })
-      console.log("[v0] ✅ Firebase PMS Queue added successfully")
+      console.log("[v0] ✅ Firebase PMS Queue added")
     } catch (firebaseError) {
-      console.error("[v0] ❌ Firebase PMS Queue failed:", firebaseError)
-      console.error("[v0] Error details:", {
-        message: (firebaseError as Error).message,
-        stack: (firebaseError as Error).stack,
-      })
-      // Don't throw error - check-in should still succeed even if Firebase fails
+      console.error("[v0] ❌ Firebase failed:", firebaseError)
     }
 
     console.log("[v0] ✅ Check-in completed successfully!")
+    console.log("[v0] ========================================")
 
     return NextResponse.json({
       success: true,
