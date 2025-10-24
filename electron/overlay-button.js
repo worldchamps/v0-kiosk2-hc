@@ -65,10 +65,10 @@ function createOverlayButton() {
 
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width: screenWidth, height: screenHeight } = primaryDisplay.bounds
-  const buttonWidth = 220
-  const buttonHeight = 100
-  const topLeftX = 20 // 20px from left edge
-  const topLeftY = 20 // 20px from top edge
+  const buttonWidth = 200
+  const buttonHeight = 125
+  const topLeftX = 9 // 9px from left edge
+  const topLeftY = 14 // 14px from top edge
 
   overlayButton = new BrowserWindow({
     width: buttonWidth,
