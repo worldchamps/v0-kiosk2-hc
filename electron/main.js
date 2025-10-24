@@ -83,6 +83,13 @@ function createWindow() {
       mainWindow.show()
     })
 
+    mainWindow.webContents.on("did-finish-load", () => {
+      mainWindow.webContents.executeJavaScript(`
+        window.__KIOSK_PROPERTY_ID__ = "${KIOSK_PROPERTY_ID}";
+        console.log("[v0] Property ID injected:", "${KIOSK_PROPERTY_ID}");
+      `)
+    })
+
     mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription) => {
       if (isDev) {
         console.error("[v0] Failed to load:", errorCode, errorDescription)

@@ -109,36 +109,25 @@ export function getPropertyDisplayName(propertyId: PropertyId): string {
 }
 
 /**
- * 키오스크 Property ID 가져오기
- * Electron 환경에서는 IPC를 통해, 웹 환경에서는 환경변수를 통해 가져옴
+ * 키오스크 Property ID 가져오기 (동기 버전)
  */
-export async function getKioskPropertyId(): Promise<PropertyId> {
-  if (typeof window !== "undefined" && (window as any).electronAPI) {
-    try {
-      const propertyId = await (window as any).electronAPI.getPropertyId()
-      console.log("[v0] 🖥️ Electron environment - Property ID:", propertyId)
-      return propertyId as PropertyId
-    } catch (error) {
-      console.error("[v0] ❌ Failed to get property ID from Electron:", error)
-    }
+export function getKioskPropertyId(): PropertyId {
+  // Electron 환경에서는 window 객체에 property ID가 설정되어 있을 수 있음
+  if (typeof window !== "undefined" && (window as any).__KIOSK_PROPERTY_ID__) {
+    const propertyId = (window as any).__KIOSK_PROPERTY_ID__ as PropertyId
+    console.log("[v0] 🖥️ Property ID from window:", propertyId)
+    return propertyId
   }
 
-  let propertyId: PropertyId
+  // 환경변수에서 읽기 (NEXT_PUBLIC_ 접두사 있는 것 우선)
+  const publicEnv = process.env.NEXT_PUBLIC_KIOSK_PROPERTY_ID
+  const privateEnv = process.env.KIOSK_PROPERTY_ID
 
-  if (typeof window === "undefined") {
-    // 서버 사이드
-    propertyId = (process.env.KIOSK_PROPERTY_ID as PropertyId) || "property3"
-    console.log("[v0] 🖥️ Server-side environment - Property ID:", propertyId)
-  } else {
-    // 클라이언트 사이드 - NEXT_PUBLIC_ 접두사 필요
-    const envValue = process.env.NEXT_PUBLIC_KIOSK_PROPERTY_ID
-    propertyId = (envValue as PropertyId) || "property3"
-    console.log("[v0] 🌐 Client-side environment - Property ID:", propertyId)
-  }
+  const propertyId = (publicEnv || privateEnv || "property1") as PropertyId
 
-  if (propertyId === "property3") {
-    console.warn("[v0] ⚠️ Using default property3!")
-  }
+  console.log("[v0] 🏢 Property ID:", propertyId)
+  console.log("[v0] 📝 From NEXT_PUBLIC_KIOSK_PROPERTY_ID:", publicEnv || "not set")
+  console.log("[v0] 📝 From KIOSK_PROPERTY_ID:", privateEnv || "not set")
 
   return propertyId
 }
