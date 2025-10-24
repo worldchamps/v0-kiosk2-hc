@@ -71,7 +71,6 @@ export default function ReservationConfirm({
     <div className="flex items-start justify-start w-full h-full">
       <div className="kiosk-content-container">
         <div>
-          <h1 className="kiosk-title">{locationTitle}</h1>
           <div className="kiosk-highlight">예약 확인</div>
         </div>
 

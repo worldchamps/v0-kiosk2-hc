@@ -145,6 +145,10 @@ function createKioskPopup() {
   const popupX = Math.round((screenWidth - popupWidth) / 2)
   const popupY = Math.round((screenHeight - popupHeight) / 2)
 
+  console.log(
+    `[v0] Screen: ${screenWidth}x${screenHeight}, Popup: ${popupWidth}x${popupHeight} at (${popupX}, ${popupY})`,
+  )
+
   kioskPopup = new BrowserWindow({
     width: popupWidth,
     height: popupHeight,
@@ -152,15 +156,22 @@ function createKioskPopup() {
     y: popupY,
     frame: false,
     alwaysOnTop: true,
-    fullscreen: false, // Changed from true to false to use custom size
+    fullscreen: false,
     focusable: true,
     type: "toolbar",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,
       contextIsolation: true,
-      autoplayPolicy: "no-user-gesture-required", // Allow autoplay for audio without user gesture
+      autoplayPolicy: "no-user-gesture-required",
+      zoomFactor: 1.0,
     },
+  })
+
+  kioskPopup.webContents.on("did-finish-load", () => {
+    kioskPopup.webContents.setZoomFactor(1.0)
+    keepOnTopAggressive(kioskPopup)
+    startTopmostKeeper(kioskPopup)
   })
 
   kioskPopup.webContents.session.webRequest.onHeadersReceived((details, callback) => {
@@ -174,7 +185,7 @@ function createKioskPopup() {
             "img-src 'self' data: https: blob:; " +
             "font-src 'self' data:; " +
             "connect-src 'self' http://localhost:* https://*; " +
-            "media-src 'self' https://jdpd8txarrh2yidl.public.blob.vercel-storage.com https://*.blob.vercel-storage.com blob: data:; " + // Add media-src to allow audio from Blob storage
+            "media-src 'self' https://jdpd8txarrh2yidl.public.blob.vercel-storage.com https://*.blob.vercel-storage.com blob: data:; " +
             "frame-src 'self';",
         ],
       },
@@ -188,11 +199,6 @@ function createKioskPopup() {
 
   console.log("[v0] Loading popup URL:", startUrl)
   kioskPopup.loadURL(startUrl)
-
-  kioskPopup.webContents.on("did-finish-load", () => {
-    keepOnTopAggressive(kioskPopup)
-    startTopmostKeeper(kioskPopup)
-  })
 
   kioskPopup.on("closed", () => {
     stopTopmostKeeper()
