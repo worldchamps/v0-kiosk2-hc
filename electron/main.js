@@ -33,9 +33,13 @@ let billDispenserPort = null
 const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
 const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"
 const isDev = process.env.NODE_ENV !== "production"
+const useExternalNextServer = process.env.NODE_ENV === "production" && !process.env.ELECTRON_BUILD
 
-if (isDev) {
+if (isDev || useExternalNextServer) {
   console.log(`[v0] Starting in ${OVERLAY_MODE ? "OVERLAY" : "FULLSCREEN"} mode for ${KIOSK_PROPERTY_ID}`)
+  if (useExternalNextServer) {
+    console.log("[v0] Using external Next.js server at http://localhost:3000")
+  }
 }
 
 const BILL_ACCEPTOR_CONFIG = {
@@ -60,8 +64,8 @@ async function createWindow() {
       width: 1920,
       height: 1080,
       fullscreen: true,
-      kiosk: !isDev,
-      frame: isDev,
+      kiosk: !isDev && !useExternalNextServer,
+      frame: isDev || useExternalNextServer,
       show: false,
       webPreferences: {
         preload: path.join(__dirname, "preload.js"),
@@ -89,9 +93,9 @@ async function createWindow() {
     })
 
     let startUrl
-    if (isDev) {
+    if (isDev || useExternalNextServer) {
       startUrl = "http://localhost:3000"
-      console.log("[v0] Development mode - connecting to:", startUrl)
+      console.log("[v0] Connecting to external Next.js server:", startUrl)
     } else {
       console.log("[v0] Production mode - starting Next.js server...")
 
@@ -220,8 +224,9 @@ async function createWindow() {
 
     mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription, validatedURL) => {
       console.error("[v0] Failed to load:", errorCode, errorDescription, validatedURL)
-      if (isDev) {
+      if (isDev || useExternalNextServer) {
         console.log("[v0] Make sure Next.js server is running on http://localhost:3000")
+        console.log("[v0] Run: npm run build && npm run start")
       } else {
         console.log("[v0] Retrying in 3 seconds...")
         setTimeout(() => {
@@ -475,7 +480,7 @@ app.on("window-all-closed", () => {
     billDispenserPort.close()
   }
 
-  if (!isDev) {
+  if (!isDev && !useExternalNextServer) {
     stopNextServer()
   }
 
