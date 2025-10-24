@@ -145,97 +145,117 @@ export default function ReservationDetails({
         </div>
 
         <div className={`w-full overflow-auto mt-6 ${isPopupMode ? "py-2" : "py-4"}`}>
-          <Card className="w-full">
-            <CardContent className={isPopupMode ? "p-4 space-y-2" : "p-6 space-y-4"}>
-              <div className={`grid gap-4 ${isPopupMode ? "grid-cols-1" : "grid-cols-2"}`}>
-                {reservation.place && (
-                  <div className={isPopupMode ? "" : "col-span-2"}>
-                    <p className="text-sm text-gray-500">장소</p>
-                    <p className={`font-medium ${isPopupMode ? "text-base" : "text-lg"}`}>{reservation.place}</p>
+          <div className={`flex gap-4 ${isPopupMode ? "flex-col" : "flex-row"}`}>
+            {/* Image Box */}
+            <div className={`${isPopupMode ? "w-full" : "w-1/2"} flex-shrink-0`}>
+              <Card className="h-full">
+                <CardContent className={isPopupMode ? "p-3" : "p-6"}>
+                  <p className={`text-gray-500 mb-2 ${isPopupMode ? "text-xs" : "text-sm"}`}>객실 이미지</p>
+                  <div className="bg-gray-100 rounded-lg p-2">
+                    <div className={`relative w-full ${isPopupMode ? "h-[300px]" : "h-[600px]"}`}>
+                      <Image
+                        src={roomImagePath || "/placeholder.svg"}
+                        alt={`${reservation.roomType} 객실 이미지`}
+                        fill
+                        className="rounded-lg object-cover"
+                      />
+                    </div>
                   </div>
-                )}
+                </CardContent>
+              </Card>
+            </div>
 
-                <div>
-                  <p className="text-sm text-gray-500">이름</p>
-                  <p className="font-medium">{reservation.guestName}</p>
-                </div>
+            {/* Info Box */}
+            <div className={`${isPopupMode ? "w-full" : "w-1/2"} flex-shrink-0`}>
+              <Card className="h-full">
+                <CardContent className={isPopupMode ? "p-3 space-y-2" : "p-6 space-y-4"}>
+                  <div className={`grid gap-3 grid-cols-2`}>
+                    {reservation.place && (
+                      <div className="col-span-2">
+                        <p className="text-sm text-gray-500">장소</p>
+                        <p className={`font-medium ${isPopupMode ? "text-base" : "text-lg"}`}>{reservation.place}</p>
+                      </div>
+                    )}
 
-                <div>
-                  <p className="text-sm text-gray-500">예약 플랫폼</p>
-                  <p className="font-medium">{reservation.bookingPlatform}</p>
-                </div>
-
-                <div>
-                  <p className="text-sm text-gray-500">객실 타입</p>
-                  <p className="font-medium">{reservation.roomType}</p>
-                </div>
-
-                {reservation.phoneNumber && (
-                  <div>
-                    <p className="text-sm text-gray-500">전화번호</p>
-                    <p className="font-medium">{reservation.phoneNumber}</p>
-                  </div>
-                )}
-
-                <div>
-                  <p className="text-sm text-gray-500">체크인</p>
-                  <p className="font-medium">{formatDateKorean(reservation.checkInDate)}</p>
-                </div>
-
-                <div>
-                  <p className="text-sm text-gray-500">체크아웃</p>
-                  <p className="font-medium">{formatDateKorean(reservation.checkOutDate)}</p>
-                </div>
-
-                {hasRevealedInfo && (
-                  <>
-                    <div className={`mt-2 border-t pt-2 ${isPopupMode ? "" : "col-span-2"}`}>
-                      <p className="text-sm font-medium text-gray-700">객실 정보</p>
+                    <div>
+                      <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>이름</p>
+                      <p className={`font-medium ${isPopupMode ? "text-sm" : "text-base"}`}>{reservation.guestName}</p>
                     </div>
 
                     <div>
-                      <p className="text-sm text-gray-500">객실 호수</p>
-                      <p className={`font-medium text-blue-600 ${isPopupMode ? "text-base" : "text-lg"}`}>
-                        {displayRoomNumber}
+                      <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>예약 플랫폼</p>
+                      <p className={`font-medium ${isPopupMode ? "text-sm" : "text-base"}`}>
+                        {reservation.bookingPlatform}
                       </p>
                     </div>
 
                     <div>
-                      <p className="text-sm text-gray-500">비밀번호</p>
-                      <div className="flex items-center">
-                        <p className={`font-medium text-red-600 ${isPopupMode ? "text-base" : "text-lg"}`}>
-                          {showPassword ? displayPassword : displayPassword.replace(/./g, "•")}
-                        </p>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="ml-2 h-8 w-8 p-0"
-                          onClick={() => setShowPassword(!showPassword)}
-                        >
-                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                          <span className="sr-only">{showPassword ? "비밀번호 숨기기" : "비밀번호 보기"}</span>
-                        </Button>
-                      </div>
+                      <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>객실 타입</p>
+                      <p className={`font-medium ${isPopupMode ? "text-sm" : "text-base"}`}>{reservation.roomType}</p>
                     </div>
-                  </>
-                )}
-              </div>
 
-              <div className={isPopupMode ? "pt-2" : "pt-4"}>
-                <p className="text-sm text-gray-500 mb-2">객실 이미지</p>
-                <div className="bg-gray-100 rounded-lg p-2">
-                  <div className={`relative w-full ${isPopupMode ? "h-[300px]" : "h-[768px]"}`}>
-                    <Image
-                      src={roomImagePath || "/placeholder.svg"}
-                      alt={`${reservation.roomType} 객실 이미지`}
-                      fill
-                      className="rounded-lg object-cover"
-                    />
+                    {reservation.phoneNumber && (
+                      <div>
+                        <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>전화번호</p>
+                        <p className={`font-medium ${isPopupMode ? "text-sm" : "text-base"}`}>
+                          {reservation.phoneNumber}
+                        </p>
+                      </div>
+                    )}
+
+                    <div>
+                      <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>체크인</p>
+                      <p className={`font-medium ${isPopupMode ? "text-sm" : "text-base"}`}>
+                        {formatDateKorean(reservation.checkInDate)}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>체크아웃</p>
+                      <p className={`font-medium ${isPopupMode ? "text-sm" : "text-base"}`}>
+                        {formatDateKorean(reservation.checkOutDate)}
+                      </p>
+                    </div>
+
+                    {hasRevealedInfo && (
+                      <>
+                        <div className={`border-t pt-2 col-span-2 ${isPopupMode ? "mt-1" : "mt-2"}`}>
+                          <p className={`font-medium text-gray-700 ${isPopupMode ? "text-sm" : "text-base"}`}>
+                            객실 정보
+                          </p>
+                        </div>
+
+                        <div>
+                          <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>객실 호수</p>
+                          <p className={`font-medium text-blue-600 ${isPopupMode ? "text-base" : "text-lg"}`}>
+                            {displayRoomNumber}
+                          </p>
+                        </div>
+
+                        <div>
+                          <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>비밀번호</p>
+                          <div className="flex items-center">
+                            <p className={`font-medium text-red-600 ${isPopupMode ? "text-base" : "text-lg"}`}>
+                              {showPassword ? displayPassword : displayPassword.replace(/./g, "•")}
+                            </p>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="ml-2 h-8 w-8 p-0"
+                              onClick={() => setShowPassword(!showPassword)}
+                            >
+                              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                              <span className="sr-only">{showPassword ? "비밀번호 숨기기" : "비밀번호 보기"}</span>
+                            </Button>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4 w-full mt-auto">
