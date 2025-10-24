@@ -328,6 +328,14 @@ ipcMain.handle("reconnect-bill-dispenser", async () => {
   return { success: true }
 })
 
+ipcMain.handle("get-property-id", async () => {
+  return KIOSK_PROPERTY_ID
+})
+
+ipcMain.handle("get-overlay-mode", async () => {
+  return OVERLAY_MODE
+})
+
 app.whenReady().then(createWindow)
 
 app.on("window-all-closed", () => {

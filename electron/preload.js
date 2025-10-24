@@ -2,6 +2,10 @@ const { contextBridge, ipcRenderer } = require("electron")
 
 // Renderer 프로세스에서 사용할 수 있는 안전한 API 노출
 contextBridge.exposeInMainWorld("electronAPI", {
+  // 환경 설정
+  getPropertyId: () => ipcRenderer.invoke("get-property-id"),
+  getOverlayMode: () => ipcRenderer.invoke("get-overlay-mode"),
+
   // 지폐 인식기
   sendToBillAcceptor: (command) => ipcRenderer.invoke("send-to-bill-acceptor", command),
 

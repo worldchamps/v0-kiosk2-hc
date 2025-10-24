@@ -109,37 +109,35 @@ export function getPropertyDisplayName(propertyId: PropertyId): string {
 }
 
 /**
- * 키오스크 Property ID 가져오기 (환경변수)
+ * 키오스크 Property ID 가져오기
+ * Electron 환경에서는 IPC를 통해, 웹 환경에서는 환경변수를 통해 가져옴
  */
-export function getKioskPropertyId(): PropertyId {
+export async function getKioskPropertyId(): Promise<PropertyId> {
+  if (typeof window !== "undefined" && (window as any).electronAPI) {
+    try {
+      const propertyId = await (window as any).electronAPI.getPropertyId()
+      console.log("[v0] 🖥️ Electron environment - Property ID:", propertyId)
+      return propertyId as PropertyId
+    } catch (error) {
+      console.error("[v0] ❌ Failed to get property ID from Electron:", error)
+    }
+  }
+
   let propertyId: PropertyId
 
   if (typeof window === "undefined") {
     // 서버 사이드
     propertyId = (process.env.KIOSK_PROPERTY_ID as PropertyId) || "property3"
-    console.log("[v0] 🖥️ Server-side environment check:")
-    console.log("[v0]   - KIOSK_PROPERTY_ID:", process.env.KIOSK_PROPERTY_ID)
-    console.log("[v0]   - Resolved to:", propertyId)
+    console.log("[v0] 🖥️ Server-side environment - Property ID:", propertyId)
   } else {
     // 클라이언트 사이드 - NEXT_PUBLIC_ 접두사 필요
     const envValue = process.env.NEXT_PUBLIC_KIOSK_PROPERTY_ID
     propertyId = (envValue as PropertyId) || "property3"
-
-    console.log("[v0] 🌐 Client-side environment check:")
-    console.log("[v0]   - NEXT_PUBLIC_KIOSK_PROPERTY_ID:", envValue)
-    console.log("[v0]   - Raw value:", envValue)
-    console.log("[v0]   - Type:", typeof envValue)
-    console.log("[v0]   - Resolved to:", propertyId)
-    console.log(
-      "[v0]   - All NEXT_PUBLIC_ vars:",
-      Object.keys(process.env).filter((k) => k.startsWith("NEXT_PUBLIC_")),
-    )
+    console.log("[v0] 🌐 Client-side environment - Property ID:", propertyId)
   }
 
   if (propertyId === "property3") {
     console.warn("[v0] ⚠️ Using default property3!")
-    console.warn("[v0] 💡 Check if NEXT_PUBLIC_KIOSK_PROPERTY_ID is set in .env.local")
-    console.warn("[v0] 💡 You may need to restart the Next.js dev server")
   }
 
   return propertyId
