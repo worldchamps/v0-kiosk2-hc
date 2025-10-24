@@ -72,9 +72,27 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     const savedProperty = getKioskPropertyId()
     setKioskProperty(savedProperty)
 
+    const checkPopupMode = () => {
+      if (typeof window !== "undefined") {
+        // Check URL parameter
+        const urlParams = new URLSearchParams(window.location.search)
+        const isPopup = urlParams.get("popup") === "true"
+
+        // Or check if opened by Electron overlay button
+        const isElectronPopup = !!(window as any).electronAPI && window.opener
+
+        return isPopup || isElectronPopup
+      }
+      return false
+    }
+
+    const popupMode = checkPopupMode()
+    setIsPopupMode(popupMode)
+
     console.log("[v0] Kiosk initialized:", {
       property: getPropertyDisplayName(savedProperty),
       location: savedLocation,
+      isPopupMode: popupMode,
       isElectron: typeof window !== "undefined" && !!(window as any).electronAPI,
     })
   }, [])
