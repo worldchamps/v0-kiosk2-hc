@@ -116,7 +116,7 @@ export default function ReservationDetails({
           if (typeof window !== "undefined" && window.electronAPI) {
             window.electronAPI.send("checkin-complete")
           }
-        }, 1500) // Increased to 1.5 seconds for safety
+        }, 30000) // 30 seconds for Firebase operations to complete
       } else {
         // Normal mode: Show check-in complete screen
         setCheckInComplete(true)

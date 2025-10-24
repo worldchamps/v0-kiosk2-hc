@@ -21,7 +21,7 @@ export default function StandbyScreen({ onNavigate, kioskLocation }: StandbyScre
       console.log("[v0] Standby screen idle, navigating to idle screen")
       onNavigate("idle")
     },
-    idleTime: 60000, // 60 seconds
+    idleTime: 30000, // 30 seconds
     enabled: true,
   })
 
