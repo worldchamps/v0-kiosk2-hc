@@ -72,13 +72,15 @@ export function getPropertyFromReservation(reservation: {
     roomNumber: reservation.roomNumber,
   })
 
-  // 1. Place 필드 우선 확인
+  // Place 필드 우선 확인
   if (reservation.place) {
     const propertyFromPlace = getPropertyFromPlace(reservation.place)
     console.log("[v0] Place로 감지:", propertyFromPlace)
+    // Place에서 명확한 property를 감지한 경우에만 반환 (null이 아닌 경우)
     if (propertyFromPlace) {
       return propertyFromPlace
     }
+    // Place에서 null이 반환되면 객실 번호로 계속 진행
   }
 
   // 2. 객실 번호로 확인
@@ -116,17 +118,29 @@ export function getKioskPropertyId(): PropertyId {
   if (typeof window === "undefined") {
     // 서버 사이드
     propertyId = (process.env.KIOSK_PROPERTY_ID as PropertyId) || "property3"
+    console.log("[v0] 🖥️ Server-side environment check:")
+    console.log("[v0]   - KIOSK_PROPERTY_ID:", process.env.KIOSK_PROPERTY_ID)
+    console.log("[v0]   - Resolved to:", propertyId)
   } else {
     // 클라이언트 사이드 - NEXT_PUBLIC_ 접두사 필요
-    propertyId = (process.env.NEXT_PUBLIC_KIOSK_PROPERTY_ID as PropertyId) || "property3"
+    const envValue = process.env.NEXT_PUBLIC_KIOSK_PROPERTY_ID
+    propertyId = (envValue as PropertyId) || "property3"
+
+    console.log("[v0] 🌐 Client-side environment check:")
+    console.log("[v0]   - NEXT_PUBLIC_KIOSK_PROPERTY_ID:", envValue)
+    console.log("[v0]   - Raw value:", envValue)
+    console.log("[v0]   - Type:", typeof envValue)
+    console.log("[v0]   - Resolved to:", propertyId)
+    console.log(
+      "[v0]   - All NEXT_PUBLIC_ vars:",
+      Object.keys(process.env).filter((k) => k.startsWith("NEXT_PUBLIC_")),
+    )
   }
 
-  console.log("[v0] 🏢 Kiosk Property ID:", propertyId)
-  console.log("[v0] 📍 Environment:", typeof window === "undefined" ? "Server" : "Client")
-
   if (propertyId === "property3") {
-    console.warn("[v0] ⚠️ Using default property3 - NEXT_PUBLIC_KIOSK_PROPERTY_ID may not be set!")
-    console.warn("[v0] 💡 Set NEXT_PUBLIC_KIOSK_PROPERTY_ID environment variable to fix this")
+    console.warn("[v0] ⚠️ Using default property3!")
+    console.warn("[v0] 💡 Check if NEXT_PUBLIC_KIOSK_PROPERTY_ID is set in .env.local")
+    console.warn("[v0] 💡 You may need to restart the Next.js dev server")
   }
 
   return propertyId

@@ -72,9 +72,14 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     const savedProperty = getKioskPropertyId()
     setKioskProperty(savedProperty)
 
-    console.log("[v0] 🏢 Kiosk initialized with property:", savedProperty)
-    console.log("[v0] 📍 Kiosk location:", savedLocation)
-    console.log("[v0] 🔧 Property display name:", getPropertyDisplayName(savedProperty))
+    console.log("[v0] ========================================")
+    console.log("[v0] 🏢 Kiosk Initialization")
+    console.log("[v0] ========================================")
+    console.log("[v0] Property ID:", savedProperty)
+    console.log("[v0] Property Name:", getPropertyDisplayName(savedProperty))
+    console.log("[v0] Location:", savedLocation)
+    console.log("[v0] Environment:", typeof window === "undefined" ? "Server" : "Client")
+    console.log("[v0] ========================================")
 
     if (typeof window !== "undefined") {
       const urlParams = new URLSearchParams(window.location.search)
