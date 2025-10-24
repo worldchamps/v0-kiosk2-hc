@@ -65,10 +65,10 @@ export function getPropertyFromPlace(place: string): PropertyId | null {
  */
 export function getPropertyDisplayName(propertyId: PropertyId): string {
   const names: Record<PropertyId, string> = {
-    property1: "더 비치스테이 C/D동",
-    property2: "Kariv Hotel",
-    property3: "더 비치스테이 A/B동",
-    property4: "더 캠프스테이",
+    property1: "더비치스테이 C,D동",
+    property2: "카리브",
+    property3: "더비치스테이 A,B동",
+    property4: "더캠프스테이",
   }
   return names[propertyId]
 }
