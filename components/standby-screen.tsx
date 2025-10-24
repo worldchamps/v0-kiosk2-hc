@@ -3,7 +3,7 @@
 import Image from "next/image"
 import { useEffect, useRef } from "react"
 import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
-import { startBGM, pauseBGM } from "@/lib/audio-utils"
+import { playIdleWelcome, pauseBGM } from "@/lib/audio-utils"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 
 interface StandbyScreenProps {
@@ -26,38 +26,16 @@ export default function StandbyScreen({ onNavigate, kioskLocation }: StandbyScre
   })
 
   useEffect(() => {
-    console.log("StandbyScreen mounted - playing welcome audio first")
+    console.log("StandbyScreen mounted - playing welcome audio and BGM")
 
-    // 환영 음성이 이미 재생되었으면 바로 BGM 시작
-    if (welcomeAudioPlayedRef.current) {
-      startBGM(0.3)
-      return
-    }
-
-    // 환영 음성 재생
-    const welcomeAudio = new Audio(
-      "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/ElevenLabs_2025-10-11T06_11_56_JiYoung_pvc_sp103_s72_sb93_se0_b_m2-7MVHQLf0Vc79ckFUIUkJRHLdsBMe50.mp3",
-    )
-    welcomeAudio.volume = 0.8
-
-    // 환영 음성 재생 완료 후 BGM 시작
-    welcomeAudio.onended = () => {
-      console.log("Welcome audio ended - starting BGM")
-      startBGM(0.3)
+    if (!welcomeAudioPlayedRef.current) {
+      playIdleWelcome()
       welcomeAudioPlayedRef.current = true
     }
-
-    // 환영 음성 재생 시작
-    welcomeAudio.play().catch((error) => {
-      console.error("Welcome audio playback error:", error)
-      // 재생 실패 시 바로 BGM 시작
-      startBGM(0.3)
-    })
 
     // 컴포넌트 언마운트 시 BGM 일시 중지
     return () => {
       console.log("StandbyScreen unmounted - pausing BGM")
-      welcomeAudio.pause()
       pauseBGM()
     }
   }, [])

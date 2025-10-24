@@ -3,6 +3,7 @@ const AUDIO_FILES = {
   RESERVATION_PROMPT: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/mZHweH32-TqyfNVT_a9Z6C/public/audio/reservation-prompt.mp3",
   RESERVATION_FOUND: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/KZ4LgKUHDIO8rZ845xzfor/public/audio/reservation-found.mp3",
   RESERVATION_NOT_FOUND: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/CLCXgY19xdzysGAprC0hKc/public/audio/reservation-not-found.mp3",
+  MULTIPLE_RESERVATIONS: "/audio/multiple-reservations.mp3",
   BUILDING_A_GUIDE: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/LNrgY62XtffvLFvKevce1A/public/audio/building-a-guide.mp3",
   BUILDING_B_GUIDE: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/FHSsTLB9J7i_etpWSNfONg/public/audio/building-b-guide.mp3",
   BUILDING_C_GUIDE: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/a1MxnOhjSIdmxW17kXakxv/public/audio/building-c-guide.mp3",
@@ -33,6 +34,10 @@ export function playAudio(audioKey: keyof typeof AUDIO_FILES): void {
     // 캐시에 없으면 새로 생성
     if (!audioCache[audioKey]) {
       audioCache[audioKey] = new Audio(AUDIO_FILES[audioKey])
+      // 오디오 파일 로드 오류 핸들러 추가
+      audioCache[audioKey].addEventListener("error", (e) => {
+        console.error(`오디오 파일 로드 오류 (${audioKey}):`, AUDIO_FILES[audioKey], e)
+      })
     }
 
     // 오디오 재생
