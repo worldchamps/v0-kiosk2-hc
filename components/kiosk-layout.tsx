@@ -281,7 +281,11 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       }
 
       setAdminOverride(false)
-      setCurrentScreen("checkInComplete")
+
+      // In popup mode, reservation-details will handle closing
+      if (!isPopupMode) {
+        setCurrentScreen("checkInComplete")
+      }
     } catch (err) {
       console.error("Error during check-in:", err)
       setError("체크인 중 오류가 발생했습니다. 다시 시도해 주세요.")

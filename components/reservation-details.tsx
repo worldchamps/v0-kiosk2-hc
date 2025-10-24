@@ -106,16 +106,17 @@ export default function ReservationDetails({
   if (!reservation) return null
 
   const handleCheckIn = async () => {
-    if (isPopupMode) {
-      // Popup mode: Close window directly without showing check-in complete screen
-      await onCheckIn()
+    await onCheckIn()
 
-      if (typeof window !== "undefined" && window.electronAPI) {
-        window.electronAPI.send("checkin-complete")
-      }
+    if (isPopupMode) {
+      // Wait a moment to ensure Firebase action completes
+      setTimeout(() => {
+        if (typeof window !== "undefined" && window.electronAPI) {
+          window.electronAPI.send("checkin-complete")
+        }
+      }, 1000) // Give 1 second for Firebase to complete
     } else {
       // Normal mode: Show check-in complete screen
-      await onCheckIn()
       setCheckInComplete(true)
     }
   }

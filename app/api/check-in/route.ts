@@ -120,14 +120,18 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    addToPMSQueue({
-      roomNumber,
-      guestName,
-      checkInDate,
-    }).catch((firebaseError) => {
-      console.error("[v0] Firebase PMS Queue failed:", firebaseError)
+    try {
+      await addToPMSQueue({
+        roomNumber,
+        guestName,
+        checkInDate,
+      })
+      console.log("[v0] ✅ Firebase PMS Queue added successfully:", roomNumber)
+    } catch (firebaseError) {
+      console.error("[v0] ❌ Firebase PMS Queue failed:", firebaseError)
       console.error("[v0] Room:", roomNumber, "Guest:", guestName)
-    })
+      // Don't throw error - check-in should still succeed even if Firebase fails
+    }
 
     return NextResponse.json({
       success: true,
