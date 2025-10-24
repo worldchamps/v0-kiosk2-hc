@@ -1,0 +1,25 @@
+{
+  "appId": "com.thebeachstay.kiosk",
+  "productName": "TheBeachStay Kiosk",
+  "directories": {
+    "output": "dist"
+  },
+  "files": ["electron/**/*", "out/**/*", "package.json"],
+  "extraResources": [
+    {
+      "from": "public",
+      "to": "public",
+      "filter": ["**/*"]
+    }
+  ],
+  "win": {
+    "target": ["nsis"],
+    "icon": "public/icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true
+  }
+}

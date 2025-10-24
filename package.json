@@ -7,19 +7,20 @@
     "build": "next build",
     "dev": "next dev",
     "download-audio": "node scripts/download-audio-from-blob.js",
-    "electron": "electron .",
+    "electron": "cross-env NODE_ENV=production electron .",
     "electron:build": "next build && electron-builder",
     "electron:dev": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
     "electron:overlay": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && cross-env OVERLAY_MODE=true electron .\"",
-    "electron:overlay:aggressive": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && cross-env OVERLAY_MODE=true AGGRESSIVE_TOPMOST=true electron .\"",
+    "electron:overlay:aggressive": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && cross-env AGGRESSIVE_TOPMOST=true electron .\"",
     "postinstall": "electron-builder install-app-deps",
     "lint": "next lint",
+    "prod": "npm run build && concurrently \"npm run start\" \"wait-on http://localhost:3000 && npm run electron\"",
     "start": "next start"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "latest",
     "@radix-ui/react-dialog": "1.1.4",
-    "@radix-ui/react-label": "2.1.1",
+    "@radix-ui/react-label": "latest",
     "@radix-ui/react-select": "latest",
     "@radix-ui/react-separator": "latest",
     "@radix-ui/react-slot": "latest",
@@ -72,13 +73,25 @@
       "output": "dist"
     },
     "files": [
+      "!**/*",
       ".next/**/*",
+      "!.next/cache/**/*",
       "public/**/*",
       "electron/**/*",
-      "electron-config.json",
       "package.json",
-      "node_modules/**/*",
-      ".env.local"
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": ".env.local",
+        "to": ".env.local",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      ".next/**/*"
     ],
     "win": {
       "target": "nsis",

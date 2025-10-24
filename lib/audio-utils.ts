@@ -1,15 +1,15 @@
 // 음성 파일 URL 정의
 const AUDIO_FILES = {
-  RESERVATION_PROMPT: "/audio/reservation-prompt.mp3",
-  RESERVATION_FOUND: "/audio/reservation-found.mp3",
-  RESERVATION_NOT_FOUND: "/audio/reservation-not-found.mp3",
-  BUILDING_A_GUIDE: "/audio/building-a-guide.mp3",
-  BUILDING_B_GUIDE: "/audio/building-b-guide.mp3",
-  BUILDING_C_GUIDE: "/audio/building-c-guide.mp3",
-  BUILDING_D_GUIDE: "/audio/building-d-guide.mp3",
-  BUILDING_CAMP_GUIDE: "/audio/building-camp-guide.mp3",
-  IDLE_WELCOME: "/audio/idle-welcome.mp3",
-  BGM: "/audio/bgm.mp3",
+  RESERVATION_PROMPT: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/mZHweH32-TqyfNVT_a9Z6C/public/audio/reservation-prompt.mp3",
+  RESERVATION_FOUND: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/KZ4LgKUHDIO8rZ845xzfor/public/audio/reservation-found.mp3",
+  RESERVATION_NOT_FOUND: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/CLCXgY19xdzysGAprC0hKc/public/audio/reservation-not-found.mp3",
+  BUILDING_A_GUIDE: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/LNrgY62XtffvLFvKevce1A/public/audio/building-a-guide.mp3",
+  BUILDING_B_GUIDE: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/FHSsTLB9J7i_etpWSNfONg/public/audio/building-b-guide.mp3",
+  BUILDING_C_GUIDE: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/a1MxnOhjSIdmxW17kXakxv/public/audio/building-c-guide.mp3",
+  BUILDING_D_GUIDE: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/bJqLHSgZQOvgyGuw6xEcz2/public/audio/building-d-guide.mp3",
+  BUILDING_CAMP_GUIDE: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/7x-Q7CDb_yuX0tut1Ibkh1/public/audio/building-camp-guide.mp3",
+  IDLE_WELCOME: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/mNdMrZbzz-4gTjlwKQv-HA/public/audio/idle-welcome.mp3",
+  BGM: "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/git-blob/prj_ycpKc0d769SzX9dR9f94nLLIDhme/nDdjE6zkx427zPIWVDKHi8/public/audio/bgm.mp3",
 }
 
 // 오디오 객체 캐시
