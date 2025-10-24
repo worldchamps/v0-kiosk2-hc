@@ -59,6 +59,47 @@ function createAudioElement(key: string, url: string): HTMLAudioElement {
   return audio
 }
 
+let audioUnlocked = false
+
+export async function unlockAudio(): Promise<void> {
+  if (audioUnlocked) {
+    console.log("[v0] Audio already unlocked")
+    return
+  }
+
+  try {
+    console.log("[v0] Unlocking audio context...")
+
+    // Create a silent audio to unlock the audio context
+    const silentAudio = new Audio()
+    silentAudio.src =
+      "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAADhAC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAA4T0mGEEAAAAAAAAAAAAAAAAAAAA//sQZAAP8AAAaQAAAAgAAA0gAAABAAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//sQZDwP8AAAaQAAAAgAAA0gAAABAAABpAAAACAAADSAAAAEVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV"
+    silentAudio.volume = 0.01
+
+    await silentAudio.play()
+    silentAudio.pause()
+
+    // Pre-create all audio elements to ensure they're ready
+    console.log("[v0] Pre-loading audio elements...")
+    Object.entries(AUDIO_FILES).forEach(([key, url]) => {
+      if (!audioCache[key]) {
+        audioCache[key] = createAudioElement(key, url)
+        // Preload the audio
+        audioCache[key].load()
+      }
+    })
+
+    audioUnlocked = true
+    console.log("[v0] Audio unlocked successfully")
+  } catch (error) {
+    console.error("[v0] Failed to unlock audio:", error)
+  }
+}
+
+export function isAudioUnlocked(): boolean {
+  return audioUnlocked
+}
+
 /**
  * 음성 파일 재생 함수
  * @param audioKey 재생할 음성 파일 키

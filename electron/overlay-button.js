@@ -90,6 +90,7 @@ function createOverlayButton() {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,
       contextIsolation: true,
+      autoplayPolicy: "no-user-gesture-required", // Allow autoplay for audio without user gesture
     },
   })
 
@@ -149,6 +150,7 @@ function createKioskPopup() {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,
       contextIsolation: true,
+      autoplayPolicy: "no-user-gesture-required", // Allow autoplay for audio without user gesture
     },
   })
 
@@ -163,6 +165,7 @@ function createKioskPopup() {
             "img-src 'self' data: https: blob:; " +
             "font-src 'self' data:; " +
             "connect-src 'self' http://localhost:* https://*; " +
+            "media-src 'self' https://jdpd8txarrh2yidl.public.blob.vercel-storage.com https://*.blob.vercel-storage.com blob: data:; " + // Add media-src to allow audio from Blob storage
             "frame-src 'self';",
         ],
       },

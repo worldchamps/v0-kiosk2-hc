@@ -47,6 +47,7 @@ function createWindow() {
         nodeIntegration: false,
         contextIsolation: true,
         devTools: isDev,
+        autoplayPolicy: "no-user-gesture-required",
       },
     })
 

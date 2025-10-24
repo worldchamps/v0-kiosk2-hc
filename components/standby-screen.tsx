@@ -3,7 +3,7 @@
 import Image from "next/image"
 import { useEffect, useRef } from "react"
 import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
-import { startBGM, pauseBGM } from "@/lib/audio-utils"
+import { startBGM, pauseBGM, unlockAudio } from "@/lib/audio-utils"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 
 interface StandbyScreenProps {
@@ -24,6 +24,11 @@ export default function StandbyScreen({ onNavigate, kioskLocation }: StandbyScre
     idleTime: 60000, // 60 seconds
     enabled: true,
   })
+
+  const handleNavigateWithAudioUnlock = async (screen: string) => {
+    await unlockAudio()
+    onNavigate(screen)
+  }
 
   useEffect(() => {
     console.log("StandbyScreen mounted - playing welcome audio first")
@@ -74,7 +79,7 @@ export default function StandbyScreen({ onNavigate, kioskLocation }: StandbyScre
         {/* Main Button Stack */}
         <div className="kiosk-buttons-container">
           {/* Reservation Check Button */}
-          <button className="kiosk-card" onClick={() => onNavigate("reservationConfirm")}>
+          <button className="kiosk-card" onClick={() => handleNavigateWithAudioUnlock("reservationConfirm")}>
             <div>
               <h2>예약확인</h2>
               <p>
@@ -87,7 +92,7 @@ export default function StandbyScreen({ onNavigate, kioskLocation }: StandbyScre
           </button>
 
           {/* Current Location Button */}
-          <button className="kiosk-card" onClick={() => onNavigate("currentLocation")}>
+          <button className="kiosk-card" onClick={() => handleNavigateWithAudioUnlock("currentLocation")}>
             <div>
               <h2>위치 안내도</h2>
               <p>
@@ -99,7 +104,7 @@ export default function StandbyScreen({ onNavigate, kioskLocation }: StandbyScre
             <Image src="/location-pin-icon.png" alt="Location" width={80} height={80} className="kiosk-icon" />
           </button>
 
-          <button className="kiosk-card" onClick={() => onNavigate("onSiteReservation")}>
+          <button className="kiosk-card" onClick={() => handleNavigateWithAudioUnlock("onSiteReservation")}>
             <div>
               <h2>현장예약</h2>
               <p>
