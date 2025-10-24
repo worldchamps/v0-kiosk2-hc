@@ -69,18 +69,37 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     const savedLocation = getKioskLocation()
     setKioskLocation(savedLocation)
 
-    const savedProperty = getKioskPropertyId()
-    setKioskProperty(savedProperty)
+    const initializeProperty = async () => {
+      const savedProperty = await getKioskPropertyId()
+      setKioskProperty(savedProperty)
 
-    console.log("[v0] ========================================")
-    console.log("[v0] 🏢 Kiosk Initialization")
-    console.log("[v0] ========================================")
-    console.log("[v0] Property ID:", savedProperty)
-    console.log("[v0] Property Name:", getPropertyDisplayName(savedProperty))
-    console.log("[v0] Location:", savedLocation)
-    console.log("[v0] Environment:", typeof window === "undefined" ? "Server" : "Client")
-    console.log("[v0] Is Electron:", typeof window !== "undefined" && !!(window as any).electronAPI)
-    console.log("[v0] ========================================")
+      console.log("[v0] ========================================")
+      console.log("[v0] 🏢 Kiosk Initialization")
+      console.log("[v0] ========================================")
+      console.log("[v0] Property ID:", savedProperty)
+      console.log("[v0] Property Name:", getPropertyDisplayName(savedProperty))
+      console.log("[v0] Location:", savedLocation)
+      console.log("[v0] Environment:", typeof window === "undefined" ? "Server" : "Client")
+      console.log("[v0] Is Electron:", typeof window !== "undefined" && !!(window as any).electronAPI)
+      console.log("[v0] ========================================")
+    }
+
+    initializeProperty()
+
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search)
+      const popupMode = urlParams.get("popup") === "true"
+      setIsPopupMode(popupMode)
+
+      if (popupMode) {
+        console.log("[v0] Popup mode detected from URL, starting at reservation confirm")
+        setCurrentScreen("reservationConfirm")
+      } else {
+        console.log("[v0] Normal kiosk mode, starting at idle screen")
+        setCurrentScreen("idle")
+        localStorage.removeItem("popupMode")
+      }
+    }
   }, [])
 
   useEffect(() => {

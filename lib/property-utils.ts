@@ -42,7 +42,7 @@ export function getPropertyFromPlace(place: string): PropertyId | null {
   const upperPlace = place.toUpperCase().trim()
 
   // Property 2: Kariv Hotel
-  if (upperPlace.includes("KARIV")) {
+  if (upperPlace.includes("KARIV") || upperPlace.includes("카리브")) {
     return "property2"
   }
 
@@ -51,10 +51,29 @@ export function getPropertyFromPlace(place: string): PropertyId | null {
     return "property4"
   }
 
-  // Property 1 & 3: 더 비치스테이 (need to check room number to distinguish)
-  // Return null so we can check room number instead
   if (upperPlace.includes("비치") || upperPlace.includes("BEACH")) {
-    return null // Will be determined by room number
+    // C동 또는 D동이 포함되어 있으면 Property 1
+    if (
+      upperPlace.includes("C동") ||
+      upperPlace.includes("D동") ||
+      upperPlace.includes("C,D") ||
+      upperPlace.includes("CD")
+    ) {
+      return "property1"
+    }
+
+    // A동 또는 B동이 포함되어 있으면 Property 3
+    if (
+      upperPlace.includes("A동") ||
+      upperPlace.includes("B동") ||
+      upperPlace.includes("A,B") ||
+      upperPlace.includes("AB")
+    ) {
+      return "property3"
+    }
+
+    // 동 정보가 없으면 null 반환 (객실 번호로 판단)
+    return null
   }
 
   return null
@@ -109,25 +128,36 @@ export function getPropertyDisplayName(propertyId: PropertyId): string {
 }
 
 /**
- * 키오스크 Property ID 가져오기 (동기 버전)
+ * 키오스크 Property ID 가져오기
+ * Electron 환경에서는 IPC를 통해, 웹 환경에서는 환경변수를 통해 가져옴
  */
-export function getKioskPropertyId(): PropertyId {
-  // Electron 환경에서는 window 객체에 property ID가 설정되어 있을 수 있음
-  if (typeof window !== "undefined" && (window as any).__KIOSK_PROPERTY_ID__) {
-    const propertyId = (window as any).__KIOSK_PROPERTY_ID__ as PropertyId
-    console.log("[v0] 🖥️ Property ID from window:", propertyId)
-    return propertyId
+export async function getKioskPropertyId(): Promise<PropertyId> {
+  if (typeof window !== "undefined" && (window as any).electronAPI) {
+    try {
+      const propertyId = await (window as any).electronAPI.getPropertyId()
+      console.log("[v0] 🖥️ Electron environment - Property ID:", propertyId)
+      return propertyId as PropertyId
+    } catch (error) {
+      console.error("[v0] ❌ Failed to get property ID from Electron:", error)
+    }
   }
 
-  // 환경변수에서 읽기 (NEXT_PUBLIC_ 접두사 있는 것 우선)
-  const publicEnv = process.env.NEXT_PUBLIC_KIOSK_PROPERTY_ID
-  const privateEnv = process.env.KIOSK_PROPERTY_ID
+  let propertyId: PropertyId
 
-  const propertyId = (publicEnv || privateEnv || "property1") as PropertyId
+  if (typeof window === "undefined") {
+    // 서버 사이드
+    propertyId = (process.env.KIOSK_PROPERTY_ID as PropertyId) || "property3"
+    console.log("[v0] 🖥️ Server-side environment - Property ID:", propertyId)
+  } else {
+    // 클라이언트 사이드 - NEXT_PUBLIC_ 접두사 필요
+    const envValue = process.env.NEXT_PUBLIC_KIOSK_PROPERTY_ID
+    propertyId = (envValue as PropertyId) || "property3"
+    console.log("[v0] 🌐 Client-side environment - Property ID:", propertyId)
+  }
 
-  console.log("[v0] 🏢 Property ID:", propertyId)
-  console.log("[v0] 📝 From NEXT_PUBLIC_KIOSK_PROPERTY_ID:", publicEnv || "not set")
-  console.log("[v0] 📝 From KIOSK_PROPERTY_ID:", privateEnv || "not set")
+  if (propertyId === "property3") {
+    console.warn("[v0] ⚠️ Using default property3!")
+  }
 
   return propertyId
 }
