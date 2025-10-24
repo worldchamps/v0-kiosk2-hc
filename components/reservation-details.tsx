@@ -141,18 +141,17 @@ export default function ReservationDetails({
     <div className="flex items-start justify-start w-full h-full">
       <div className="kiosk-content-container">
         <div>
-          <h1 className="kiosk-title">{locationTitle}</h1>
           <div className="kiosk-highlight">예약 확인됨</div>
         </div>
 
-        <div className="w-full overflow-auto py-4 mt-6">
+        <div className={`w-full overflow-auto mt-6 ${isPopupMode ? "py-2" : "py-4"}`}>
           <Card className="w-full">
-            <CardContent className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+            <CardContent className={isPopupMode ? "p-4 space-y-2" : "p-6 space-y-4"}>
+              <div className={`grid gap-4 ${isPopupMode ? "grid-cols-1" : "grid-cols-2"}`}>
                 {reservation.place && (
-                  <div className="col-span-2">
+                  <div className={isPopupMode ? "" : "col-span-2"}>
                     <p className="text-sm text-gray-500">장소</p>
-                    <p className="font-medium text-lg">{reservation.place}</p>
+                    <p className={`font-medium ${isPopupMode ? "text-base" : "text-lg"}`}>{reservation.place}</p>
                   </div>
                 )}
 
@@ -190,19 +189,21 @@ export default function ReservationDetails({
 
                 {hasRevealedInfo && (
                   <>
-                    <div className="col-span-2 mt-2 border-t pt-2">
+                    <div className={`mt-2 border-t pt-2 ${isPopupMode ? "" : "col-span-2"}`}>
                       <p className="text-sm font-medium text-gray-700">객실 정보</p>
                     </div>
 
                     <div>
                       <p className="text-sm text-gray-500">객실 호수</p>
-                      <p className="font-medium text-lg text-blue-600">{displayRoomNumber}</p>
+                      <p className={`font-medium text-blue-600 ${isPopupMode ? "text-base" : "text-lg"}`}>
+                        {displayRoomNumber}
+                      </p>
                     </div>
 
                     <div>
                       <p className="text-sm text-gray-500">비밀번호</p>
                       <div className="flex items-center">
-                        <p className="font-medium text-lg text-red-600">
+                        <p className={`font-medium text-red-600 ${isPopupMode ? "text-base" : "text-lg"}`}>
                           {showPassword ? displayPassword : displayPassword.replace(/./g, "•")}
                         </p>
                         <Button
@@ -220,10 +221,10 @@ export default function ReservationDetails({
                 )}
               </div>
 
-              <div className="pt-4">
+              <div className={isPopupMode ? "pt-2" : "pt-4"}>
                 <p className="text-sm text-gray-500 mb-2">객실 이미지</p>
                 <div className="bg-gray-100 rounded-lg p-2">
-                  <div className="relative w-full h-[768px]">
+                  <div className={`relative w-full ${isPopupMode ? "h-[300px]" : "h-[768px]"}`}>
                     <Image
                       src={roomImagePath || "/placeholder.svg"}
                       alt={`${reservation.roomType} 객실 이미지`}
