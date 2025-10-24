@@ -35,18 +35,45 @@ let bgmPlayPromise: Promise<void> | null = null
 
 let idleWelcomePlayed = false
 
+// 오디오 객체 생성 및 에러 핸들링 함수
+function createAudioElement(key: string, url: string): HTMLAudioElement {
+  const audio = new Audio(url)
+
+  // Add error event listener
+  audio.addEventListener("error", (e) => {
+    console.error(`[v0] Audio load error for ${key}:`, {
+      error: e,
+      src: audio.src,
+      networkState: audio.networkState,
+      readyState: audio.readyState,
+      errorCode: audio.error?.code,
+      errorMessage: audio.error?.message,
+    })
+  })
+
+  // Add load success listener
+  audio.addEventListener("canplaythrough", () => {
+    console.log(`[v0] Audio loaded successfully: ${key}`)
+  })
+
+  return audio
+}
+
 /**
  * 음성 파일 재생 함수
  * @param audioKey 재생할 음성 파일 키
  */
 export function playAudio(audioKey: keyof typeof AUDIO_FILES): void {
   try {
+    console.log(`[v0] Attempting to play audio: ${audioKey}`)
+
     // 이미 재생 중인 모든 오디오 중지 (BGM 제외)
     stopAllAudio(false)
 
     // 캐시에 없으면 새로 생성
     if (!audioCache[audioKey]) {
-      audioCache[audioKey] = new Audio(AUDIO_FILES[audioKey])
+      console.log(`[v0] Creating new audio element for: ${audioKey}`)
+      audioCache[audioKey] = createAudioElement(audioKey, AUDIO_FILES[audioKey])
     }
 
     // 오디오 재생
@@ -56,14 +83,16 @@ export function playAudio(audioKey: keyof typeof AUDIO_FILES): void {
     // 볼륨 설정 (0.0 ~ 1.0)
     audio.volume = 0.8
 
+    console.log(`[v0] Starting playback for: ${audioKey}, src: ${audio.src}`)
+
     audioPlayPromises[audioKey] = audio.play().catch((error) => {
       // Ignore AbortError which happens when play is interrupted
       if (error.name !== "AbortError") {
-        console.error(`오디오 재생 오류 (${audioKey}):`, error)
+        console.error(`[v0] 오디오 재생 오류 (${audioKey}):`, error)
       }
     })
   } catch (error) {
-    console.error(`오디오 재생 중 오류 발생 (${audioKey}):`, error)
+    console.error(`[v0] 오디오 재생 중 오류 발생 (${audioKey}):`, error)
   }
 }
 
@@ -101,6 +130,8 @@ export function playBuildingGuide(buildingType: string): void {
  */
 export function startBGM(volume = 0.3): void {
   try {
+    console.log(`[v0] Starting BGM, current state: ${bgmPlaying}`)
+
     // 이미 재생 중이면 중복 실행 방지
     if (bgmPlaying && bgmAudio) {
       return
@@ -108,7 +139,8 @@ export function startBGM(volume = 0.3): void {
 
     // BGM 오디오 객체 생성 또는 가져오기
     if (!bgmAudio) {
-      bgmAudio = new Audio(AUDIO_FILES.BGM)
+      console.log(`[v0] Creating new BGM audio element`)
+      bgmAudio = createAudioElement("BGM", AUDIO_FILES.BGM)
 
       // 루프 설정
       bgmAudio.loop = true
@@ -118,12 +150,12 @@ export function startBGM(volume = 0.3): void {
 
       // 오디오 끝났을 때 이벤트 처리 (루프 백업)
       bgmAudio.addEventListener("ended", () => {
-        console.log("BGM ended, restarting...")
+        console.log("[v0] BGM ended, restarting...")
         if (bgmAudio) {
           bgmAudio.currentTime = 0
           bgmPlayPromise = bgmAudio.play().catch((err) => {
             if (err.name !== "AbortError") {
-              console.error("Error restarting BGM:", err)
+              console.error("[v0] Error restarting BGM:", err)
             }
           })
         }
@@ -136,17 +168,17 @@ export function startBGM(volume = 0.3): void {
     bgmPlayPromise = bgmAudio
       .play()
       .then(() => {
-        console.log("BGM started successfully")
+        console.log("[v0] BGM started successfully")
         bgmPlaying = true
       })
       .catch((error) => {
         if (error.name !== "AbortError") {
-          console.error("BGM 재생 오류:", error)
+          console.error("[v0] BGM 재생 오류:", error)
         }
         bgmPlaying = false
       })
   } catch (error) {
-    console.error("BGM 시작 중 오류 발생:", error)
+    console.error("[v0] BGM 시작 중 오류 발생:", error)
     bgmPlaying = false
   }
 }
@@ -267,14 +299,17 @@ export function isBGMPlaying(): boolean {
  */
 export function playIdleWelcome(): void {
   if (idleWelcomePlayed) {
-    console.log("Idle welcome already played, skipping")
+    console.log("[v0] Idle welcome already played, skipping")
     return
   }
 
   try {
+    console.log("[v0] Playing idle welcome audio")
+
     // 캐시에 없으면 새로 생성
     if (!audioCache["IDLE_WELCOME"]) {
-      audioCache["IDLE_WELCOME"] = new Audio(AUDIO_FILES.IDLE_WELCOME)
+      console.log("[v0] Creating new idle welcome audio element")
+      audioCache["IDLE_WELCOME"] = createAudioElement("IDLE_WELCOME", AUDIO_FILES.IDLE_WELCOME)
     }
 
     const audio = audioCache["IDLE_WELCOME"]
@@ -283,25 +318,25 @@ export function playIdleWelcome(): void {
 
     // 재생 완료 후 BGM 시작
     audio.onended = () => {
-      console.log("Idle welcome audio ended, starting BGM")
+      console.log("[v0] Idle welcome audio ended, starting BGM")
       startBGM(0.3)
     }
 
     audioPlayPromises["IDLE_WELCOME"] = audio
       .play()
       .then(() => {
-        console.log("Idle welcome audio started")
+        console.log("[v0] Idle welcome audio started")
         idleWelcomePlayed = true
       })
       .catch((error) => {
         if (error.name !== "AbortError") {
-          console.error("Idle welcome audio playback error:", error)
+          console.error("[v0] Idle welcome audio playback error:", error)
         }
         // 재생 실패 시 바로 BGM 시작
         startBGM(0.3)
       })
   } catch (error) {
-    console.error("Error playing idle welcome audio:", error)
+    console.error("[v0] Error playing idle welcome audio:", error)
     // 오류 발생 시 바로 BGM 시작
     startBGM(0.3)
   }
