@@ -140,8 +140,8 @@ function createKioskPopup() {
 
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width: screenWidth, height: screenHeight } = primaryDisplay.bounds
-  const popupWidth = Math.round(screenWidth * 0.7)
-  const popupHeight = Math.round(screenHeight * 0.7)
+  const popupWidth = Math.round(screenWidth * 1.0)
+  const popupHeight = Math.round(screenHeight * 1.0)
   const popupX = Math.round((screenWidth - popupWidth) / 2)
   const popupY = Math.round((screenHeight - popupHeight) / 2)
 
