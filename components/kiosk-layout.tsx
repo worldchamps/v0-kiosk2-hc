@@ -243,6 +243,8 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     setError("")
 
     try {
+      console.log("[v0] Starting check-in process for:", reservationData.reservationId)
+
       const response = await fetch("/api/check-in", {
         method: "POST",
         headers: {
@@ -271,6 +273,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       }
 
       const data = await response.json()
+      console.log("[v0] Check-in API response:", data)
 
       if (data.data) {
         setRevealedInfo({
@@ -282,13 +285,19 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
 
       setAdminOverride(false)
 
-      // In popup mode, reservation-details will handle closing
       if (!isPopupMode) {
+        console.log("[v0] Normal mode: Navigating to check-in complete")
         setCurrentScreen("checkInComplete")
+      } else {
+        console.log("[v0] Popup mode: Check-in complete, window will close")
       }
     } catch (err) {
-      console.error("Error during check-in:", err)
+      console.error("[v0] Error during check-in:", err)
       setError("체크인 중 오류가 발생했습니다. 다시 시도해 주세요.")
+
+      if (isPopupMode) {
+        alert("체크인 중 오류가 발생했습니다. 다시 시도해 주세요.")
+      }
     } finally {
       setLoading(false)
     }
