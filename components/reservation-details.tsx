@@ -9,6 +9,7 @@ import { formatDateKorean } from "@/lib/date-utils"
 import { getRoomImagePath, checkImageExists } from "@/lib/room-utils"
 import { playAudio } from "@/lib/audio-utils"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
+import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
 
 interface Reservation {
   place?: string
@@ -34,6 +35,7 @@ interface ReservationDetailsProps {
     password?: string
   }
   isPopupMode?: boolean
+  kioskLocation: KioskLocation
 }
 
 export default function ReservationDetails({
@@ -43,11 +45,14 @@ export default function ReservationDetails({
   loading = false,
   revealedInfo = {},
   isPopupMode = false,
+  kioskLocation,
 }: ReservationDetailsProps) {
   const [checkInComplete, setCheckInComplete] = useState(false)
   const [roomImagePath, setRoomImagePath] = useState("/hotel-floor-plan.png")
   const [imageExists, setImageExists] = useState(true)
   const [showPassword, setShowPassword] = useState(false)
+
+  const locationTitle = getLocationTitle(kioskLocation)
 
   useIdleTimer({
     onIdle: () => {
@@ -136,7 +141,7 @@ export default function ReservationDetails({
     <div className="flex items-start justify-start w-full h-full">
       <div className="kiosk-content-container">
         <div>
-          <h1 className="kiosk-title">더 비치스테이</h1>
+          <h1 className="kiosk-title">{locationTitle}</h1>
           <div className="kiosk-highlight">예약 확인됨</div>
         </div>
 

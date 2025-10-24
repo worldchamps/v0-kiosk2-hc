@@ -351,6 +351,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             loading={loading}
             revealedInfo={revealedInfo}
             isPopupMode={isPopupMode}
+            kioskLocation={kioskLocation}
           />
         )}
 

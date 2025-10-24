@@ -138,12 +138,21 @@ function createKioskPopup() {
     kioskPopup.close()
   }
 
+  const primaryDisplay = screen.getPrimaryDisplay()
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.bounds
+  const popupWidth = Math.round(screenWidth * 0.7)
+  const popupHeight = Math.round(screenHeight * 0.7)
+  const popupX = Math.round((screenWidth - popupWidth) / 2)
+  const popupY = Math.round((screenHeight - popupHeight) / 2)
+
   kioskPopup = new BrowserWindow({
-    width: 1920,
-    height: 1080,
+    width: popupWidth,
+    height: popupHeight,
+    x: popupX,
+    y: popupY,
     frame: false,
     alwaysOnTop: true,
-    fullscreen: true,
+    fullscreen: false, // Changed from true to false to use custom size
     focusable: true,
     type: "toolbar",
     webPreferences: {
