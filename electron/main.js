@@ -9,7 +9,7 @@ const bixolonPrinter = require("./bixolon-printer")
 let mainWindow
 let billAcceptorPort = null
 let billDispenserPort = null
-let printerConnected = false
+let printerPort = null
 
 const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
 const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"
@@ -38,7 +38,13 @@ const BILL_DISPENSER_CONFIG = {
 const PRINTER_CONFIG = {
   path: process.env.PRINTER_PATH || "COM2",
   baudRate: Number.parseInt(process.env.PRINTER_BAUD_RATE) || 115200,
-  model: "BK3-3",
+  dataBits: Number.parseInt(process.env.PRINTER_DATA_BITS) || 8,
+  stopBits: Number.parseInt(process.env.PRINTER_STOP_BITS) || 1,
+  parity: process.env.PRINTER_PARITY || "none",
+  rtscts: false, // Disable RTS/CTS hardware flow control
+  xon: false, // Disable XON/XOFF software flow control
+  xoff: false,
+  xany: false,
 }
 
 function createWindow() {
@@ -290,44 +296,111 @@ async function connectBillDispenser() {
 
 async function connectPrinter() {
   try {
-    console.log(`[PRINTER] Attempting to connect to ${PRINTER_CONFIG.path} using BIXOLON SDK...`)
-    console.log(`[PRINTER] Config:`, {
+    if (printerPort && printerPort.isOpen) {
+      printerPort.close()
+    }
+
+    if (isDev) {
+      console.log(`[PRINTER] Attempting to connect to ${PRINTER_CONFIG.path}...`)
+      console.log(`[PRINTER] Config:`, {
+        baudRate: PRINTER_CONFIG.baudRate,
+        dataBits: PRINTER_CONFIG.dataBits,
+        stopBits: PRINTER_CONFIG.stopBits,
+        parity: PRINTER_CONFIG.parity,
+        flowControl: "DTR/DSR",
+      })
+    }
+
+    printerPort = new SerialPort({
+      path: PRINTER_CONFIG.path,
       baudRate: PRINTER_CONFIG.baudRate,
-      model: "BK3-3",
+      dataBits: PRINTER_CONFIG.dataBits,
+      stopBits: PRINTER_CONFIG.stopBits,
+      parity: PRINTER_CONFIG.parity,
+      rtscts: PRINTER_CONFIG.rtscts,
+      xon: PRINTER_CONFIG.xon,
+      xoff: PRINTER_CONFIG.xoff,
+      xany: PRINTER_CONFIG.xany,
+      autoOpen: false,
     })
 
-    const connected = await bixolonPrinter.connect(PRINTER_CONFIG.path, PRINTER_CONFIG.baudRate)
+    printerPort.open((err) => {
+      if (err) {
+        if (isDev) {
+          console.error("[PRINTER] Failed to connect:", err.message)
+        }
+        if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send("printer-status", {
+            connected: false,
+            error: err.message,
+          })
+        }
+        setTimeout(connectPrinter, 10000)
+        return
+      }
 
-    if (!connected) {
-      console.error("[PRINTER] Failed to connect via BIXOLON SDK")
+      printerPort.set({ dtr: true, rts: false }, (err) => {
+        if (err) {
+          if (isDev) {
+            console.error("[PRINTER] Failed to set DTR/RTS:", err)
+          }
+        } else {
+          if (isDev) {
+            console.log("[PRINTER] DTR set to HIGH, RTS set to LOW (DTR/DSR flow control)")
+          }
+        }
+      })
+
+      if (isDev) {
+        console.log(`[PRINTER] Successfully connected to ${PRINTER_CONFIG.path}`)
+        console.log(`[PRINTER] Status update: {connected: true, port: "${PRINTER_CONFIG.path}"}`)
+      }
+
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("printer-status", {
+          connected: true,
+          port: PRINTER_CONFIG.path,
+        })
+      }
+    })
+
+    printerPort.on("data", (data) => {
+      if (isDev) {
+        console.log("[PRINTER] Received data:", data)
+      }
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("printer-data", {
+          data: Array.from(data),
+        })
+      }
+    })
+
+    printerPort.on("error", (err) => {
+      if (isDev) {
+        console.error("[PRINTER] Error:", err)
+      }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("printer-status", {
           connected: false,
-          error: "BIXOLON SDK connection failed",
+          error: err.message,
         })
       }
-      setTimeout(connectPrinter, 10000)
-      return
-    }
+    })
 
-    printerConnected = true
-    console.log(`[PRINTER] Successfully connected to ${PRINTER_CONFIG.path} via BIXOLON SDK`)
-
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("printer-status", {
-        connected: true,
-        port: PRINTER_CONFIG.path,
-        model: "BK3-3",
-      })
-    }
+    printerPort.on("close", () => {
+      if (isDev) {
+        console.log("[PRINTER] Connection closed")
+      }
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("printer-status", {
+          connected: false,
+        })
+      }
+      setTimeout(connectPrinter, 5000)
+    })
   } catch (error) {
-    console.error("[PRINTER] Initialization failed:", error)
-    printerConnected = false
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("printer-status", {
-        connected: false,
-        error: error.message,
-      })
+    if (isDev) {
+      console.error("[PRINTER] Initialization failed:", error)
     }
     setTimeout(connectPrinter, 10000)
   }
@@ -399,75 +472,33 @@ ipcMain.handle("get-overlay-mode", async () => {
 })
 
 ipcMain.handle("send-to-printer", async (event, data) => {
-  if (!printerConnected) {
+  if (!printerPort || !printerPort.isOpen) {
     return { success: false, error: "프린터가 연결되지 않았습니다" }
   }
 
   try {
-    // Initialize printer
-    await bixolonPrinter.executeCommand("init")
-
-    // Parse receipt data
-    const receiptData = typeof data === "string" ? JSON.parse(data) : data
-
-    // Print header
-    await bixolonPrinter.printText("THE BEACH STAY", 1, 2, 17) // Center, Bold, 2x size
-    await bixolonPrinter.lineFeed(2)
-
-    // Print divider
-    await bixolonPrinter.printText("-------------------------------------", 0, 0, 0)
-    await bixolonPrinter.lineFeed(2)
-
-    // Print building
-    const buildingChar = receiptData.roomNumber?.charAt(0) || "A"
-    await bixolonPrinter.printText(`${buildingChar} BUILDING`, 0, 0, 0)
-    await bixolonPrinter.lineFeed(2)
-
-    // Print room info
-    const floor = receiptData.floor ? `${receiptData.floor}F` : "2F"
-    const roomNumber = receiptData.roomNumber || "0000"
-    await bixolonPrinter.printText(`ROOM: ${floor} ${roomNumber}`, 0, 2, 0) // Bold
-    await bixolonPrinter.lineFeed(2)
-
-    // Print password
-    await bixolonPrinter.printText(`DOOR PASSWORD: ${receiptData.password || "0000"}`, 0, 2, 0)
-    await bixolonPrinter.lineFeed(2)
-
-    // Print divider
-    await bixolonPrinter.printText("-------------------------------------", 0, 0, 0)
-    await bixolonPrinter.lineFeed(2)
-
-    // Print dates
-    const checkInDate = receiptData.checkInDate || "N/A"
-    const checkOutDate = receiptData.checkOutDate || "N/A"
-    await bixolonPrinter.printText(`Check-in: ${checkInDate}`, 0, 0, 0)
-    await bixolonPrinter.lineFeed(1)
-    await bixolonPrinter.printText(`Check-out: ${checkOutDate}`, 0, 0, 0)
-    await bixolonPrinter.lineFeed(3)
-
-    // Cut paper
-    await bixolonPrinter.cutPaper()
-
+    const buffer = Buffer.from(data)
+    await new Promise((resolve, reject) => {
+      printerPort.write(buffer, (err) => {
+        if (err) reject(err)
+        else resolve()
+      })
+    })
     return { success: true }
   } catch (error) {
-    console.error("[PRINTER] Print error:", error)
     return { success: false, error: error.message }
   }
 })
 
 ipcMain.handle("reconnect-printer", async () => {
-  await bixolonPrinter.disconnect()
   await connectPrinter()
   return { success: true }
 })
 
 ipcMain.handle("get-printer-status", async () => {
-  const status = await bixolonPrinter.getStatus()
   return {
-    connected: printerConnected,
+    connected: printerPort && printerPort.isOpen,
     port: PRINTER_CONFIG.path,
-    model: "BK3-3",
-    status: status,
   }
 })
 
@@ -480,8 +511,8 @@ app.on("window-all-closed", () => {
   if (billDispenserPort && billDispenserPort.isOpen) {
     billDispenserPort.close()
   }
-  if (printerConnected) {
-    bixolonPrinter.disconnect()
+  if (printerPort && printerPort.isOpen) {
+    printerPort.close()
   }
 
   if (process.platform !== "darwin") {
