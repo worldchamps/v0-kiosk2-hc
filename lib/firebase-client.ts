@@ -1,5 +1,5 @@
 import { initializeApp, getApps } from "firebase/app"
-import { getDatabase } from "firebase/database"
+import { getDatabase, type Database } from "firebase/database"
 
 // Firebase client configuration
 const firebaseConfig = {
@@ -13,7 +13,7 @@ const firebaseConfig = {
 }
 
 let app: any = null
-let database: any = null
+let database: Database | null = null
 
 // Initialize Firebase (client-side only, not during build)
 function initFirebase() {
@@ -23,28 +23,37 @@ function initFirebase() {
   }
 
   if (!firebaseConfig.databaseURL || !firebaseConfig.projectId) {
-    console.warn("[Firebase Client] Missing required configuration")
+    console.warn("[Firebase Client] Missing required configuration (databaseURL or projectId)")
     return null
   }
 
-  if (getApps().length === 0) {
-    app = initializeApp(firebaseConfig)
-  } else {
-    app = getApps()[0]
+  try {
+    if (getApps().length === 0) {
+      app = initializeApp(firebaseConfig)
+    } else {
+      app = getApps()[0]
+    }
+    return app
+  } catch (error) {
+    console.error("[Firebase Client] Initialization error:", error)
+    return null
   }
-
-  return app
 }
 
-export function getFirebaseDatabase() {
+export function getFirebaseDatabase(): Database | null {
   if (!database) {
     const firebaseApp = initFirebase()
     if (firebaseApp) {
-      database = getDatabase(firebaseApp)
+      try {
+        database = getDatabase(firebaseApp)
+      } catch (error) {
+        console.error("[Firebase Client] Failed to get database:", error)
+        return null
+      }
     }
   }
   return database
 }
 
-// Export for backward compatibility
+// Export initialized database (will be null if not initialized)
 export { database }
