@@ -25,3 +25,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/dist
+/dist-electron
+*.exe
+*.dmg
+*.AppImage
