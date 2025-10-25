@@ -47,6 +47,9 @@ const PRINTER_CONFIG = {
   xany: false,
 }
 
+const BIXOLON_VID = "0419" // BIXOLON vendor ID
+const BK3_PID = "2011" // BK3-3 product ID
+
 function createWindow() {
   if (!OVERLAY_MODE) {
     mainWindow = new BrowserWindow({
@@ -127,6 +130,49 @@ function createWindow() {
       console.log("[v0] Creating overlay button for Property1/2")
     }
     overlayButtonModule.createOverlayButton()
+  }
+}
+
+async function detectPrinterPort() {
+  try {
+    const ports = await SerialPort.list()
+
+    // First, try to find BIXOLON BK3-3 by VID/PID
+    const bixolonPort = ports.find(
+      (port) =>
+        port.vendorId?.toLowerCase() === BIXOLON_VID.toLowerCase() &&
+        port.productId?.toLowerCase() === BK3_PID.toLowerCase(),
+    )
+
+    if (bixolonPort) {
+      if (isDev) {
+        console.log("[PRINTER] Detected BIXOLON BK3-3 at:", bixolonPort.path)
+        console.log("[PRINTER] VID:", bixolonPort.vendorId, "PID:", bixolonPort.productId)
+      }
+      return {
+        path: bixolonPort.path,
+        model: "BK3-3",
+        vendorId: bixolonPort.vendorId,
+        productId: bixolonPort.productId,
+      }
+    }
+
+    // Fallback to configured COM port
+    if (isDev) {
+      console.log("[PRINTER] BK3-3 not found by VID/PID, using configured port:", PRINTER_CONFIG.path)
+    }
+    return {
+      path: PRINTER_CONFIG.path,
+      model: "UNKNOWN",
+    }
+  } catch (error) {
+    if (isDev) {
+      console.error("[PRINTER] Failed to detect printer:", error)
+    }
+    return {
+      path: PRINTER_CONFIG.path,
+      model: "UNKNOWN",
+    }
   }
 }
 
@@ -300,8 +346,16 @@ async function connectPrinter() {
       printerPort.close()
     }
 
+    const detectedPrinter = await detectPrinterPort()
+    const printerPath = detectedPrinter.path
+
     if (isDev) {
-      console.log(`[PRINTER] Attempting to connect to ${PRINTER_CONFIG.path}...`)
+      console.log(`[PRINTER] Attempting to connect to ${printerPath}...`)
+      if (detectedPrinter.model === "BK3-3") {
+        console.log(
+          `[PRINTER] Detected model: BK3-3 (VID: ${detectedPrinter.vendorId}, PID: ${detectedPrinter.productId})`,
+        )
+      }
       console.log(`[PRINTER] Config:`, {
         baudRate: PRINTER_CONFIG.baudRate,
         dataBits: PRINTER_CONFIG.dataBits,
@@ -312,7 +366,7 @@ async function connectPrinter() {
     }
 
     printerPort = new SerialPort({
-      path: PRINTER_CONFIG.path,
+      path: printerPath,
       baudRate: PRINTER_CONFIG.baudRate,
       dataBits: PRINTER_CONFIG.dataBits,
       stopBits: PRINTER_CONFIG.stopBits,
@@ -352,14 +406,19 @@ async function connectPrinter() {
       })
 
       if (isDev) {
-        console.log(`[PRINTER] Successfully connected to ${PRINTER_CONFIG.path}`)
-        console.log(`[PRINTER] Status update: {connected: true, port: "${PRINTER_CONFIG.path}"}`)
+        console.log(`[PRINTER] Successfully connected to ${printerPath}`)
+        console.log(
+          `[PRINTER] Status update: {connected: true, port: "${printerPath}", model: "${detectedPrinter.model}"}`,
+        )
       }
 
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("printer-status", {
           connected: true,
-          port: PRINTER_CONFIG.path,
+          port: printerPath,
+          model: detectedPrinter.model,
+          vendorId: detectedPrinter.vendorId,
+          productId: detectedPrinter.productId,
         })
       }
     })
@@ -499,6 +558,32 @@ ipcMain.handle("get-printer-status", async () => {
   return {
     connected: printerPort && printerPort.isOpen,
     port: PRINTER_CONFIG.path,
+  }
+})
+
+ipcMain.handle("connect-printer", async () => {
+  try {
+    await connectPrinter()
+    return {
+      success: printerPort && printerPort.isOpen,
+      port: printerPort && printerPort.isOpen ? PRINTER_CONFIG.path : null,
+    }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle("disconnect-printer", async () => {
+  try {
+    if (printerPort && printerPort.isOpen) {
+      printerPort.close()
+      if (isDev) {
+        console.log("[PRINTER] Disconnected by user request")
+      }
+    }
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error.message }
   }
 })
 
