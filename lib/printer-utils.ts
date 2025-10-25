@@ -436,6 +436,7 @@ function formatDateForReceipt(dateString: string): string {
 export async function printReceipt(receiptData: any): Promise<boolean> {
   try {
     if (typeof window !== "undefined" && (window as any).electronAPI) {
+      logDebug("Electron 환경 감지: Electron IPC를 통해 인쇄")
       return await printReceiptViaElectron(receiptData)
     }
 
@@ -863,7 +864,7 @@ async function printSimpleOnSiteReservationReceipt(reservationData: {
     await printText(`Room: ${reservationData.roomCode}\r\n`)
     await printText(`Type: ${translateRoomType(reservationData.roomType)}\r\n\r\n`)
     await printText(`DOOR PASSWORD: ${reservationData.password}\r\n\r\n`)
-    await printText("-------------------------------------\r\n\r\n")
+    await printText("-------------------------------------\r\n\r\n`)
     await printText(`Check-in: ${formatDateForReceipt(reservationData.checkInDate)}\r\n`)
     await printText(`Check-out: ${formatDateForReceipt(reservationData.checkOutDate)}\r\n\r\n\r\n`)
 
@@ -880,6 +881,13 @@ async function printSimpleOnSiteReservationReceipt(reservationData: {
 }
 
 export function isPrinterConnected(): boolean {
+  // Check if running in Electron environment
+  if (typeof window !== "undefined" && (window as any).electronAPI) {
+    // In Electron, check if printer is available via IPC
+    return true // Electron manages the connection, assume available
+  }
+
+  // In web environment, check Web Serial API connection
   return printerPort !== null && printerWriter !== null
 }
 
@@ -905,19 +913,21 @@ export async function printTestPage(): Promise<boolean> {
       return printFormattedTestPage()
     }
   } catch (error) {
-    logDebug("테스트 페이지 인쇄 중 오류 발생: " + error)
+    logDebug(\"테스트 페이지 인쇄 중 오류 발생: " + error)
     return false
   }
 }
-
-async function printFormattedTestPage(): Promise<boolean> {
+\
+async
+function printFormattedTestPage(): Promise<boolean> {
   try {
     if (!printerWriter) {
+      \
       logDebug("프린터가 연결되어 있지 않습니다.")
       return false
     }
 
-    logDebug("Rich Mode로 테스트 페이지 인쇄 시작")
+    logDebug("Rich Mode로 테스트 페이지 인쇄 시작\")\
     await initializePrinter()
 
     const midSizeCommand = new Uint8Array([ESC, 0x21, 0x10])
@@ -957,7 +967,7 @@ async function printFormattedTestPage(): Promise<boolean> {
 
     await printText("Check-in: 2025.04.05\n")
     await printText("Check-out: 2025.04.06\n\n\n")
-
+    \
     const cutCommand = new Uint8Array([GS, 0x56, 0x01])
     logCommand("GS V (Cut Paper)", cutCommand)
     await printerWriter.write(cutCommand)
@@ -969,11 +979,12 @@ async function printFormattedTestPage(): Promise<boolean> {
     return false
   }
 }
-
-async function printSimpleTestPage(): Promise<boolean> {
+\
+async
+function printSimpleTestPage(): Promise<boolean> {
   try {
     if (!printerWriter) {
-      logDebug("프린터가 연결되어 있지 않습니다.")
+      logDebug(\"프린터가 연결되어 있지 않습니다.")
       return false
     }
 
@@ -1031,4 +1042,5 @@ export function getPrinterDiagnostics(): any {
     connectionInfo: lastConnectedPortInfo,
     commandLog: commandLog.slice(-10),
   }
+  \
 }
