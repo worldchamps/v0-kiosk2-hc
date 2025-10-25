@@ -9,7 +9,7 @@ const bixolonPrinter = require("./bixolon-printer")
 let mainWindow
 let billAcceptorPort = null
 let billDispenserPort = null
-const printerPort = null
+let printerPort = null
 
 const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
 const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"
@@ -292,34 +292,71 @@ async function connectBillDispenser() {
 
 async function connectPrinter() {
   try {
-    const result = await bixolonPrinter.connect(PRINTER_CONFIG.path)
+    if (printerPort && printerPort.isOpen) {
+      printerPort.close()
+    }
 
-    if (result.success) {
+    printerPort = new SerialPort({
+      path: PRINTER_CONFIG.path,
+      baudRate: PRINTER_CONFIG.baudRate,
+      dataBits: PRINTER_CONFIG.dataBits,
+      stopBits: PRINTER_CONFIG.stopBits,
+      parity: PRINTER_CONFIG.parity,
+      autoOpen: false,
+    })
+
+    printerPort.open((err) => {
+      if (err) {
+        if (isDev) {
+          console.error("[v0] 프린터 연결 실패:", err.message)
+        }
+        if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send("printer-status", {
+            connected: false,
+            error: err.message,
+          })
+        }
+        setTimeout(connectPrinter, 10000)
+        return
+      }
+
       if (isDev) {
-        console.log(`[v0] BIXOLON 프린터 연결 성공 (${PRINTER_CONFIG.path})`)
+        console.log(`[v0] 프린터 연결 성공 (${PRINTER_CONFIG.path})`)
       }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("printer-status", {
           connected: true,
           port: PRINTER_CONFIG.path,
-          model: result.model,
         })
       }
-    } else {
+    })
+
+    printerPort.on("error", (err) => {
       if (isDev) {
-        console.error("[v0] BIXOLON 프린터 연결 실패:", result.error)
+        console.error("[v0] 프린터 에러:", err)
       }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("printer-status", {
           connected: false,
-          error: result.error,
+          error: err.message,
         })
       }
-      setTimeout(connectPrinter, 10000)
-    }
+    })
+
+    printerPort.on("close", () => {
+      if (isDev) {
+        console.log("[v0] 프린터 연결 끊김")
+      }
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("printer-status", {
+          connected: false,
+        })
+      }
+      setTimeout(connectPrinter, 5000)
+    })
   } catch (error) {
     if (isDev) {
-      console.error("[v0] BIXOLON 프린터 초기화 실패:", error)
+      console.error("[v0] 프린터 초기화 실패:", error)
     }
     setTimeout(connectPrinter, 10000)
   }
@@ -391,9 +428,19 @@ ipcMain.handle("get-overlay-mode", async () => {
 })
 
 ipcMain.handle("send-to-printer", async (event, data) => {
+  if (!printerPort || !printerPort.isOpen) {
+    return { success: false, error: "프린터가 연결되지 않았습니다" }
+  }
+
   try {
-    const result = await bixolonPrinter.print(data)
-    return result
+    const buffer = Buffer.from(data)
+    await new Promise((resolve, reject) => {
+      printerPort.write(buffer, (err) => {
+        if (err) reject(err)
+        else resolve()
+      })
+    })
+    return { success: true }
   } catch (error) {
     return { success: false, error: error.message }
   }
@@ -405,7 +452,10 @@ ipcMain.handle("reconnect-printer", async () => {
 })
 
 ipcMain.handle("get-printer-status", async () => {
-  return bixolonPrinter.getStatus()
+  return {
+    connected: printerPort && printerPort.isOpen,
+    port: PRINTER_CONFIG.path,
+  }
 })
 
 app.whenReady().then(createWindow)
@@ -417,7 +467,9 @@ app.on("window-all-closed", () => {
   if (billDispenserPort && billDispenserPort.isOpen) {
     billDispenserPort.close()
   }
-  bixolonPrinter.disconnect()
+  if (printerPort && printerPort.isOpen) {
+    printerPort.close()
+  }
 
   if (process.platform !== "darwin") {
     app.quit()
