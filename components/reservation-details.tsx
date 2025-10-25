@@ -10,6 +10,7 @@ import { getRoomImagePath, checkImageExists } from "@/lib/room-utils"
 import { playAudio } from "@/lib/audio-utils"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
+import { getKioskPropertyId, propertyUsesElectron } from "@/lib/property-utils"
 
 interface Reservation {
   place?: string
@@ -110,24 +111,31 @@ export default function ReservationDetails({
       await onCheckIn()
 
       if (isPopupMode) {
-        // Wait for Firebase action to complete, then close
+        const property = getKioskPropertyId()
         setTimeout(() => {
           console.log("[v0] Popup mode: Closing window after check-in")
-          if (typeof window !== "undefined" && window.electronAPI) {
-            window.electronAPI.send("checkin-complete")
+          if (propertyUsesElectron(property)) {
+            if (typeof window !== "undefined" && window.electronAPI) {
+              window.electronAPI.send("checkin-complete")
+            }
+          } else {
+            window.close()
           }
-        }, 30000) // 30 seconds for Firebase operations to complete
+        }, 30000)
       } else {
-        // Normal mode: Show check-in complete screen
         setCheckInComplete(true)
       }
     } catch (error) {
       console.error("[v0] Check-in error:", error)
-      // In popup mode, still close the window even if there's an error
       if (isPopupMode) {
+        const property = getKioskPropertyId()
         setTimeout(() => {
-          if (typeof window !== "undefined" && window.electronAPI) {
-            window.electronAPI.send("checkin-complete")
+          if (propertyUsesElectron(property)) {
+            if (typeof window !== "undefined" && window.electronAPI) {
+              window.electronAPI.send("checkin-complete")
+            }
+          } else {
+            window.close()
           }
         }, 500)
       }
@@ -136,12 +144,15 @@ export default function ReservationDetails({
 
   const handleBackClick = () => {
     if (isPopupMode) {
-      // Close Electron popup window
-      if (typeof window !== "undefined" && window.electronAPI) {
-        window.electronAPI.send("checkin-complete")
+      const property = getKioskPropertyId()
+      if (propertyUsesElectron(property)) {
+        if (typeof window !== "undefined" && window.electronAPI) {
+          window.electronAPI.send("checkin-complete")
+        }
+      } else {
+        window.close()
       }
     } else {
-      // Normal mode: navigate to standby
       onNavigate("standby")
     }
   }

@@ -8,6 +8,7 @@ import { Loader2 } from "lucide-react"
 import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
 import { playAudio } from "@/lib/audio-utils"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
+import { getKioskPropertyId, propertyUsesElectron } from "@/lib/property-utils"
 
 interface ReservationConfirmProps {
   onNavigate: (screen: string) => void
@@ -58,8 +59,13 @@ export default function ReservationConfirm({
 
   const handleBackClick = () => {
     if (isPopupMode) {
-      if (typeof window !== "undefined" && window.electronAPI) {
-        window.electronAPI.send("checkin-complete")
+      const property = getKioskPropertyId()
+      if (propertyUsesElectron(property)) {
+        if (typeof window !== "undefined" && window.electronAPI) {
+          window.electronAPI.send("checkin-complete")
+        }
+      } else {
+        window.close()
       }
     } else {
       onNavigate("standby")

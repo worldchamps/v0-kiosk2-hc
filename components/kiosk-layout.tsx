@@ -21,6 +21,7 @@ import {
   getPropertyDisplayName,
   getPropertyFromRoomNumber,
   getPropertyFromPlace,
+  propertyUsesElectron,
 } from "@/lib/property-utils"
 import PropertyMismatchDialog from "@/components/property-mismatch-dialog"
 import PropertyRedirectDialog from "@/components/property-redirect-dialog"
@@ -76,7 +77,8 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       if (typeof window !== "undefined") {
         const urlParams = new URLSearchParams(window.location.search)
         const isPopup = urlParams.get("popup") === "true"
-        const isElectronPopup = !!(window as any).electronAPI && window.opener
+        const property = getKioskPropertyId()
+        const isElectronPopup = propertyUsesElectron(property) && !!(window as any).electronAPI && window.opener
         return isPopup || isElectronPopup
       }
       return false
@@ -129,8 +131,13 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       }
 
       inactivityTimerRef.current = setTimeout(() => {
-        if (typeof window !== "undefined" && (window as any).electronAPI) {
-          ;(window as any).electronAPI.send("close-popup")
+        const property = getKioskPropertyId()
+        if (propertyUsesElectron(property)) {
+          if (typeof window !== "undefined" && (window as any).electronAPI) {
+            ;(window as any).electronAPI.send("close-popup")
+          }
+        } else {
+          window.close()
         }
       }, INACTIVITY_TIMEOUT)
     }

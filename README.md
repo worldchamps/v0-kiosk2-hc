@@ -35,10 +35,25 @@ Continue building your app on:
 
 ### Multi-Property Support
 
-- ✅ **Property1 (C동, D동)** - Overlay button mode
-- ✅ **Property2 (Kariv)** - Overlay button mode
-- ✅ **Property3 (A동, B동)** - Fullscreen kiosk mode
-- ✅ **Property4 (Camp)** - Fullscreen kiosk mode
+- ✅ **Property1 (C동, D동)** - Electron overlay mode
+- ✅ **Property2 (Kariv)** - Electron overlay mode
+- ✅ **Property3 (A동, B동)** - Web browser (Chrome/Edge) with subdomain
+- ✅ **Property4 (Camp)** - Web browser (Chrome/Edge) with subdomain
+
+### Property3 & Property4 - Subdomain Access
+
+Property3 and Property4 run as pure web apps (no Electron) and use subdomains for automatic property detection:
+
+**Property 3 Access:**
+- `property3.yourdomain.com`
+- `a3.yourdomain.com`
+- `ab.yourdomain.com`
+
+**Property 4 Access:**
+- `property4.yourdomain.com`
+- `camp.yourdomain.com`
+
+No environment variables needed - property is automatically detected from subdomain!
 
 ### Overlay Button System (Property1 & Property2)
 
@@ -57,23 +72,25 @@ Continue building your app on:
 
 ### Hardware Integration
 
-- 🖨️ Receipt printer support (BK3-3, SAM4S)
+- 🖨️ **Web Serial Port printer support (Property3, 4)** - Direct browser connection
 - 💵 Bill acceptor integration
 - 💸 Bill dispenser support
-- 🔌 Serial port communication via Electron
+- 🔌 Serial port communication
 
 ---
 
 ## Quick Setup
 
-### 1. Environment Variables
+### Property1 & Property2 (Electron)
+
+#### 1. Environment Variables
 
 Copy `.env.local.template` to `.env.local` and configure:
 
 \`\`\`env
 # Property Configuration
-KIOSK_PROPERTY=property1  # property1, property2, property3, property4
-OVERLAY_MODE=true         # true for Property1/2, false for Property3/4
+NEXT_PUBLIC_KIOSK_PROPERTY_ID=property1  # or property2
+OVERLAY_MODE=true
 PMS_WINDOW_TITLE=Property1 PMS
 
 # Firebase & Google Sheets
@@ -82,14 +99,14 @@ GOOGLE_SHEETS_SPREADSHEET_ID=your-sheet-id
 # ... see .env.local.template for full list
 \`\`\`
 
-### 2. Development Mode
+#### 2. Development Mode
 
 \`\`\`bash
 npm install
 npm run electron:dev
 \`\`\`
 
-### 3. Production Build
+#### 3. Production Build
 
 \`\`\`bash
 npm run electron:build
@@ -97,12 +114,40 @@ npm run electron:build
 
 Output: `dist/TheBeachStay Kiosk Setup 1.0.0.exe`
 
+### Property3 & Property4 (Web Browser)
+
+#### 1. Subdomain Setup
+
+Configure DNS CNAME records:
+
+| Type | Name | Value |
+|------|------|-------|
+| CNAME | property3 | cname.vercel-dns.com |
+| CNAME | camp | cname.vercel-dns.com |
+
+#### 2. Access via Browser
+
+\`\`\`
+https://property3.yourdomain.com
+https://camp.yourdomain.com
+\`\`\`
+
+#### 3. Kiosk Mode (Recommended)
+
+\`\`\`bash
+chrome.exe --kiosk --app=https://property3.yourdomain.com
+\`\`\`
+
+**No environment variables needed!** Property is auto-detected from subdomain.
+
 ---
 
 ## Documentation
 
 - 📘 [Overlay Button System](docs/OVERLAY_BUTTON_SYSTEM.md) - Property1/2 overlay mode
 - 🏨 [Property Configuration](docs/PROPERTY_CONFIGURATION.md) - Multi-property setup
+- 🌐 [Subdomain Setup](docs/SUBDOMAIN_SETUP.md) - Property3/4 subdomain configuration
+- 🖨️ [Web Serial Setup](docs/WEB_SERIAL_SETUP.md) - Property3/4 printer setup
 - 🚀 [Deployment Guide](docs/DEPLOYMENT_GUIDE.md) - Production deployment
 - 🔧 [Electron Setup](ELECTRON_SETUP.md) - Hardware integration
 - 🌐 [Environment Setup](ENV_SETUP_GUIDE.md) - Environment variables
@@ -113,7 +158,7 @@ Output: `dist/TheBeachStay Kiosk Setup 1.0.0.exe`
 
 ## Architecture
 
-### Property1 & Property2 (Overlay Mode)
+### Property1 & Property2 (Electron Overlay Mode)
 
 \`\`\`
 ┌─────────────────────────────────┐
@@ -134,15 +179,20 @@ Output: `dist/TheBeachStay Kiosk Setup 1.0.0.exe`
 └─────────────────────────────────┘
 \`\`\`
 
-### Property3 & Property4 (Fullscreen Mode)
+### Property3 & Property4 (Web Browser Fullscreen)
 
 \`\`\`
 ┌─────────────────────────────────┐
-│  Fullscreen Kiosk App           │
-│  - Idle Screen                  │
-│  - Standby Screen               │
-│  - Reservation Flow             │
-│  - Check-in Complete            │
+│  Chrome/Edge Browser            │
+│  https://property3.yourdomain.com│
+│  ┌───────────────────────────┐  │
+│  │  Fullscreen Kiosk App     │  │
+│  │  - Idle Screen            │  │
+│  │  - Standby Screen         │  │
+│  │  - Reservation Flow       │  │
+│  │  - Check-in Complete      │  │
+│  │  - Web Serial Printer     │  │
+│  └───────────────────────────┘  │
 └─────────────────────────────────┘
 \`\`\`
 

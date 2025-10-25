@@ -118,12 +118,78 @@ export function getPropertyDisplayName(propertyId: PropertyId): string {
 }
 
 /**
+ * 서브도메인으로부터 Property 감지
+ * 예: property3.example.com → property3
+ *     a3.example.com → property3
+ *     b3.example.com → property3
+ *     camp.example.com → property4
+ */
+export function getPropertyFromSubdomain(hostname?: string): PropertyId | null {
+  if (typeof window === "undefined" && !hostname) {
+    return null
+  }
+
+  const host = hostname || (typeof window !== "undefined" ? window.location.hostname : "")
+  if (!host) return null
+
+  const subdomain = host.split(".")[0].toLowerCase()
+
+  // Property 매핑
+  const subdomainMap: Record<string, PropertyId> = {
+    // Property 1
+    property1: "property1",
+    p1: "property1",
+    c: "property1",
+    d: "property1",
+    cd: "property1",
+
+    // Property 2
+    property2: "property2",
+    p2: "property2",
+    kariv: "property2",
+
+    // Property 3
+    property3: "property3",
+    p3: "property3",
+    a: "property3",
+    b: "property3",
+    ab: "property3",
+    a3: "property3",
+    b3: "property3",
+
+    // Property 4
+    property4: "property4",
+    p4: "property4",
+    camp: "property4",
+  }
+
+  return subdomainMap[subdomain] || null
+}
+
+/**
  * 키오스크 Property ID 가져오기 (동기 버전)
- * NEXT_PUBLIC_ 환경변수를 우선적으로 사용
+ * 우선순위:
+ * 1. 서브도메인 감지
+ * 2. NEXT_PUBLIC_ 환경변수
+ * 3. 기본값 (property3)
  */
 export function getKioskPropertyId(): PropertyId {
-  if (typeof window !== "undefined" && (window as any).__KIOSK_PROPERTY_ID__) {
-    return (window as any).__KIOSK_PROPERTY_ID__ as PropertyId
+  if (typeof window !== "undefined") {
+    // 클라이언트 사이드에서 서브도메인 체크
+    const propertyFromSubdomain = getPropertyFromSubdomain()
+    if (propertyFromSubdomain) {
+      // 감지된 Property를 캐시
+      if (!(window as any).__KIOSK_PROPERTY_ID__) {
+        ;(window as any).__KIOSK_PROPERTY_ID__ = propertyFromSubdomain
+        console.log(`[v0] Property detected from subdomain: ${propertyFromSubdomain}`)
+      }
+      return propertyFromSubdomain
+    }
+
+    // 이미 캐시된 Property가 있으면 사용
+    if ((window as any).__KIOSK_PROPERTY_ID__) {
+      return (window as any).__KIOSK_PROPERTY_ID__ as PropertyId
+    }
   }
 
   const nextPublicPropertyId = process.env.NEXT_PUBLIC_KIOSK_PROPERTY_ID
@@ -140,18 +206,36 @@ export function getKioskPropertyId(): PropertyId {
   }
 
   if (propertyId === "property3" && !nextPublicPropertyId && !regularPropertyId) {
-    console.warn("[v0] Using default property3 - NEXT_PUBLIC_KIOSK_PROPERTY_ID not set")
+    console.warn("[v0] Using default property3 - No subdomain or NEXT_PUBLIC_KIOSK_PROPERTY_ID set")
   }
 
   return propertyId
 }
 
 /**
- * 키오스크 Property ID 저장
- * @deprecated 환경변수를 사용하므로 더 이상 필요하지 않음
+ * Property가 Electron을 사용하는지 확인
+ * Property1, 2는 오버레이 모드로 Electron 필요
+ * Property3, 4는 웹 브라우저에서 실행
  */
-export function setKioskPropertyId(propertyId: PropertyId): void {
-  throw new Error("setKioskPropertyId is deprecated. Use NEXT_PUBLIC_KIOSK_PROPERTY_ID environment variable instead.")
+export function propertyUsesElectron(propertyId: PropertyId): boolean {
+  return propertyId === "property1" || propertyId === "property2"
+}
+
+/**
+ * Property가 프린터를 사용하는지 확인
+ * Property1, 2는 프린터 사용 안함
+ * Property3, 4는 Web Serial Port로 프린터 사용
+ */
+export function propertyUsesPrinter(propertyId: PropertyId): boolean {
+  return propertyId === "property3" || propertyId === "property4"
+}
+
+/**
+ * Property가 Web Serial Port를 사용하는지 확인
+ * Property3, 4만 Web Serial Port 사용
+ */
+export function propertyUsesWebSerial(propertyId: PropertyId): boolean {
+  return propertyId === "property3" || propertyId === "property4"
 }
 
 /**
