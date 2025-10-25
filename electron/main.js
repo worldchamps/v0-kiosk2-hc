@@ -8,6 +8,7 @@ const overlayButtonModule = require("./overlay-button")
 let mainWindow
 let billAcceptorPort = null
 let billDispenserPort = null
+let printerPort = null
 
 const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
 const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"
@@ -31,6 +32,14 @@ const BILL_DISPENSER_CONFIG = {
   dataBits: process.env.BILL_DISPENSER_DATA_BITS || 8,
   stopBits: process.env.BILL_DISPENSER_STOP_BITS || 1,
   parity: process.env.BILL_DISPENSER_PARITY || "none",
+}
+
+const PRINTER_CONFIG = {
+  path: process.env.PRINTER_PATH || "COM2",
+  baudRate: Number.parseInt(process.env.PRINTER_BAUD_RATE) || 9600,
+  dataBits: Number.parseInt(process.env.PRINTER_DATA_BITS) || 8,
+  stopBits: Number.parseInt(process.env.PRINTER_STOP_BITS) || 1,
+  parity: process.env.PRINTER_PARITY || "none",
 }
 
 function createWindow() {
@@ -106,6 +115,7 @@ function createWindow() {
     setTimeout(() => {
       connectBillAcceptor()
       connectBillDispenser()
+      connectPrinter()
     }, 2000)
   } else {
     if (isDev) {
@@ -279,6 +289,78 @@ async function connectBillDispenser() {
   }
 }
 
+async function connectPrinter() {
+  try {
+    if (printerPort && printerPort.isOpen) {
+      printerPort.close()
+    }
+
+    printerPort = new SerialPort({
+      path: PRINTER_CONFIG.path,
+      baudRate: PRINTER_CONFIG.baudRate,
+      dataBits: PRINTER_CONFIG.dataBits,
+      stopBits: PRINTER_CONFIG.stopBits,
+      parity: PRINTER_CONFIG.parity,
+      autoOpen: false,
+    })
+
+    printerPort.open((err) => {
+      if (err) {
+        if (isDev) {
+          console.error("[v0] 프린터 연결 실패:", err.message)
+        }
+        if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send("printer-status", {
+            connected: false,
+            error: err.message,
+          })
+        }
+        setTimeout(connectPrinter, 10000)
+        return
+      }
+
+      if (isDev) {
+        console.log(`[v0] 프린터 연결 성공 (${PRINTER_CONFIG.path})`)
+      }
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("printer-status", {
+          connected: true,
+          port: PRINTER_CONFIG.path,
+        })
+      }
+    })
+
+    printerPort.on("error", (err) => {
+      if (isDev) {
+        console.error("[v0] 프린터 에러:", err)
+      }
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("printer-status", {
+          connected: false,
+          error: err.message,
+        })
+      }
+    })
+
+    printerPort.on("close", () => {
+      if (isDev) {
+        console.log("[v0] 프린터 연결 끊김")
+      }
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("printer-status", {
+          connected: false,
+        })
+      }
+      setTimeout(connectPrinter, 5000)
+    })
+  } catch (error) {
+    if (isDev) {
+      console.error("[v0] 프린터 초기화 실패:", error)
+    }
+    setTimeout(connectPrinter, 10000)
+  }
+}
+
 ipcMain.handle("send-to-bill-acceptor", async (event, command) => {
   if (!billAcceptorPort || !billAcceptorPort.isOpen) {
     return { success: false, error: "지폐 인식기가 연결되지 않았습니다" }
@@ -344,6 +426,37 @@ ipcMain.handle("get-overlay-mode", async () => {
   return OVERLAY_MODE
 })
 
+ipcMain.handle("send-to-printer", async (event, data) => {
+  if (!printerPort || !printerPort.isOpen) {
+    return { success: false, error: "프린터가 연결되지 않았습니다" }
+  }
+
+  try {
+    const buffer = Buffer.from(data)
+    await new Promise((resolve, reject) => {
+      printerPort.write(buffer, (err) => {
+        if (err) reject(err)
+        else resolve()
+      })
+    })
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle("reconnect-printer", async () => {
+  await connectPrinter()
+  return { success: true }
+})
+
+ipcMain.handle("get-printer-status", async () => {
+  return {
+    connected: printerPort && printerPort.isOpen,
+    port: PRINTER_CONFIG.path,
+  }
+})
+
 app.whenReady().then(createWindow)
 
 app.on("window-all-closed", () => {
@@ -352,6 +465,9 @@ app.on("window-all-closed", () => {
   }
   if (billDispenserPort && billDispenserPort.isOpen) {
     billDispenserPort.close()
+  }
+  if (printerPort && printerPort.isOpen) {
+    printerPort.close()
   }
 
   if (process.platform !== "darwin") {

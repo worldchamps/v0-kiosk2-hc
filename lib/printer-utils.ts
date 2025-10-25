@@ -798,7 +798,7 @@ async function printSimpleOnSiteReservationReceipt(reservationData: {
     await printText(`Room: ${reservationData.roomCode}\r\n`)
     await printText(`Type: ${translateRoomType(reservationData.roomType)}\r\n\r\n`)
     await printText(`DOOR PASSWORD: ${reservationData.password}\r\n\r\n`)
-    await printText("-------------------------------------\r\n\r\n`)
+    await printText("-------------------------------------\r\n\r\n" )
     await printText(`Check-in: ${formatDateForReceipt(reservationData.checkInDate)}\r\n`)
     await printText(`Check-out: ${formatDateForReceipt(reservationData.checkOutDate)}\r\n\r\n\r\n`)
 
