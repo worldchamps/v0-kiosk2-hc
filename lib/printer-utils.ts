@@ -96,10 +96,17 @@ declare global {
 }
 
 /**
+ * 브라우저 환경 확인
+ */
+function isBrowser(): boolean {
+  return typeof window !== "undefined" && typeof document !== "undefined"
+}
+
+/**
  * Electron API 존재 여부 확인
  */
 function hasElectronAPI(): boolean {
-  return typeof window !== "undefined" && typeof window.electronAPI !== "undefined"
+  return isBrowser() && typeof window.electronAPI !== "undefined"
 }
 
 /**
@@ -157,6 +164,10 @@ async function detectPrinterModel(): Promise<void> {
  * 저장된 프린터 모델 정보 로드
  */
 function loadSavedPrinterModel(): void {
+  if (!isBrowser()) {
+    return
+  }
+
   try {
     const savedModel = localStorage.getItem("detectedPrinterModel") as "BK3-3" | "SAM4S" | "UNKNOWN" | null
     if (savedModel) {
@@ -181,6 +192,10 @@ export function getPrinterModel(): string {
 export function setSimplePrintMode(simple: boolean): void {
   simplePrintMode = simple
   logDebug(`Simple Mode ${simple ? "활성화" : "비활성화"}됨`)
+
+  if (!isBrowser()) {
+    return
+  }
 
   // Save preference to localStorage
   try {
@@ -211,21 +226,26 @@ export function getSimplePrintMode(): boolean {
   if (detectedPrinterModel === "SAM4S") {
     const defaultMode = true
     logDebug(`SAM4S 프린터 감지: 기본 Simple Mode=${defaultMode}`)
+
+    if (isBrowser()) {
+      try {
+        const savedMode = localStorage.getItem("simplePrintMode")
+        if (savedMode !== null) return savedMode === "true"
+      } catch (e) {
+        /* ignore */
+      }
+    }
+    return defaultMode
+  }
+
+  // 3. 저장된 설정 확인
+  if (isBrowser()) {
     try {
       const savedMode = localStorage.getItem("simplePrintMode")
       if (savedMode !== null) return savedMode === "true"
     } catch (e) {
       /* ignore */
     }
-    return defaultMode
-  }
-
-  // 3. 저장된 설정 확인
-  try {
-    const savedMode = localStorage.getItem("simplePrintMode")
-    if (savedMode !== null) return savedMode === "true"
-  } catch (e) {
-    /* ignore */
   }
 
   // 4. 기본값 (BK3-3는 기본적으로 Rich Mode 사용)
@@ -239,6 +259,11 @@ export function getSimplePrintMode(): boolean {
 export function setPrinterModel(model: "BK3-3" | "SAM4S"): void {
   detectedPrinterModel = model
   logDebug(`프린터 모델을 수동으로 설정: ${model}`)
+
+  if (!isBrowser()) {
+    return
+  }
+
   try {
     localStorage.setItem("detectedPrinterModel", model)
   } catch (e) {
@@ -895,6 +920,10 @@ export async function printOnSiteReservationReceipt(receiptData: any): Promise<b
 // --- Electron 상태 업데이트 리스너 설정 ---
 // 앱 초기화 시 한 번 호출되어야 합니다.
 function setupElectronStatusListener() {
+  if (!isBrowser()) {
+    return
+  }
+
   if (hasElectronAPI() && window.electronAPI?.onPrinterStatus) {
     window.electronAPI.onPrinterStatus((status) => {
       logDebug(
@@ -958,11 +987,13 @@ function setupElectronStatusListener() {
   }
 }
 
-setupElectronStatusListener()
-loadSavedPrinterModel() // 저장된 모델 정보 로드
+if (isBrowser()) {
+  setupElectronStatusListener()
+  loadSavedPrinterModel()
 
-// 기본 모델이 설정되지 않은 경우 BK3-3로 설정
-if (detectedPrinterModel === "UNKNOWN") {
-  detectedPrinterModel = "BK3-3"
-  logDebug("기본 프린터 모델을 BK3-3로 설정")
+  // 기본 모델이 설정되지 않은 경우 BK3-3로 설정
+  if (detectedPrinterModel === "UNKNOWN") {
+    detectedPrinterModel = "BK3-3"
+    logDebug("기본 프린터 모델을 BK3-3로 설정")
+  }
 }
