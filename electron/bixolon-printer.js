@@ -58,14 +58,20 @@ class BixolonPrinter {
   }
 
   // 텍스트 인쇄
-  async printText(text) {
+  async printText(text, alignment = 0, attribute = 0, textSize = 0) {
     if (!this.connected) {
       console.error("[BIXOLON] Printer not connected")
       return false
     }
 
     try {
-      const result = await this.executeCommand("print", text)
+      const result = await this.executeCommand(
+        "printtext",
+        text,
+        alignment.toString(),
+        attribute.toString(),
+        textSize.toString(),
+      )
       return result === "OK"
     } catch (error) {
       console.error("[BIXOLON] Print error:", error.message)
@@ -109,6 +115,19 @@ class BixolonPrinter {
       return result === "OK"
     } catch (error) {
       console.error("[BIXOLON] Line feed error:", error.message)
+      return false
+    }
+  }
+
+  // 프린터 초기화
+  async initializePrinter() {
+    if (!this.connected) return false
+
+    try {
+      const result = await this.executeCommand("init")
+      return result === "OK"
+    } catch (error) {
+      console.error("[BIXOLON] Initialize error:", error.message)
       return false
     }
   }
