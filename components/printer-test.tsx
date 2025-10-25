@@ -189,7 +189,7 @@ export default function PrinterTest() {
           <p className="font-bold">프린터 정보 (BK3-3)</p>
           <ul className="list-disc list-inside mt-2 space-y-1">
             <li>인터페이스: USB 2.0, 시리얼</li>
-            <li>통신 속도: 115200 bps</li>
+            <li>통신 속도: 9600 bps</li>
             <li>인쇄 너비: 68mm (546dot)</li>
             <li>인쇄 열: 42열</li>
             <li>인쇄 속도: 250mm/s</li>

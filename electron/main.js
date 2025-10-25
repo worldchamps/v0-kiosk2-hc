@@ -37,7 +37,7 @@ const BILL_DISPENSER_CONFIG = {
 
 const PRINTER_CONFIG = {
   path: process.env.PRINTER_PATH || "COM2",
-  baudRate: Number.parseInt(process.env.PRINTER_BAUD_RATE) || 115200,
+  baudRate: Number.parseInt(process.env.PRINTER_BAUD_RATE) || 9600,
   dataBits: Number.parseInt(process.env.PRINTER_DATA_BITS) || 8,
   stopBits: Number.parseInt(process.env.PRINTER_STOP_BITS) || 1,
   parity: process.env.PRINTER_PARITY || "none",
