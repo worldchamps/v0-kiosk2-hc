@@ -364,7 +364,7 @@ async function connectPrinter() {
         dataBits: PRINTER_CONFIG.dataBits,
         stopBits: PRINTER_CONFIG.stopBits,
         parity: PRINTER_CONFIG.parity,
-        flowControl: "DTR/DSR",
+        flowControl: "None",
       })
     }
 
@@ -395,18 +395,6 @@ async function connectPrinter() {
         setTimeout(connectPrinter, 10000)
         return
       }
-
-      printerPort.set({ dtr: true, rts: false }, (err) => {
-        if (err) {
-          if (isDev) {
-            console.error("[PRINTER] Failed to set DTR/RTS:", err)
-          }
-        } else {
-          if (isDev) {
-            console.log("[PRINTER] DTR set to HIGH, RTS set to LOW (DTR/DSR flow control)")
-          }
-        }
-      })
 
       if (isDev) {
         console.log(`[PRINTER] Successfully connected to ${printerPath}`)
