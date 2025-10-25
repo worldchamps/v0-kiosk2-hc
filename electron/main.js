@@ -582,6 +582,27 @@ ipcMain.handle("disconnect-printer", async () => {
   }
 })
 
+ipcMain.handle("get-printer-status", async () => {
+  const isConnected = printerPort && printerPort.isOpen
+  const detectedPrinter = await detectPrinterPort()
+
+  return {
+    connected: isConnected,
+    port: isConnected ? detectedPrinter.path : null,
+    model: detectedPrinter.model,
+    vendorId: detectedPrinter.vendorId,
+    productId: detectedPrinter.productId,
+  }
+})
+
+ipcMain.handle("connect-printer", async () => {
+  await connectPrinter()
+  return {
+    success: printerPort && printerPort.isOpen,
+    port: printerPort && printerPort.isOpen ? PRINTER_CONFIG.path : null,
+  }
+})
+
 app.whenReady().then(createWindow)
 
 app.on("window-all-closed", () => {
