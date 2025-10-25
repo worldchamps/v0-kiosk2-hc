@@ -5,13 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Check, Printer, Eye, EyeOff } from "lucide-react"
 import { useEffect, useState, useRef } from "react"
 import DirectPrinter from "./direct-printer"
-import {
-  printReceipt,
-  disconnectPrinter,
-  getSimplePrintMode,
-  autoConnectPrinter,
-  getPrinterModel,
-} from "@/lib/printer-utils"
+import { printReceipt, getSimplePrintMode, autoConnectPrinter, getPrinterModel } from "@/lib/printer-utils"
 import Image from "next/image"
 import { getBuildingZoomImagePath } from "@/lib/location-utils"
 import type { KioskLocation } from "@/lib/location-utils"
@@ -221,7 +215,7 @@ export default function CheckInComplete({
           logDebug("Print status: error (print failed)")
         }
 
-        await disconnectPrinter()
+        // await disconnectPrinter()
       } else {
         setPrintStatus("error")
         logDebug("Print status: error (connection failed)")

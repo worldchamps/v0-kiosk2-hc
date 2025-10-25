@@ -6,12 +6,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Printer, X, Check, AlertTriangle, Info, Activity } from "lucide-react"
 import {
   printReceipt,
-  disconnectPrinter,
   getSimplePrintMode,
   setSimplePrintMode,
   autoConnectPrinter,
   getPrinterModel,
-  checkPrinterStatus, // Added checkPrinterStatus import
+  checkPrinterStatus,
 } from "@/lib/printer-utils"
 
 interface DirectPrinterProps {
@@ -92,9 +91,6 @@ export default function DirectPrinter({ receiptData, onClose }: DirectPrinterPro
         setStatus("error")
         setErrorMessage("영수증 인쇄에 실패했습니다.")
       }
-
-      // Disconnect from printer
-      await disconnectPrinter()
     } catch (error) {
       console.error("영수증 인쇄 오류:", error)
       setStatus("error")
