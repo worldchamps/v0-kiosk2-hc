@@ -1,5 +1,5 @@
 // 키오스크 위치 타입 정의
-export type KioskLocation = "A" | "B" | "CAMP" | "D" | "KARIV"
+export type KioskLocation = "A" | "B" | "CAMP" | "D"
 
 // 로컬 스토리지에 키오스크 위치 저장
 export function saveKioskLocation(location: KioskLocation): void {
@@ -29,9 +29,6 @@ export function getLocationMapPath(location: KioskLocation): string {
 export function getLocationTitle(location: KioskLocation): string {
   if (location === "CAMP") {
     return "더 캠프스테이"
-  }
-  if (location === "KARIV") {
-    return "Kariv Hotel"
   }
   return `더 비치스테이 ${location}동`
 }

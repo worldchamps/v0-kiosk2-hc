@@ -1,18 +1,41 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
+import { headers } from "next/headers"
 import { createSheetsClient, SHEET_COLUMNS } from "@/lib/google-sheets"
 import { getCurrentDateKST, normalizeDate } from "@/lib/date-utils"
-import { getPropertyFromReservation } from "@/lib/property-utils"
 
+// API Key for authentication
+const API_KEY = process.env.API_KEY || ""
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || ""
+
+// Update the authentication function to handle different access levels
+function authenticateRequest(request: NextRequest, requiredLevel: "public" | "admin" = "public") {
+  const headersList = headers()
+  const apiKey = headersList.get("x-api-key")
+
+  // 클라이언트에서 API 키 없이 호출할 수 있도록 허용
+  // 이 API는 공개적으로 접근 가능하지만, 서버 측에서 요청을 검증합니다
+  if (requiredLevel === "public") {
+    if (!apiKey) return true
+    return apiKey === API_KEY || apiKey === ADMIN_API_KEY
+  }
+
+  // For admin operations, require the admin key
+  if (!apiKey) return false
+  return apiKey === ADMIN_API_KEY
+}
+
+// GET endpoint to fetch reservations
 export async function GET(request: NextRequest) {
   try {
+    // Public operation - allow with public key
+    if (!authenticateRequest(request, "public")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
     const { searchParams } = new URL(request.url)
     const guestName = searchParams.get("name")
-    const todayOnly = searchParams.get("todayOnly") === "true"
-    const kioskProperty = searchParams.get("kioskProperty")
-    const searchAllProperties = searchParams.get("searchAll") === "true"
-
-    console.log("[v0] Reservations API called with kioskProperty:", kioskProperty, "searchAll:", searchAllProperties)
+    const todayOnly = searchParams.get("todayOnly") !== "false" // 기본값은 true
 
     const sheets = createSheetsClient()
     const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID || ""
@@ -21,9 +44,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Spreadsheet ID not configured" }, { status: 500 })
     }
 
+    // Fetch data from Google Sheets
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "Reservations!A94:N",
+      range: "Reservations!A2:M", // Updated range to include all columns
     })
 
     const rows = response.data.values
@@ -36,74 +60,24 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    const reservations = []
+    // 현재 날짜(KST)
     const today = getCurrentDateKST()
 
-    for (const row of rows) {
-      const rowGuestName = row[SHEET_COLUMNS.GUEST_NAME] || ""
-      const checkInStatus = row[SHEET_COLUMNS.CHECK_IN_STATUS] || ""
-
-      // Filter 1: skip if already checked in (no date normalization needed)
-      if (checkInStatus && checkInStatus.trim() !== "") {
-        continue
+    // 예약 정보에 층수 정보 추가
+    // Map the rows to reservation objects using the updated column indices
+    const reservations = rows.map((row) => {
+      // 일부 행에 데이터가 부족할 경우 처리
+      if (row.length < 9) {
+        console.warn("Row has insufficient data:", row)
       }
 
-      // Filter 2: if searching by name, only include matching names (no date normalization needed)
-      if (guestName && rowGuestName !== guestName) {
-        continue
-      }
-
+      // 날짜 형식 정규화
       const checkInDate = row[SHEET_COLUMNS.CHECK_IN_DATE] ? normalizeDate(row[SHEET_COLUMNS.CHECK_IN_DATE]) : ""
       const checkOutDate = row[SHEET_COLUMNS.CHECK_OUT_DATE] ? normalizeDate(row[SHEET_COLUMNS.CHECK_OUT_DATE]) : ""
 
-      // Filter 3: if todayOnly, skip if check-in date is before today
-      if (todayOnly && checkInDate < today) {
-        continue
-      }
-
-      if (kioskProperty && !searchAllProperties) {
-        const place = row[SHEET_COLUMNS.PLACE] || ""
-        const roomNumber = row[SHEET_COLUMNS.ROOM_NUMBER] || ""
-
-        console.log("[v0] Checking reservation:", {
-          guestName: rowGuestName,
-          place,
-          roomNumber,
-          kioskProperty,
-        })
-
-        const reservationProperty = getPropertyFromReservation({
-          place,
-          roomNumber,
-        } as any)
-
-        // If still no property detected, skip this reservation
-        if (!reservationProperty) {
-          console.log("[v0] Could not detect property for reservation, skipping")
-          continue
-        }
-
-        console.log("[v0] Detected property:", reservationProperty, "Expected:", kioskProperty)
-
-        // Skip if property doesn't match
-        if (reservationProperty !== kioskProperty) {
-          console.log("[v0] Skipping reservation - property mismatch")
-          continue
-        }
-
-        console.log("[v0] Including reservation - property match!")
-      }
-
-      const place = row[SHEET_COLUMNS.PLACE] || ""
-      const roomNumber = row[SHEET_COLUMNS.ROOM_NUMBER] || ""
-      const detectedProperty = getPropertyFromReservation({
-        place,
-        roomNumber,
-      } as any)
-
-      reservations.push({
-        place: place,
-        guestName: rowGuestName,
+      return {
+        place: row[SHEET_COLUMNS.PLACE] || "",
+        guestName: row[SHEET_COLUMNS.GUEST_NAME] || "",
         reservationId: row[SHEET_COLUMNS.RESERVATION_ID] || "",
         bookingPlatform: row[SHEET_COLUMNS.BOOKING_PLATFORM] || "",
         roomType: row[SHEET_COLUMNS.ROOM_TYPE] || "",
@@ -111,19 +85,55 @@ export async function GET(request: NextRequest) {
         phoneNumber: row[SHEET_COLUMNS.PHONE_NUMBER] || "",
         checkInDate: checkInDate,
         checkOutDate: checkOutDate,
-        roomNumber: roomNumber,
+        roomNumber: row[SHEET_COLUMNS.ROOM_NUMBER] || "",
         password: row[SHEET_COLUMNS.PASSWORD] || "",
-        checkInStatus: checkInStatus,
+        checkInStatus: row[SHEET_COLUMNS.CHECK_IN_STATUS] || "",
         checkInTime: row[SHEET_COLUMNS.CHECK_IN_TIME] || "",
-        floor: row[SHEET_COLUMNS.FLOOR] || "",
-        property: detectedProperty,
-      })
+        floor: row[SHEET_COLUMNS.FLOOR] || "", // 층수 정보 추가
+        // 디버깅용 정보
+        _originalCheckInDate: row[SHEET_COLUMNS.CHECK_IN_DATE] || "",
+        _normalizedCheckInDate: checkInDate,
+        _isToday: checkInDate === today,
+      }
+    })
+
+    let filteredReservations = [...reservations]
+
+    // 오늘 날짜(KST 기준)로 필터링
+    if (todayOnly) {
+      filteredReservations = filteredReservations.filter((res) => res.checkInDate === today)
     }
 
-    console.log("[v0] Total reservations found:", reservations.length)
+    // 이름으로 필터링
+    if (guestName) {
+      filteredReservations = filteredReservations.filter((res) => res.guestName === guestName)
+    }
+
+    // 체크인 전 예약만 반환 (체크인 상태가 비어있는 경우)
+    // 이 부분은 문제가 될 수 있으므로 일단 주석 처리
+    // filteredReservations = filteredReservations.filter((res) => !res.checkInStatus)
+
+    // 디버깅 정보 추가
+    const debugInfo = {
+      today,
+      totalReservations: reservations.length,
+      filteredCount: filteredReservations.length,
+      filterCriteria: {
+        guestName,
+        todayOnly,
+      },
+      // 날짜 형식 디버깅
+      dateFormats: reservations.slice(0, 5).map((res) => ({
+        guestName: res.guestName,
+        originalCheckInDate: res._originalCheckInDate,
+        normalizedCheckInDate: res._normalizedCheckInDate,
+        isToday: res._isToday,
+      })),
+    }
 
     return NextResponse.json({
-      reservations,
+      reservations: filteredReservations,
+      debug: debugInfo,
     })
   } catch (error) {
     console.error("Error fetching reservations:", error)
