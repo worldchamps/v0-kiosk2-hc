@@ -21,17 +21,17 @@ if (isDev) {
 
 const BILL_ACCEPTOR_CONFIG = {
   path: process.env.BILL_ACCEPTOR_PATH || "COM4", // Windows 기본값, 실제 포트로 변경 필요
-  baudRate: process.env.BILL_ACCEPTOR_BAUD_RATE || 9600,
-  dataBits: process.env.BILL_ACCEPTOR_DATA_BITS || 8,
-  stopBits: process.env.BILL_ACCEPTOR_STOP_BITS || 1,
+  baudRate: Number.parseInt(process.env.BILL_ACCEPTOR_BAUD_RATE) || 9600,
+  dataBits: Number.parseInt(process.env.BILL_ACCEPTOR_DATA_BITS) || 8,
+  stopBits: Number.parseInt(process.env.BILL_ACCEPTOR_STOP_BITS) || 1,
   parity: process.env.BILL_ACCEPTOR_PARITY || "none",
 }
 
 const BILL_DISPENSER_CONFIG = {
   path: process.env.BILL_DISPENSER_PATH || "COM5", // Windows 기본값, 실제 포트로 변경 필요
-  baudRate: process.env.BILL_DISPENSER_BAUD_RATE || 9600,
-  dataBits: process.env.BILL_DISPENSER_DATA_BITS || 8,
-  stopBits: process.env.BILL_DISPENSER_STOP_BITS || 1,
+  baudRate: Number.parseInt(process.env.BILL_DISPENSER_BAUD_RATE) || 9600,
+  dataBits: Number.parseInt(process.env.BILL_DISPENSER_DATA_BITS) || 8,
+  stopBits: Number.parseInt(process.env.BILL_DISPENSER_STOP_BITS) || 1,
   parity: process.env.BILL_DISPENSER_PARITY || "none",
 }
 
@@ -41,8 +41,9 @@ const PRINTER_CONFIG = {
   dataBits: Number.parseInt(process.env.PRINTER_DATA_BITS) || 8,
   stopBits: Number.parseInt(process.env.PRINTER_STOP_BITS) || 1,
   parity: process.env.PRINTER_PARITY || "none",
-  rtscts: false, // Disable RTS/CTS hardware flow control
-  xon: false, // Disable XON/XOFF software flow control
+  model: process.env.PRINTER_MODEL || "BK3-3",
+  rtscts: false,
+  xon: false,
   xoff: false,
   xany: false,
 }
@@ -157,13 +158,15 @@ async function detectPrinterPort() {
       }
     }
 
-    // Fallback to configured COM port
+    // Fallback to configured COM port with manual model setting
     if (isDev) {
-      console.log("[PRINTER] BK3-3 not found by VID/PID, using configured port:", PRINTER_CONFIG.path)
+      console.log("[PRINTER] BK3-3 not found by VID/PID (likely RS232 connection)")
+      console.log("[PRINTER] Using configured port:", PRINTER_CONFIG.path)
+      console.log("[PRINTER] Using configured model:", PRINTER_CONFIG.model)
     }
     return {
       path: PRINTER_CONFIG.path,
-      model: "UNKNOWN",
+      model: PRINTER_CONFIG.model,
     }
   } catch (error) {
     if (isDev) {
@@ -171,7 +174,7 @@ async function detectPrinterPort() {
     }
     return {
       path: PRINTER_CONFIG.path,
-      model: "UNKNOWN",
+      model: PRINTER_CONFIG.model,
     }
   }
 }
