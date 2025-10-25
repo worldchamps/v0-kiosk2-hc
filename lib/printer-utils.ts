@@ -863,6 +863,156 @@ export async function waitForPrinterResponse(timeoutMs = 2000): Promise<number[]
   })
 }
 
+/**
+ * 테스트 페이지 인쇄 함수
+ */
+export async function printTestPage(): Promise<boolean> {
+  logDebug("테스트 페이지 인쇄 시작...")
+
+  // 테스트용 영수증 데이터 생성
+  const testData = {
+    roomNumber: "D213",
+    floor: "2",
+    password: "2133",
+    checkInDate: "2025.04.05",
+    checkOutDate: "2025.04.06",
+  }
+
+  try {
+    const success = await printReceipt(testData)
+    if (success) {
+      logDebug("테스트 페이지 인쇄 완료")
+    } else {
+      logDebug("테스트 페이지 인쇄 실패")
+    }
+    return success
+  } catch (error) {
+    logDebug("테스트 페이지 인쇄 중 오류 발생: " + (error as Error).message)
+    return false
+  }
+}
+
+/**
+ * 프린터 상태 확인 함수 (UI용)
+ */
+export async function checkPrinterStatus(): Promise<{
+  success: boolean
+  online: boolean
+  paperOk: boolean
+  error: boolean
+  message: string
+}> {
+  const querySent = await queryPrinterStatus()
+
+  if (!querySent) {
+    return {
+      success: false,
+      online: false,
+      paperOk: false,
+      error: true,
+      message: "상태 쿼리 전송 실패",
+    }
+  }
+
+  // 프린터 응답 대기
+  const response = await waitForPrinterResponse(2000)
+
+  if (!response) {
+    return {
+      success: false,
+      online: false,
+      paperOk: false,
+      error: true,
+      message: "프린터 응답 없음 (타임아웃)",
+    }
+  }
+
+  // 응답 파싱 (DLE EOT 응답: 1바이트)
+  const statusByte = response[0]
+  const online = (statusByte & 0x08) === 0 // bit 3 = 0이면 온라인
+  const paperOut = (statusByte & 0x20) !== 0 // bit 5 = 1이면 용지 없음
+  const error = (statusByte & 0x40) !== 0 // bit 6 = 1이면 에러
+
+  return {
+    success: true,
+    online,
+    paperOk: !paperOut,
+    error,
+    message: online ? "프린터 정상" : "프린터 오프라인",
+  }
+}
+
+/**
+ * 프린터 연결 상태 확인 함수
+ */
+export function isPrinterConnected(): boolean {
+  return electronPrinterConnected
+}
+
+/**
+ * 프린터 준비 상태 확인 함수 (상세 정보 포함)
+ */
+export async function checkPrinterReady(): Promise<{
+  ready: boolean
+  online: boolean
+  paperOut: boolean
+  error: boolean
+  statusByte?: number
+  message: string
+}> {
+  if (!electronPrinterConnected) {
+    return {
+      ready: false,
+      online: false,
+      paperOut: false,
+      error: true,
+      message: "프린터가 연결되어 있지 않습니다",
+    }
+  }
+
+  const querySent = await queryPrinterStatus()
+
+  if (!querySent) {
+    return {
+      ready: false,
+      online: false,
+      paperOut: false,
+      error: true,
+      message: "상태 쿼리 전송 실패",
+    }
+  }
+
+  // 프린터 응답 대기
+  const response = await waitForPrinterResponse(2000)
+
+  if (!response) {
+    return {
+      ready: false,
+      online: false,
+      paperOut: false,
+      error: true,
+      message: "프린터 응답 없음 (타임아웃)",
+    }
+  }
+
+  // 응답 파싱 (DLE EOT 응답: 1바이트)
+  const statusByte = response[0]
+  const online = (statusByte & 0x08) === 0 // bit 3 = 0이면 온라인
+  const paperOut = (statusByte & 0x20) !== 0 // bit 5 = 1이면 용지 없음
+  const error = (statusByte & 0x40) !== 0 // bit 6 = 1이면 에러
+
+  const ready = online && !paperOut && !error
+
+  return {
+    ready,
+    online,
+    paperOut,
+    error,
+    statusByte,
+    message: ready ? "프린터 준비 완료" : online ? "프린터 오류" : "프린터 오프라인",
+  }
+}
+
 if (isBrowser()) {
   setupElectronStatusListener()
   setupPrinterDataListener() // Added printer data listener setup
