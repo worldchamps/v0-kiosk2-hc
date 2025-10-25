@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Printer, X, Check, AlertTriangle, Info } from "lucide-react"
+import { Printer, X, Check, AlertTriangle, Info, Activity } from "lucide-react"
 import {
   printReceipt,
   disconnectPrinter,
@@ -11,6 +11,7 @@ import {
   setSimplePrintMode,
   autoConnectPrinter,
   getPrinterModel,
+  checkPrinterStatus, // Added checkPrinterStatus import
 } from "@/lib/printer-utils"
 
 interface DirectPrinterProps {
@@ -23,6 +24,8 @@ export default function DirectPrinter({ receiptData, onClose }: DirectPrinterPro
   const [errorMessage, setErrorMessage] = useState("")
   const [simpleMode, setSimpleMode] = useState(false)
   const [printerModel, setPrinterModel] = useState<string>("UNKNOWN")
+  const [printerStatus, setPrinterStatus] = useState<string>("")
+  const [checkingStatus, setCheckingStatus] = useState(false)
 
   // Load simple mode preference and printer model on component mount
   useEffect(() => {
@@ -34,6 +37,36 @@ export default function DirectPrinter({ receiptData, onClose }: DirectPrinterPro
     const newMode = !simpleMode
     setSimpleMode(newMode)
     setSimplePrintMode(newMode)
+  }
+
+  const handleCheckStatus = async () => {
+    setCheckingStatus(true)
+    setPrinterStatus("프린터 상태 확인 중...")
+
+    try {
+      const statusResult = await checkPrinterStatus()
+
+      if (statusResult.success) {
+        const statusMessages = []
+        if (statusResult.online) statusMessages.push("✅ 온라인")
+        else statusMessages.push("❌ 오프라인")
+
+        if (statusResult.paperOk) statusMessages.push("✅ 용지 정상")
+        else statusMessages.push("❌ 용지 없음")
+
+        if (!statusResult.error) statusMessages.push("✅ 에러 없음")
+        else statusMessages.push("❌ 에러 발생")
+
+        setPrinterStatus(statusMessages.join(" | "))
+      } else {
+        setPrinterStatus(`❌ 상태 확인 실패: ${statusResult.message}`)
+      }
+    } catch (error) {
+      console.error("프린터 상태 확인 오류:", error)
+      setPrinterStatus(`❌ 오류: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setCheckingStatus(false)
+    }
   }
 
   const handlePrint = async () => {
@@ -115,6 +148,28 @@ export default function DirectPrinter({ receiptData, onClose }: DirectPrinterPro
                 </div>
               )}
 
+              <div className="space-y-2">
+                <Button
+                  variant="outline"
+                  className="w-full bg-transparent"
+                  onClick={handleCheckStatus}
+                  disabled={checkingStatus}
+                >
+                  <Activity className="mr-2 h-4 w-4" />
+                  {checkingStatus ? "확인 중..." : "프린터 상태 확인"}
+                </Button>
+
+                {printerStatus && (
+                  <div
+                    className={`p-3 rounded-md text-sm ${
+                      printerStatus.includes("❌") ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"
+                    }`}
+                  >
+                    {printerStatus}
+                  </div>
+                )}
+              </div>
+
               <div className="bg-blue-50 p-3 rounded-md text-sm text-blue-700">
                 <p>영수증에 포함된 정보:</p>
                 <ul className="list-disc list-inside mt-1">
@@ -156,7 +211,7 @@ export default function DirectPrinter({ receiptData, onClose }: DirectPrinterPro
                   <Check className="h-6 w-6 text-green-600" />
                 </div>
                 <p className="text-green-600 font-medium">영수증이 성공적으로 인쇄되었습니다.</p>
-                <Button variant="outline" className="mt-4" onClick={onClose}>
+                <Button variant="outline" className="mt-4 bg-transparent" onClick={onClose}>
                   닫기
                 </Button>
               </div>
