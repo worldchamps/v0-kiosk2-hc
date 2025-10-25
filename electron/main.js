@@ -41,6 +41,10 @@ const PRINTER_CONFIG = {
   dataBits: Number.parseInt(process.env.PRINTER_DATA_BITS) || 8,
   stopBits: Number.parseInt(process.env.PRINTER_STOP_BITS) || 1,
   parity: process.env.PRINTER_PARITY || "none",
+  rtscts: false, // Disable RTS/CTS hardware flow control
+  xon: false, // Disable XON/XOFF software flow control
+  xoff: false,
+  xany: false,
 }
 
 function createWindow() {
@@ -302,6 +306,10 @@ async function connectPrinter() {
       dataBits: PRINTER_CONFIG.dataBits,
       stopBits: PRINTER_CONFIG.stopBits,
       parity: PRINTER_CONFIG.parity,
+      rtscts: PRINTER_CONFIG.rtscts,
+      xon: PRINTER_CONFIG.xon,
+      xoff: PRINTER_CONFIG.xoff,
+      xany: PRINTER_CONFIG.xany,
       autoOpen: false,
     })
 
@@ -320,13 +328,30 @@ async function connectPrinter() {
         return
       }
 
+      printerPort.set({ dtr: true, rts: false }, (err) => {
+        if (err && isDev) {
+          console.error("[v0] DTR 설정 실패:", err)
+        }
+      })
+
       if (isDev) {
-        console.log(`[v0] 프린터 연결 성공 (${PRINTER_CONFIG.path})`)
+        console.log(`[v0] 프린터 연결 성공 (${PRINTER_CONFIG.path}, DTR/DSR flow control)`)
       }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("printer-status", {
           connected: true,
           port: PRINTER_CONFIG.path,
+        })
+      }
+    })
+
+    printerPort.on("data", (data) => {
+      if (isDev) {
+        console.log("[v0] 프린터 데이터:", data)
+      }
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("printer-data", {
+          data: Array.from(data),
         })
       }
     })
