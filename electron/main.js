@@ -181,7 +181,14 @@ async function detectPrinterPort() {
 async function connectBillAcceptor() {
   try {
     if (billAcceptorPort && billAcceptorPort.isOpen) {
-      billAcceptorPort.close()
+      await new Promise((resolve) => {
+        billAcceptorPort.close((err) => {
+          if (err && isDev) {
+            console.error("[v0] 지폐 인식기 포트 닫기 실패:", err.message)
+          }
+          resolve()
+        })
+      })
     }
 
     billAcceptorPort = new SerialPort({
@@ -263,7 +270,14 @@ async function connectBillAcceptor() {
 async function connectBillDispenser() {
   try {
     if (billDispenserPort && billDispenserPort.isOpen) {
-      billDispenserPort.close()
+      await new Promise((resolve) => {
+        billDispenserPort.close((err) => {
+          if (err && isDev) {
+            console.error("[v0] 지폐 방출기 포트 닫기 실패:", err.message)
+          }
+          resolve()
+        })
+      })
     }
 
     billDispenserPort = new SerialPort({
@@ -345,7 +359,15 @@ async function connectBillDispenser() {
 async function connectPrinter() {
   try {
     if (printerPort && printerPort.isOpen) {
-      printerPort.close()
+      await new Promise((resolve) => {
+        printerPort.close((err) => {
+          if (err && isDev) {
+            console.error("[PRINTER] Error closing port:", err.message)
+          }
+          resolve()
+        })
+      })
+      await new Promise((resolve) => setTimeout(resolve, 100))
     }
 
     const detectedPrinter = await detectPrinterPort()
