@@ -120,9 +120,9 @@ export function getPropertyDisplayName(propertyId: PropertyId): string {
 /**
  * 서브도메인으로부터 Property 감지
  * 예: property3.example.com → property3
+ *     property3-v0-kiosk2.vercel.app → property3
  *     a3.example.com → property3
- *     b3.example.com → property3
- *     camp.example.com → property4
+ *     camp-v0-kiosk2.vercel.app → property4
  */
 export function getPropertyFromSubdomain(hostname?: string): PropertyId | null {
   if (typeof window === "undefined" && !hostname) {
@@ -132,7 +132,11 @@ export function getPropertyFromSubdomain(hostname?: string): PropertyId | null {
   const host = hostname || (typeof window !== "undefined" ? window.location.hostname : "")
   if (!host) return null
 
+  // Vercel 도메인 패턴 지원 (property3-projectname 형식)
   const subdomain = host.split(".")[0].toLowerCase()
+
+  // Vercel 패턴의 prefix로 확인
+  const subdomainPrefix = subdomain.split("-")[0]
 
   // Property 매핑
   const subdomainMap: Record<string, PropertyId> = {
@@ -163,7 +167,17 @@ export function getPropertyFromSubdomain(hostname?: string): PropertyId | null {
     camp: "property4",
   }
 
-  return subdomainMap[subdomain] || null
+  // 전체 서브도메인으로 먼저 확인
+  if (subdomainMap[subdomain]) {
+    return subdomainMap[subdomain]
+  }
+
+  // Vercel 패턴의 prefix로 확인
+  if (subdomainMap[subdomainPrefix]) {
+    return subdomainMap[subdomainPrefix]
+  }
+
+  return null
 }
 
 /**
@@ -181,7 +195,7 @@ export function getKioskPropertyId(): PropertyId {
       // 감지된 Property를 캐시
       if (!(window as any).__KIOSK_PROPERTY_ID__) {
         ;(window as any).__KIOSK_PROPERTY_ID__ = propertyFromSubdomain
-        console.log(`[v0] Property detected from subdomain: ${propertyFromSubdomain}`)
+        console.log(`[v0] Property detected from subdomain (${window.location.hostname}): ${propertyFromSubdomain}`)
       }
       return propertyFromSubdomain
     }
