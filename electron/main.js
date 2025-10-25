@@ -41,7 +41,7 @@ const BILL_DISPENSER_CONFIG = {
 
 const PRINTER_CONFIG = {
   path: process.env.PRINTER_PATH || "COM2",
-  baudRate: Number.parseInt(process.env.PRINTER_BAUD_RATE) || 9600, // Reverted to 9600 (most universal setting)
+  baudRate: Number.parseInt(process.env.PRINTER_BAUD_RATE) || 115200, // Changed from 9600 to 115200 (working version setting)
   dataBits: Number.parseInt(process.env.PRINTER_DATA_BITS) || 8,
   stopBits: Number.parseInt(process.env.PRINTER_STOP_BITS) || 1,
   parity: process.env.PRINTER_PARITY || "none",
@@ -784,6 +784,268 @@ ipcMain.handle("query-printer-status", async () => {
   } catch (error) {
     if (isDev) {
       console.error("[PRINTER] Status query exception:", error.message)
+    }
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle("printer:list-ports", async () => {
+  try {
+    const ports = await SerialPort.list()
+    if (isDev) {
+      console.log("[PRINTER] 📋 Available serial ports:")
+      ports.forEach((port) => {
+        console.log(`  - ${port.path}`)
+        if (port.manufacturer) console.log(`    Manufacturer: ${port.manufacturer}`)
+        if (port.vendorId) console.log(`    VID: ${port.vendorId}, PID: ${port.productId}`)
+      })
+    }
+    return { success: true, ports }
+  } catch (error) {
+    if (isDev) {
+      console.error("[PRINTER] ❌ Failed to list ports:", error.message)
+    }
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle("printer:connect", async (event, portPath) => {
+  try {
+    // Close existing connection if any
+    if (printerPort && printerPort.isOpen) {
+      await new Promise((resolve) => {
+        printerPort.close(() => resolve())
+      })
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+
+    if (isDev) {
+      console.log(`[PRINTER] 🔌 Connecting to ${portPath}...`)
+    }
+
+    printerPort = new SerialPort({
+      path: portPath,
+      baudRate: 115200,
+      dataBits: 8,
+      stopBits: 1,
+      parity: "none",
+      autoOpen: false,
+    })
+
+    await new Promise((resolve, reject) => {
+      printerPort.open((err) => {
+        if (err) reject(err)
+        else resolve()
+      })
+    })
+
+    if (isDev) {
+      console.log("[PRINTER] ✅ Connected successfully")
+    }
+
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send("printer-status", {
+        connected: true,
+        port: portPath,
+      })
+    }
+
+    return { success: true }
+  } catch (error) {
+    if (isDev) {
+      console.error("[PRINTER] ❌ Connection failed:", error.message)
+    }
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle("printer:disconnect", async () => {
+  try {
+    if (printerPort && printerPort.isOpen) {
+      await new Promise((resolve) => {
+        printerPort.close(() => resolve())
+      })
+      if (isDev) {
+        console.log("[PRINTER] 🔌 Disconnected")
+      }
+    }
+    return { success: true }
+  } catch (error) {
+    if (isDev) {
+      console.error("[PRINTER] ❌ Disconnect failed:", error.message)
+    }
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle("printer:is-connected", async () => {
+  const connected = printerPort && printerPort.isOpen
+  return { connected }
+})
+
+ipcMain.handle("printer:print-receipt", async (event, receiptData) => {
+  if (!printerPort || !printerPort.isOpen) {
+    return { success: false, error: "프린터가 연결되지 않았습니다" }
+  }
+
+  try {
+    const commands = []
+
+    // Initialize printer
+    commands.push(0x1b, 0x40) // ESC @ - Initialize
+    commands.push(0x1b, 0x74, 0x00) // ESC t 0 - Set codepage PC437
+
+    // Print property name
+    if (receiptData.propertyName) {
+      commands.push(0x1b, 0x21, 0x30) // ESC ! 48 - Double height + bold
+      commands.push(...Buffer.from(receiptData.propertyName, "utf-8"))
+      commands.push(0x0d, 0x0a) // CR LF
+      commands.push(0x0d, 0x0a) // CR LF
+    }
+
+    // Print separator
+    commands.push(0x1b, 0x21, 0x00) // ESC ! 0 - Normal mode
+    commands.push(...Buffer.from("-".repeat(37), "utf-8"))
+    commands.push(0x0d, 0x0a) // CR LF
+    commands.push(0x0d, 0x0a) // CR LF
+
+    // Print building
+    if (receiptData.building) {
+      commands.push(...Buffer.from(receiptData.building, "utf-8"))
+      commands.push(0x0d, 0x0a) // CR LF
+      commands.push(0x0d, 0x0a) // CR LF
+    }
+
+    // Print room
+    if (receiptData.room) {
+      commands.push(...Buffer.from(`ROOM: ${receiptData.room}`, "utf-8"))
+      commands.push(0x0d, 0x0a) // CR LF
+      commands.push(0x0d, 0x0a) // CR LF
+    }
+
+    // Print password
+    if (receiptData.password) {
+      commands.push(...Buffer.from(`DOOR PASSWORD: ${receiptData.password}`, "utf-8"))
+      commands.push(0x0d, 0x0a) // CR LF
+      commands.push(0x0d, 0x0a) // CR LF
+    }
+
+    // Print separator
+    commands.push(...Buffer.from("-".repeat(37), "utf-8"))
+    commands.push(0x0d, 0x0a) // CR LF
+    commands.push(0x0d, 0x0a) // CR LF
+
+    // Print dates
+    if (receiptData.checkIn) {
+      commands.push(...Buffer.from(`Check-in: ${receiptData.checkIn}`, "utf-8"))
+      commands.push(0x0d, 0x0a) // CR LF
+    }
+    if (receiptData.checkOut) {
+      commands.push(...Buffer.from(`Check-out: ${receiptData.checkOut}`, "utf-8"))
+      commands.push(0x0d, 0x0a) // CR LF
+    }
+
+    // Feed and cut
+    commands.push(0x0d, 0x0a) // CR LF
+    commands.push(0x0d, 0x0a) // CR LF
+    commands.push(0x1d, 0x56, 0x01) // GS V 1 - Cut paper
+
+    const buffer = Buffer.from(commands)
+
+    if (isDev) {
+      console.log("[PRINTER] 📄 Printing receipt...")
+      console.log("[PRINTER] Buffer length:", buffer.length)
+    }
+
+    await new Promise((resolve, reject) => {
+      printerPort.write(buffer, (err) => {
+        if (err) reject(err)
+        else {
+          printerPort.drain((drainErr) => {
+            if (drainErr) reject(drainErr)
+            else resolve()
+          })
+        }
+      })
+    })
+
+    if (isDev) {
+      console.log("[PRINTER] ✅ Receipt printed successfully")
+    }
+
+    return { success: true }
+  } catch (error) {
+    if (isDev) {
+      console.error("[PRINTER] ❌ Print failed:", error.message)
+    }
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle("printer:print-test", async () => {
+  if (!printerPort || !printerPort.isOpen) {
+    return { success: false, error: "프린터가 연결되지 않았습니다" }
+  }
+
+  try {
+    const commands = []
+
+    // Initialize
+    commands.push(0x1b, 0x40) // ESC @ - Initialize
+    commands.push(0x1b, 0x74, 0x00) // ESC t 0 - Set codepage
+
+    // Print test header
+    commands.push(0x1b, 0x21, 0x30) // ESC ! 48 - Double height + bold
+    commands.push(...Buffer.from("PRINTER TEST", "utf-8"))
+    commands.push(0x0d, 0x0a) // CR LF
+    commands.push(0x0d, 0x0a) // CR LF
+
+    // Print normal text
+    commands.push(0x1b, 0x21, 0x00) // ESC ! 0 - Normal
+    commands.push(...Buffer.from("This is a test print.", "utf-8"))
+    commands.push(0x0d, 0x0a) // CR LF
+    commands.push(...Buffer.from("If you can read this,", "utf-8"))
+    commands.push(0x0d, 0x0a) // CR LF
+    commands.push(...Buffer.from("the printer is working!", "utf-8"))
+    commands.push(0x0d, 0x0a) // CR LF
+    commands.push(0x0d, 0x0a) // CR LF
+
+    // Print timestamp
+    const now = new Date().toISOString()
+    commands.push(...Buffer.from(`Time: ${now}`, "utf-8"))
+    commands.push(0x0d, 0x0a) // CR LF
+    commands.push(0x0d, 0x0a) // CR LF
+
+    // Feed and cut
+    commands.push(0x0d, 0x0a) // CR LF
+    commands.push(0x1d, 0x56, 0x01) // GS V 1 - Cut
+
+    const buffer = Buffer.from(commands)
+
+    if (isDev) {
+      console.log("[PRINTER] 📄 Printing test page...")
+    }
+
+    await new Promise((resolve, reject) => {
+      printerPort.write(buffer, (err) => {
+        if (err) reject(err)
+        else {
+          printerPort.drain((drainErr) => {
+            if (drainErr) reject(drainErr)
+            else resolve()
+          })
+        }
+      })
+    })
+
+    if (isDev) {
+      console.log("[PRINTER] ✅ Test page printed successfully")
+    }
+
+    return { success: true }
+  } catch (error) {
+    if (isDev) {
+      console.error("[PRINTER] ❌ Test print failed:", error.message)
     }
     return { success: false, error: error.message }
   }

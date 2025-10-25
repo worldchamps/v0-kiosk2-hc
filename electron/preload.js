@@ -36,7 +36,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
 
-  // 프린터 관련 API
+  // 프린터 관련 API (새로운 간소화된 구조)
+  printer: {
+    listPorts: () => ipcRenderer.invoke("printer:list-ports"),
+    connect: (portPath) => ipcRenderer.invoke("printer:connect", portPath),
+    disconnect: () => ipcRenderer.invoke("printer:disconnect"),
+    isConnected: () => ipcRenderer.invoke("printer:is-connected"),
+    printReceipt: (receiptData) => ipcRenderer.invoke("printer:print-receipt", receiptData),
+    printTest: () => ipcRenderer.invoke("printer:print-test"),
+  },
+
+  // 기존 프린터 API (하위 호환성 유지)
   sendToPrinter: (data) => ipcRenderer.invoke("send-to-printer", data),
   connectPrinter: () => ipcRenderer.invoke("connect-printer"),
   disconnectPrinter: () => ipcRenderer.invoke("disconnect-printer"),
