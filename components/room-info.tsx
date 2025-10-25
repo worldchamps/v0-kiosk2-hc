@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Loader2, Printer, Building, Search } from "lucide-react"
-import { connectPrinter, printRoomInfoReceipt } from "@/lib/printer-utils"
+import { connectPrinter, printRoomInfoReceipt, disconnectPrinter } from "@/lib/printer-utils"
 
 interface Room {
   building: string
@@ -130,6 +130,7 @@ export default function RoomInfo({ reservations = [] }: RoomInfoProps) {
       setError("영수증 인쇄 중 오류가 발생했습니다: " + (err instanceof Error ? err.message : String(err)))
       setPrintSuccess(false)
     } finally {
+      await disconnectPrinter()
       setIsPrinting(false)
     }
   }

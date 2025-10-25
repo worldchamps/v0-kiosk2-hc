@@ -1,55 +1,44 @@
 "use client"
 
-import { useState, useEffect, Suspense } from "react"
+import { useState, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import ModeSelector from "@/components/mode-selector"
 import KioskLayout from "@/components/kiosk-layout"
 import WebLayout from "@/components/web-layout"
 import { saveKioskLocation } from "@/lib/location-utils"
 
-function HomeContent() {
-  const [appMode, setAppMode] = useState<"kiosk" | "web" | null>("kiosk")
+export default function Home() {
+  const [appMode, setAppMode] = useState<"kiosk" | "web" | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const router = useRouter()
   const searchParams = useSearchParams()
 
+  // URL 파라미터 확인
   useEffect(() => {
     const mode = searchParams.get("mode")
     const location = searchParams.get("location")?.toUpperCase()
-    const isPopup = searchParams.get("popup") === "true"
 
+    // URL 파라미터로 모드와 위치가 지정된 경우
     if (mode === "kiosk" && location) {
+      // 유효한 위치인지 확인
       if (["A", "B", "D", "CAMP"].includes(location)) {
+        // 키오스크 위치 저장 후 해당 위치의 키오스크 페이지로 이동
         saveKioskLocation(location as any)
         router.push(`/kiosk/${location}`)
         return
       }
     } else if (mode === "web") {
-      setAppMode("web")
-      if (typeof window !== "undefined") {
-        localStorage.setItem("appMode", "web")
-      }
-      setIsLoading(false)
-      return
-    } else if (mode === "kiosk" && isPopup) {
-      setAppMode("kiosk")
-      if (typeof window !== "undefined") {
-        localStorage.setItem("appMode", "kiosk")
-      }
-      setIsLoading(false)
+      // 웹모드로 이동
+      router.push("/web")
       return
     }
 
+    // 이전에 선택한 모드 확인
     if (typeof window !== "undefined") {
       const savedMode = localStorage.getItem("appMode") as "kiosk" | "web" | null
       if (savedMode) {
         setAppMode(savedMode)
-      } else {
-        // Default to kiosk mode
-        setAppMode("kiosk")
-        localStorage.setItem("appMode", "kiosk")
       }
-      localStorage.removeItem("popupMode")
       setIsLoading(false)
     }
   }, [router, searchParams])
@@ -62,9 +51,9 @@ function HomeContent() {
   const handleChangeMode = () => {
     setAppMode(null)
     localStorage.removeItem("appMode")
-    localStorage.removeItem("popupMode")
   }
 
+  // 키오스크 모드일 때 body에 kiosk-mode 클래스 추가
   useEffect(() => {
     if (appMode === "kiosk") {
       document.body.classList.add("kiosk-mode")
@@ -93,13 +82,5 @@ function HomeContent() {
         <WebLayout onChangeMode={handleChangeMode} />
       )}
     </main>
-  )
-}
-
-export default function Home() {
-  return (
-    <Suspense fallback={<div className="flex items-center justify-center min-h-screen">로딩 중...</div>}>
-      <HomeContent />
-    </Suspense>
   )
 }

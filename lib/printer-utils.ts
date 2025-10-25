@@ -1,22 +1,15 @@
 /**
- * 열전사 프린터 연결 및 제어를 위한 유틸리티 함수 (Electron API 사용)
+ * 열전사 프린터 연결 및 제어를 위한 유틸리티 함수
  * 지원 모델: BK3-3, SAM4S ELLIX/GIANT
- *
- * @remarks
- * 이 코드는 Electron의 preload script를 통해 노출된 electronAPI 객체를 사용합니다.
  */
 
-// --- Web Serial API 관련 타입 정의 제거 ---
-
-// 프린터 연결 상태 (Electron API가 관리)
-let electronPrinterConnected = false
-let electronPrinterPort: string | null = null
-let electronPrinterModel: "BK3-3" | "SAM4S" | "UNKNOWN" = "UNKNOWN"
-let electronPrinterVendorId: string | null = null
-let electronPrinterProductId: string | null = null
-
-// 프린터 모델 및 모드 상태는 유지
+// 프린터 연결 상태
+let printerPort: SerialPort | null = null
+let printerWriter: WritableStreamDefaultWriter | null = null
+let lastConnectedPortInfo: any = null // 마지막으로 연결된 포트 정보 저장
 let detectedPrinterModel: "BK3-3" | "SAM4S" | "UNKNOWN" = "UNKNOWN"
+
+// Print mode setting
 let simplePrintMode = false
 
 // Debug logging
@@ -33,7 +26,7 @@ function logDebug(message: string): void {
 }
 
 /**
- * 명령어 로그 함수 (Electron API 전송 전 로깅)
+ * 명령어 로그 함수
  */
 function logCommand(command: string, bytes: Uint8Array | number[]): void {
   if (ENABLE_DEBUG_LOGGING) {
@@ -64,101 +57,54 @@ export function clearCommandLog(): void {
   commandLog.length = 0
 }
 
-// --- Electron API 객체 타입 정의 (예시) ---
-// 실제 preload script에서 노출하는 타입과 일치해야 합니다.
-declare global {
-  interface Window {
-    electronAPI?: {
-      sendToPrinter: (commands: number[]) => Promise<{ success: boolean; error?: string }>
-      connectPrinter: () => Promise<{ success: boolean; port?: string; error?: string }>
-      disconnectPrinter: () => Promise<{ success: boolean; error?: string }>
-      getPrinterStatus: () => Promise<{
-        connected: boolean
-        port?: string
-        model?: string
-        vendorId?: string
-        productId?: string
-        error?: string
-      }>
-      onPrinterStatus: (
-        callback: (status: {
-          connected: boolean
-          port?: string
-          model?: string
-          vendorId?: string
-          productId?: string
-          error?: string
-        }) => void,
-      ) => void
-      onPrinterData: (callback: (response: { data: number[]; timestamp: string }) => void) => void
-      queryPrinterStatus: () => Promise<{ success: boolean; error?: string }>
-      // 필요한 다른 함수들...
-    }
-  }
-}
-
 /**
- * 브라우저 환경 확인
+ * 프린터 모델 감지 함수
  */
-function isBrowser(): boolean {
-  return typeof window !== "undefined" && typeof document !== "undefined"
-}
-
-/**
- * Electron API 존재 여부 확인
- */
-function hasElectronAPI(): boolean {
-  return isBrowser() && typeof window.electronAPI !== "undefined"
-}
-
-/**
- * Electron 메인 프로세스로 명령어 배열 전송
- */
-async function sendCommandsToElectron(commands: number[]): Promise<boolean> {
-  if (!hasElectronAPI() || !window.electronAPI?.sendToPrinter) {
-    logDebug("Electron API (sendToPrinter) is not available.")
-    return false
-  }
+async function detectPrinterModel(): Promise<void> {
   try {
-    if (!electronPrinterConnected) {
-      logDebug("Printer not connected, attempting to connect...")
-      const connected = await connectPrinter()
-      if (!connected) {
-        logDebug("Failed to connect printer before sending commands")
-        return false
+    // 프린터 정보 요청 명령 (GS I)
+    const infoCommand = new Uint8Array([0x1d, 0x49, 0x01])
+
+    if (!printerWriter) {
+      logDebug("프린터가 연결되어 있지 않아 모델을 감지할 수 없습니다.")
+      return
+    }
+
+    // 명령 로깅
+    logCommand("GS I (Printer Info)", infoCommand)
+
+    // 명령 전송
+    await printerWriter.write(infoCommand)
+
+    // 실제로는 응답을 읽어야 하지만, Web Serial API에서는 복잡함
+    // 대신 연결 정보를 기반으로 추측
+    if (lastConnectedPortInfo) {
+      const vendorId = lastConnectedPortInfo.usbVendorId
+      const productId = lastConnectedPortInfo.usbProductId
+
+      // 일반적인 SAM4S 프린터의 USB VID/PID (예시)
+      if (vendorId === 0x1504 || vendorId === 0x0483) {
+        detectedPrinterModel = "SAM4S"
+        logDebug("SAM4S 프린터로 감지되었습니다.")
+      }
+      // 일반적인 BK3-3 프린터의 USB VID/PID (예시)
+      else if (vendorId === 0x0416 || vendorId === 0x0483) {
+        detectedPrinterModel = "BK3-3"
+        logDebug("BK3-3 프린터로 감지되었습니다.")
+      } else {
+        detectedPrinterModel = "UNKNOWN"
+        logDebug(`알 수 없는 프린터 모델: VID=${vendorId.toString(16)}, PID=${productId.toString(16)}`)
       }
     }
 
-    const result = await window.electronAPI.sendToPrinter(commands)
-    if (!result.success) {
-      logDebug("Error sending commands via Electron: " + result.error)
+    // 프린터 모델 정보 저장
+    try {
+      localStorage.setItem("detectedPrinterModel", detectedPrinterModel)
+    } catch (e) {
+      logDebug("프린터 모델 정보를 저장하지 못했습니다: " + e)
     }
-    return result.success
   } catch (error) {
-    logDebug("Exception sending commands via Electron: " + (error as Error).message)
-    return false
-  }
-}
-
-/**
- * 프린터 모델 감지 함수 (Electron 환경에서는 직접 감지 어려움)
- * 저장된 정보나 기본값 사용
- */
-async function detectPrinterModel(): Promise<void> {
-  // Electron 환경에서는 연결된 포트의 VID/PID를 직접 얻기 어렵습니다.
-  // Main 프로세스에서 정보를 얻어 Renderer로 전달하거나,
-  // 사용자가 설정하거나, 저장된 값을 사용해야 합니다.
-  loadSavedPrinterModel() // 우선 저장된 값 로드 시도
-  if (detectedPrinterModel === "UNKNOWN") {
-    logDebug("Electron 환경: 프린터 모델을 자동으로 감지할 수 없습니다. 저장된 설정이나 기본값을 사용합니다.")
-    // 필요하다면 기본 모델 설정 (예: BK3-3)
-    // detectedPrinterModel = "BK3-3";
-  }
-  // 모델 정보를 localStorage에 저장하는 로직은 그대로 둡니다.
-  try {
-    localStorage.setItem("detectedPrinterModel", detectedPrinterModel)
-  } catch (e) {
-    logDebug("프린터 모델 정보를 저장하지 못했습니다: " + (e as Error).message)
+    logDebug("프린터 모델 감지 중 오류 발생: " + error)
   }
 }
 
@@ -166,10 +112,6 @@ async function detectPrinterModel(): Promise<void> {
  * 저장된 프린터 모델 정보 로드
  */
 function loadSavedPrinterModel(): void {
-  if (!isBrowser()) {
-    return
-  }
-
   try {
     const savedModel = localStorage.getItem("detectedPrinterModel") as "BK3-3" | "SAM4S" | "UNKNOWN" | null
     if (savedModel) {
@@ -177,7 +119,7 @@ function loadSavedPrinterModel(): void {
       logDebug(`저장된 프린터 모델 정보를 로드했습니다: ${savedModel}`)
     }
   } catch (e) {
-    logDebug("저장된 프린터 모델 정보를 로드하지 못했습니다: " + (e as Error).message)
+    logDebug("저장된 프린터 모델 정보를 로드하지 못했습니다: " + e)
   }
 }
 
@@ -195,15 +137,11 @@ export function setSimplePrintMode(simple: boolean): void {
   simplePrintMode = simple
   logDebug(`Simple Mode ${simple ? "활성화" : "비활성화"}됨`)
 
-  if (!isBrowser()) {
-    return
-  }
-
   // Save preference to localStorage
   try {
     localStorage.setItem("simplePrintMode", simple ? "true" : "false")
   } catch (e) {
-    logDebug("Simple Mode 설정을 저장하지 못했습니다: " + (e as Error).message)
+    logDebug("Simple Mode 설정을 저장하지 못했습니다: " + e)
   }
 }
 
@@ -211,66 +149,48 @@ export function setSimplePrintMode(simple: boolean): void {
  * Simple Mode 상태 확인 함수 - 환경 변수, 프린터 모델, 저장된 설정을 모두 고려
  */
 export function getSimplePrintMode(): boolean {
-  // 1. 환경 변수 확인 (Electron 환경에서는 main 프로세스에서 처리 후 전달 가능)
-  // 여기서는 process.env 접근 로직은 제거하거나 주석 처리합니다.
-  /*
-  try {
-    if (typeof process !== "undefined" && process.env && process.env.PRINTER_SIMPLE_MODE === "true") {
-      logDebug("환경 변수에서 Simple Mode 활성화됨");
-      return true;
-    }
-  } catch (e) {
-    logDebug("process.env 접근 중 오류: " + (e as Error).message);
+  // 1. 환경 변수 확인 (최우선)
+  if (typeof process !== "undefined" && process.env && process.env.PRINTER_SIMPLE_MODE === "true") {
+    logDebug("환경 변수에서 Simple Mode 활성화됨")
+    return true
   }
-  */
 
   // 2. 프린터 모델에 따른 기본값 설정
   if (detectedPrinterModel === "SAM4S") {
+    // SAM4S는 기본적으로 Simple Mode 사용
     const defaultMode = true
     logDebug(`SAM4S 프린터 감지: 기본 Simple Mode=${defaultMode}`)
 
-    if (isBrowser()) {
-      try {
-        const savedMode = localStorage.getItem("simplePrintMode")
-        if (savedMode !== null) return savedMode === "true"
-      } catch (e) {
-        /* ignore */
+    // 저장된 설정이 있으면 그것을 우선
+    try {
+      const savedMode = localStorage.getItem("simplePrintMode")
+      if (savedMode !== null) {
+        const mode = savedMode === "true"
+        logDebug(`SAM4S 프린터: 저장된 설정 사용 Simple Mode=${mode}`)
+        return mode
       }
+    } catch (e) {
+      logDebug("저장된 Simple Mode 설정을 로드하지 못했습니다: " + e)
     }
+
     return defaultMode
   }
 
   // 3. 저장된 설정 확인
-  if (isBrowser()) {
-    try {
-      const savedMode = localStorage.getItem("simplePrintMode")
-      if (savedMode !== null) return savedMode === "true"
-    } catch (e) {
-      /* ignore */
+  try {
+    const savedMode = localStorage.getItem("simplePrintMode")
+    if (savedMode !== null) {
+      const mode = savedMode === "true"
+      logDebug(`저장된 설정 사용 Simple Mode=${mode}`)
+      return mode
     }
+  } catch (e) {
+    logDebug("저장된 Simple Mode 설정을 로드하지 못했습니다: " + e)
   }
 
   // 4. 기본값 (BK3-3는 기본적으로 Rich Mode 사용)
   logDebug(`기본값 사용 Simple Mode=${simplePrintMode}`)
   return simplePrintMode
-}
-
-/**
- * 프린터 모델 설정 함수 (수동 설정용)
- */
-export function setPrinterModel(model: "BK3-3" | "SAM4S"): void {
-  detectedPrinterModel = model
-  logDebug(`프린터 모델을 수동으로 설정: ${model}`)
-
-  if (!isBrowser()) {
-    return
-  }
-
-  try {
-    localStorage.setItem("detectedPrinterModel", model)
-  } catch (e) {
-    logDebug("프린터 모델 정보를 저장하지 못했습니다: " + (e as Error).message)
-  }
 }
 
 // ESC/POS 명령어 상수
@@ -281,913 +201,432 @@ const LF = 0x0a
 const CR = 0x0d
 
 /**
- * 프린터 연결 함수 (Electron API 사용)
+ * 프린터 연결 함수 - 사용자가 포트를 선택하도록 수정
  */
 export async function connectPrinter(): Promise<boolean> {
-  if (!hasElectronAPI() || !window.electronAPI?.connectPrinter) {
-    logDebug("Electron API (connectPrinter) is not available.")
-    return false
-  }
   try {
-    logDebug("Requesting printer connection via Electron...")
-    const result = await window.electronAPI.connectPrinter()
-    electronPrinterConnected = result.success
-    electronPrinterPort = result.port || null
-    if (result.success) {
-      logDebug(`Printer connected via Electron on port: ${result.port}`)
-      loadSavedPrinterModel() // 연결 후 모델 로드
-      // await initializePrinter()
-    } else {
-      logDebug("Failed to connect printer via Electron: " + result.error)
-    }
-    return result.success
-  } catch (error) {
-    logDebug("Exception connecting printer via Electron: " + (error as Error).message)
-    electronPrinterConnected = false
-    return false
-  }
-}
-
-/**
- * 자동 프린터 연결 함수 (Electron API 사용)
- */
-export async function autoConnectPrinter(): Promise<boolean> {
-  // Electron에서는 Main 프로세스가 자동 연결 로직을 처리하는 것이 일반적입니다.
-  // 여기서는 connectPrinter와 동일하게 동작하도록 합니다.
-  logDebug("Attempting auto-connect via Electron (using connectPrinter)...")
-  return connectPrinter()
-}
-
-/**
- * 프린터 연결 해제 함수 (Electron API 사용)
- */
-export async function disconnectPrinter(): Promise<void> {
-  if (!hasElectronAPI() || !window.electronAPI?.disconnectPrinter) {
-    logDebug("Electron API (disconnectPrinter) is not available.")
-    return
-  }
-  try {
-    logDebug("Requesting printer disconnection via Electron...")
-    const result = await window.electronAPI.disconnectPrinter()
-    if (result.success) {
-      logDebug("Printer disconnected via Electron.")
-      electronPrinterConnected = false
-      electronPrinterPort = null
-    } else {
-      logDebug("Failed to disconnect printer via Electron: " + result.error)
-    }
-  } catch (error) {
-    logDebug("Exception disconnecting printer via Electron: " + (error as Error).message)
-  }
-}
-
-/**
- * 텍스트 인쇄 함수 (명령어 생성 후 Electron API로 전송)
- */
-export async function printText(text: string): Promise<boolean> {
-  if (!electronPrinterConnected) {
-    logDebug("프린터가 연결되어 있지 않습니다.")
-    return false
-  }
-  try {
-    const encoder = new TextEncoder()
-    const encoded = encoder.encode(text)
-    const commands = Array.from(encoded)
-
-    logCommand("TEXT", commands) // 로깅은 여기서
-    return sendCommandsToElectron(commands) // 전송은 Electron API로
-  } catch (error) {
-    logDebug("텍스트 인쇄 중 오류 발생: " + (error as Error).message)
-    return false
-  }
-}
-
-/**
- * 초기화 명령 전송 (명령어 생성 후 Electron API로 전송)
- */
-export async function initializePrinter(): Promise<boolean> {
-  if (!electronPrinterConnected) {
-    logDebug("프린터가 연결되어 있지 않습니다.")
-    return false
-  }
-  try {
-    const commands: number[] = []
-
-    // ESC @ - 프린터 초기화
-    commands.push(ESC, 0x40)
-    logCommand("ESC @ (Initialize)", [ESC, 0x40])
-
-    // 영어 코드페이지 설정
-    commands.push(ESC, 0x74, 0)
-    logCommand("ESC t (Codepage)", [ESC, 0x74, 0])
-
-    // 모델별 추가 초기화
-    if (detectedPrinterModel === "BK3-3") {
-      commands.push(ESC, 0x33, 30)
-      logCommand("ESC 3 (Line Spacing)", [ESC, 0x33, 30])
-    } else if (detectedPrinterModel === "SAM4S") {
-      commands.push(ESC, 0x20, 0)
-      logCommand("ESC SP (Char Spacing)", [ESC, 0x20, 0])
+    // Web Serial API support check
+    if (!("serial" in navigator)) {
+      logDebug("Web Serial API is not supported in this browser.")
+      return false
     }
 
-    return sendCommandsToElectron(commands)
-  } catch (error) {
-    logDebug("프린터 초기화 중 오류 발생: " + (error as Error).message)
-    return false
-  }
-}
-
-/**
- * 객실 타입을 영어로 변환하는 함수
- */
-function translateRoomType(roomType: string): string {
-  // 내용은 이전과 동일하게 유지
-  if (!roomType) return "Standard Room"
-  const lowerType = roomType.toLowerCase()
-  if (lowerType.includes("스탠다드") && lowerType.includes("더블")) return "Standard Double"
-  if (lowerType.includes("스탠다드") && lowerType.includes("트윈")) return "Standard Twin"
-  if (
-    lowerType.includes("디럭스") &&
-    lowerType.includes("더블") &&
-    (lowerType.includes("오션") || lowerType.includes("오션뷰"))
-  )
-    return "Deluxe Double Ocean"
-  if (lowerType.includes("디럭스") && lowerType.includes("더블")) return "Deluxe Double"
-  if (
-    lowerType.includes("스위트") &&
-    lowerType.includes("트윈") &&
-    (lowerType.includes("오션") || lowerType.includes("오션뷰"))
-  )
-    return "Suite Twin Ocean"
-  if (lowerType.includes("스위트") && lowerType.includes("트윈")) return "Suite Twin"
-  if (lowerType.includes("스위트")) return "Suite Room"
-  if (lowerType.includes("디럭스")) return "Deluxe Room"
-  if (lowerType.includes("스탠다드")) return "Standard Room"
-  return "Standard Room"
-}
-
-/**
- * 날짜 형식 변환 함수 (YYYY-MM-DD -> YYYY.MM.DD)
- */
-function formatDateForReceipt(dateString: string): string {
-  // 내용은 이전과 동일하게 유지
-  if (!dateString) return "N/A"
-  if (dateString.includes(".")) return dateString
-  return dateString.replace(/-/g, ".")
-}
-
-/**
- * 명령어 배열 생성 함수 (공통 로직)
- */
-function buildCommands(commandsArray: (Uint8Array | number[])[]): number[] {
-  const combined: number[] = []
-  commandsArray.forEach((cmd) => {
-    if (cmd instanceof Uint8Array) {
-      combined.push(...Array.from(cmd))
-    } else {
-      combined.push(...cmd)
-    }
-  })
-  return combined
-}
-
-/**
- * 영수증 인쇄 함수 - 모드에 따라 다른 형식 사용 (Electron API 사용)
- */
-export async function printReceipt(receiptData: any): Promise<boolean> {
-  if (!electronPrinterConnected) {
-    logDebug("프린터가 연결되어 있지 않습니다.")
-    return false
-  }
-  try {
-    const useSimpleMode = getSimplePrintMode()
-    logDebug(`영수증 인쇄 모드: ${useSimpleMode ? "Simple Mode" : "Rich Mode"}, 프린터 모델: ${detectedPrinterModel}`)
-
-    let commands: number[] = []
-
-    if (useSimpleMode) {
-      commands = buildSimpleReceiptCommands(receiptData)
-    } else {
-      const forceSimple = false
-      /*
-       // Electron 환경에서는 process.env 접근 방식을 변경해야 할 수 있습니다.
-       try {
-         if (detectedPrinterModel === "BK3-3" && process.env.FORCE_SIMPLE_FOR_BK3 === "true") {
-           forceSimple = true;
-         }
-       } catch (e) { }
-       */
-      if (forceSimple) {
-        logDebug("BK3-3 프린터에 대해 강제로 Simple Mode 사용")
-        commands = buildSimpleReceiptCommands(receiptData)
-      } else {
-        commands = buildFormattedReceiptCommands(receiptData)
-      }
-    }
-    return sendCommandsToElectron(commands)
-  } catch (error) {
-    logDebug("영수증 인쇄 중 오류 발생: " + (error as Error).message)
-    return false
-  }
-}
-
-/**
- * Rich Mode 영수증 명령어 배열 생성 함수
- */
-function buildFormattedReceiptCommands(receiptData: any): number[] {
-  logDebug("Rich Mode 영수증 명령어 생성 시작")
-  const encoder = new TextEncoder()
-  const commands: (Uint8Array | number[])[] = []
-
-  // 초기화
-  commands.push([ESC, 0x40]) // ESC @
-  commands.push([ESC, 0x74, 0]) // ESC t 0 (Codepage PC437)
-  if (detectedPrinterModel === "BK3-3")
-    commands.push([ESC, 0x33, 30]) // ESC 3 30 (Line spacing)
-  else if (detectedPrinterModel === "SAM4S") commands.push([ESC, 0x20, 0]) // ESC SP 0 (Char spacing)
-
-  // 중간 크기
-  commands.push([ESC, 0x21, 0x10])
-  commands.push(encoder.encode("The Beach Stay\n"))
-
-  // 구분선
-  commands.push(encoder.encode("-------------------------------------\n"))
-
-  // 큰 크기 (빌딩)
-  commands.push([ESC, 0x21, 0x30])
-  commands.push(encoder.encode(`${receiptData.roomNumber?.charAt(0) || "A"} BUILDING\n\n`))
-
-  // 더 큰 크기 (층/호수)
-  commands.push([ESC, 0x21, 0x31])
-  commands.push(
-    encoder.encode(`${receiptData.floor ? `${receiptData.floor}F` : "2F"} ${receiptData.roomNumber || "0000"}\n\n`),
-  )
-
-  // 큰 크기 (비밀번호)
-  commands.push([ESC, 0x21, 0x30])
-  commands.push(encoder.encode(`Door PW: ${receiptData.password || "0000"}\n\n`))
-
-  // 기본 크기 (구분선)
-  commands.push([ESC, 0x21, 0x00])
-  commands.push(encoder.encode("------------------------------------\n\n"))
-
-  // 작은 크기 (체크인/아웃)
-  commands.push([ESC, 0x21, 0x01])
-  commands.push(encoder.encode(`Check-in: ${formatDateForReceipt(receiptData.checkInDate)}\n`))
-  commands.push(encoder.encode(`Check-out: ${formatDateForReceipt(receiptData.checkOutDate)}\n\n\n`))
-
-  // 절단 (BK3-3 기준)
-  commands.push([ESC, 0x69]) // ESC i
-
-  // 전체 명령어 로깅
-  const flatCommands = buildCommands(commands)
-  logCommand("Formatted Receipt Commands", flatCommands)
-
-  return flatCommands
-}
-
-/**
- * Simple Mode 영수증 명령어 배열 생성 함수
- */
-function buildSimpleReceiptCommands(receiptData: any): number[] {
-  logDebug("Simple Mode 영수증 명령어 생성 시작")
-  const encoder = new TextEncoder()
-  const commands: (Uint8Array | number[])[] = []
-
-  // 초기화
-  commands.push([ESC, 0x40])
-
-  // 텍스트 (CRLF 사용)
-  commands.push(encoder.encode("THE BEACH STAY\r\n\r\n"))
-  commands.push(encoder.encode("-------------------------------------\r\n\r\n"))
-  const buildingChar = receiptData.roomNumber?.charAt(0) || "A"
-  commands.push(encoder.encode(`${buildingChar} BUILDING\r\n\r\n`))
-  const floor = receiptData.floor ? `${receiptData.floor}F` : "2F"
-  const roomNumber = receiptData.roomNumber || "0000"
-  commands.push(encoder.encode(`ROOM: ${floor} ${roomNumber}\r\n\r\n`))
-  commands.push(encoder.encode(`DOOR PASSWORD: ${receiptData.password || "0000"}\r\n\r\n`))
-  commands.push(encoder.encode("-------------------------------------\r\n\r\n"))
-  commands.push(encoder.encode(`Check-in: ${formatDateForReceipt(receiptData.checkInDate)}\r\n`))
-  commands.push(encoder.encode(`Check-out: ${formatDateForReceipt(receiptData.checkOutDate)}\r\n\r\n\r\n`))
-
-  // 절단 (SAM4S 호환)
-  commands.push([GS, 0x56, 0x01]) // GS V 1
-
-  // 전체 명령어 로깅
-  const flatCommands = buildCommands(commands)
-  logCommand("Simple Receipt Commands", flatCommands)
-
-  return flatCommands
-}
-
-/**
- * 객실 정보 영수증 인쇄 함수 (Electron API 사용)
- */
-export async function printRoomInfoReceipt(roomData: any): Promise<boolean> {
-  if (!electronPrinterConnected) {
-    logDebug("프린터가 연결되어 있지 않습니다.")
-    return false
-  }
-  try {
-    const useSimpleMode = getSimplePrintMode()
-    logDebug(
-      `객실 정보 영수증 인쇄 모드: ${useSimpleMode ? "Simple Mode" : "Rich Mode"}, 프린터 모델: ${detectedPrinterModel}`,
-    )
-
-    let commands: number[] = []
-
-    if (useSimpleMode) {
-      commands = buildSimpleRoomInfoReceiptCommands(roomData)
-    } else {
-      const forceSimple = false
-      /*
-       try {
-         if (detectedPrinterModel === "BK3-3" && process.env.FORCE_SIMPLE_FOR_BK3 === "true") {
-           forceSimple = true;
-         }
-       } catch (e) { }
-       */
-      if (forceSimple) {
-        logDebug("BK3-3 프린터에 대해 강제로 Simple Mode 사용")
-        commands = buildSimpleRoomInfoReceiptCommands(roomData)
-      } else {
-        commands = buildFormattedRoomInfoReceiptCommands(roomData)
-      }
-    }
-    return sendCommandsToElectron(commands)
-  } catch (error) {
-    logDebug("객실 정보 영수증 인쇄 중 오류 발생: " + (error as Error).message)
-    return false
-  }
-}
-
-/**
- * Rich Mode 객실 정보 영수증 명령어 배열 생성 함수
- */
-function buildFormattedRoomInfoReceiptCommands(roomData: any): number[] {
-  logDebug("Rich Mode 객실 정보 영수증 명령어 생성 시작")
-  const encoder = new TextEncoder()
-  const commands: (Uint8Array | number[])[] = []
-
-  // 초기화
-  commands.push([ESC, 0x40])
-  commands.push([ESC, 0x74, 0])
-  if (detectedPrinterModel === "BK3-3") commands.push([ESC, 0x33, 30])
-  else if (detectedPrinterModel === "SAM4S") commands.push([ESC, 0x20, 0])
-
-  // 중간 크기
-  commands.push([ESC, 0x21, 0x10])
-  commands.push(encoder.encode("The Beach Stay\n"))
-
-  // 구분선
-  commands.push(encoder.encode("-------------------------------------\n"))
-
-  // 큰 크기 (빌딩)
-  commands.push([ESC, 0x21, 0x30])
-  const buildingChar = roomData.roomNumber?.charAt(0) || "A"
-  commands.push(encoder.encode(`${buildingChar} BUILDING\n\n`))
-
-  // 큰 크기 (호수/층)
-  commands.push([ESC, 0x21, 0x30]) // 원본 코드에서 0x30 사용
-  const floor = roomData.floor ? `${roomData.floor}F` : "2F"
-  const roomNumber = roomData.roomNumber || "000"
-  commands.push(encoder.encode(`${roomNumber} ${floor}\n\n`)) // 순서 변경됨
-
-  // 큰 크기 (비밀번호)
-  commands.push([ESC, 0x21, 0x30])
-  commands.push(encoder.encode(`Door PW: ${roomData.password || "0000"}\n\n`))
-
-  // 중간 크기 (구분선)
-  commands.push([ESC, 0x21, 0x10]) // 원본 코드에서 0x10 사용
-  commands.push(encoder.encode("------------------------------------\n\n\n"))
-
-  // 절단 (BK3-3 기준)
-  commands.push([ESC, 0x69]) // ESC i
-
-  const flatCommands = buildCommands(commands)
-  logCommand("Formatted Room Info Commands", flatCommands)
-  return flatCommands
-}
-
-/**
- * Simple Mode 객실 정보 영수증 명령어 배열 생성 함수
- */
-function buildSimpleRoomInfoReceiptCommands(roomData: any): number[] {
-  logDebug("Simple Mode 객실 정보 영수증 명령어 생성 시작")
-  const encoder = new TextEncoder()
-  const commands: (Uint8Array | number[])[] = []
-
-  // 초기화
-  commands.push([ESC, 0x40])
-
-  // 텍스트 (CRLF)
-  commands.push(encoder.encode("THE BEACH STAY\r\n\r\n"))
-  commands.push(encoder.encode("-------------------------------------\r\n\r\n"))
-  const buildingChar = roomData.roomNumber?.charAt(0) || "A"
-  commands.push(encoder.encode(`${buildingChar} BUILDING\r\n\r\n`))
-  const floor = roomData.floor ? `${roomData.floor}F` : "2F"
-  const roomNumber = roomData.roomNumber || "000"
-  commands.push(encoder.encode(`ROOM: ${roomNumber} ${floor}\r\n\r\n`)) // 순서 변경됨
-  commands.push(encoder.encode(`DOOR PASSWORD: ${roomData.password || "0000"}\r\n\r\n\r\n`))
-
-  // 절단 (SAM4S 호환)
-  commands.push([GS, 0x56, 0x01]) // GS V 1
-
-  const flatCommands = buildCommands(commands)
-  logCommand("Simple Room Info Commands", flatCommands)
-  return flatCommands
-}
-
-/**
- * 프린터 상태 확인 및 응답 파싱
- */
-export async function checkPrinterReady(): Promise<{
-  ready: boolean
-  online: boolean
-  paperOut: boolean
-  error: boolean
-  statusByte?: number
-  message: string
-}> {
-  try {
-    // 상태 쿼리 전송
-    const querySent = await queryPrinterStatus()
-    if (!querySent) {
-      return {
-        ready: false,
-        online: false,
-        paperOut: false,
-        error: true,
-        message: "상태 쿼리를 보낼 수 없습니다",
-      }
+    // If already connected, reuse the connection
+    if (printerPort && printerWriter) {
+      logDebug("Printer is already connected.")
+      return true
     }
 
-    // 응답 대기
-    const response = await waitForPrinterResponse(2000)
+    // 저장된 프린터 모델 정보 로드
+    loadSavedPrinterModel()
 
-    if (!response || response.length === 0) {
-      return {
-        ready: false,
-        online: false,
-        paperOut: false,
-        error: true,
-        message: "프린터로부터 응답이 없습니다. 프린터가 꺼져있거나 케이블이 연결되지 않았을 수 있습니다.",
-      }
-    }
-
-    // DLE EOT 응답 파싱 (1바이트 상태)
-    const statusByte = response[0]
-    logDebug(`Printer status byte: 0x${statusByte.toString(16).padStart(2, "0")} (${statusByte})`)
-
-    // 비트 분석
-    const online = (statusByte & 0x08) === 0 // bit 3: 0 = online, 1 = offline
-    const paperOut = (statusByte & 0x20) !== 0 // bit 5: 1 = paper end
-    const error = (statusByte & 0x40) !== 0 // bit 6: 1 = error
-
-    let message = "프린터 상태: "
-    if (!online) {
-      message += "오프라인"
-    } else if (paperOut) {
-      message += "용지 없음"
-    } else if (error) {
-      message += "에러 발생"
-    } else {
-      message += "정상 (인쇄 가능)"
-    }
-
-    logDebug(message)
-
-    return {
-      ready: online && !paperOut && !error,
-      online,
-      paperOut,
-      error,
-      statusByte,
-      message,
-    }
-  } catch (error) {
-    logDebug("Error checking printer status: " + (error as Error).message)
-    return {
-      ready: false,
-      online: false,
-      paperOut: false,
-      error: true,
-      message: "상태 확인 중 오류 발생: " + (error as Error).message,
-    }
-  }
-}
-
-/**
- * 프린터 상태 확인 (UI 컴포넌트용 래퍼 함수)
- */
-export async function checkPrinterStatus(): Promise<{
-  success: boolean
-  online: boolean
-  paperOk: boolean
-  error: boolean
-  message: string
-}> {
-  try {
-    const status = await checkPrinterReady()
-
-    return {
-      success: status.ready,
-      online: status.online,
-      paperOk: !status.paperOut,
-      error: status.error,
-      message: status.message,
-    }
-  } catch (error) {
-    return {
-      success: false,
-      online: false,
-      paperOk: false,
-      error: true,
-      message: "상태 확인 중 오류 발생: " + (error as Error).message,
-    }
-  }
-}
-
-/**
- * 마지막 프린터 응답 가져오기
- */
-export function getLastPrinterResponse(): { data: number[]; timestamp: string } | null {
-  return lastPrinterResponse
-}
-
-/**
- * 프린터 연결 상태 확인
- */
-export function isPrinterConnected(): boolean {
-  // Electron API를 통해 받은 상태를 반환
-  return electronPrinterConnected
-}
-
-/**
- * 프린터 테스트 페이지 인쇄 (Electron API 사용)
- */
-export async function printTestPage(): Promise<boolean> {
-  if (!electronPrinterConnected) {
-    logDebug("프린터가 연결되어 있지 않습니다.")
-    return false
-  }
-  try {
-    const useSimpleMode = getSimplePrintMode()
-    logDebug(
-      `테스트 페이지 인쇄 모드: ${useSimpleMode ? "Simple Mode" : "Rich Mode"}, 프린터 모델: ${detectedPrinterModel}`,
-    )
-
-    // 테스트 데이터
-    const testData = {
-      roomNumber: "D213",
-      floor: "2",
-      password: "2133",
-      checkInDate: "2025.04.05",
-      checkOutDate: "2025.04.06",
-    }
-
-    let commands: number[] = []
-
-    if (useSimpleMode) {
-      commands = buildSimpleTestPageCommands(testData)
-    } else {
-      const forceSimple = false
-      /*
-       try {
-         if (detectedPrinterModel === "BK3-3" && process.env.FORCE_SIMPLE_FOR_BK3 === "true") {
-            forceSimple = true;
-         }
-       } catch (e) { }
-       */
-      if (forceSimple) {
-        logDebug("BK3-3 프린터에 대해 강제로 Simple Mode 사용")
-        commands = buildSimpleTestPageCommands(testData)
-      } else {
-        commands = buildFormattedTestPageCommands(testData)
-      }
-    }
-    return sendCommandsToElectron(commands)
-  } catch (error) {
-    logDebug("테스트 페이지 인쇄 중 오류 발생: " + (error as Error).message)
-    return false
-  }
-}
-
-/**
- * Rich Mode 테스트 페이지 명령어 배열 생성 함수
- */
-function buildFormattedTestPageCommands(testData: any): number[] {
-  logDebug("Rich Mode 테스트 페이지 명령어 생성 시작")
-  const encoder = new TextEncoder()
-  const commands: (Uint8Array | number[])[] = []
-
-  // 초기화
-  commands.push([ESC, 0x40])
-  commands.push([ESC, 0x74, 0])
-  if (detectedPrinterModel === "BK3-3") commands.push([ESC, 0x33, 30])
-  else if (detectedPrinterModel === "SAM4S") commands.push([ESC, 0x20, 0])
-
-  // 중간 크기
-  commands.push([ESC, 0x21, 0x10])
-  commands.push(encoder.encode("The Beach Stay\n"))
-  commands.push(encoder.encode("--- TEST PAGE ---\n")) // 테스트 페이지 명시
-
-  // 구분선
-  commands.push(encoder.encode("-------------------------------------\n"))
-
-  // 큰 크기 (빌딩)
-  commands.push([ESC, 0x21, 0x30])
-  commands.push(encoder.encode(`${testData.roomNumber.charAt(0)} BUILDING\n\n`))
-
-  // 더 큰 크기 (층/호수)
-  commands.push([ESC, 0x21, 0x31])
-  commands.push(encoder.encode(`${testData.floor}F ${testData.roomNumber}\n\n`))
-
-  // 큰 크기 (비밀번호)
-  commands.push([ESC, 0x21, 0x30])
-  commands.push(encoder.encode(`Door PW: ${testData.password}\n\n`))
-
-  // 기본 크기 (구분선)
-  commands.push([ESC, 0x21, 0x00])
-  commands.push(encoder.encode("------------------------------------\n\n"))
-
-  // 작은 크기 (체크인/아웃)
-  commands.push([ESC, 0x21, 0x01])
-  commands.push(encoder.encode(`Check-in: ${testData.checkInDate}\n`))
-  commands.push(encoder.encode(`Check-out: ${testData.checkOutDate}\n\n\n`))
-
-  // 절단 (BK3-3 기준)
-  commands.push([ESC, 0x69]) // ESC i
-
-  const flatCommands = buildCommands(commands)
-  logCommand("Formatted Test Page Commands", flatCommands)
-  return flatCommands
-}
-
-/**
- * Simple Mode 테스트 페이지 명령어 배열 생성 함수
- */
-function buildSimpleTestPageCommands(testData: any): number[] {
-  logDebug("Simple Mode 테스트 페이지 명령어 생성 시작")
-  const encoder = new TextEncoder()
-  const commands: (Uint8Array | number[])[] = []
-
-  // 초기화
-  commands.push([ESC, 0x40])
-
-  // 텍스트 (CRLF)
-  commands.push(encoder.encode("THE BEACH STAY\r\n\r\n"))
-  commands.push(encoder.encode("-------------------------------------\r\n\r\n"))
-  commands.push(encoder.encode("PRINTER TEST - SIMPLE MODE\r\n\r\n"))
-  commands.push(encoder.encode(`${testData.roomNumber.charAt(0)} BUILDING\r\n\r\n`))
-  commands.push(encoder.encode(`ROOM: ${testData.roomNumber} ${testData.floor}F\r\n\r\n`)) // 순서 변경됨
-  commands.push(encoder.encode(`DOOR PASSWORD: ${testData.password}\r\n\r\n`))
-  commands.push(encoder.encode("-------------------------------------\r\n\r\n"))
-  commands.push(encoder.encode(`Check-in: ${testData.checkInDate}\r\n`))
-  commands.push(encoder.encode(`Check-out: ${testData.checkOutDate}\r\n\r\n\r\n`))
-
-  // 절단 (SAM4S 호환)
-  commands.push([GS, 0x56, 0x01]) // GS V 1
-
-  const flatCommands = buildCommands(commands)
-  logCommand("Simple Test Page Commands", flatCommands)
-  return flatCommands
-}
-
-/**
- * 프린터 상태 정보 가져오기 (Electron API 사용)
- */
-export async function getPrinterStatus(): Promise<{
-  connected: boolean
-  model: string
-  simpleMode: boolean
-  port: string | null
-  vendorId?: string | null
-  productId?: string | null
-  lastCommand?: { command: string; bytes: number[]; timestamp: string }
-}> {
-  let status = {
-    connected: electronPrinterConnected,
-    port: electronPrinterPort,
-    model: undefined as string | undefined,
-    vendorId: undefined as string | undefined,
-    productId: undefined as string | undefined,
-    error: undefined as string | undefined,
-  }
-
-  if (hasElectronAPI() && window.electronAPI?.getPrinterStatus) {
+    // Try to get previously stored port info
+    let storedPortInfo = null
     try {
-      status = await window.electronAPI.getPrinterStatus()
-      electronPrinterConnected = status.connected
-      electronPrinterPort = status.port || null
-
-      if (status.model === "BK3-3") {
-        detectedPrinterModel = "BK3-3"
+      const storedInfo = localStorage.getItem("lastPrinterPortInfo")
+      if (storedInfo) {
+        storedPortInfo = JSON.parse(storedInfo)
+        logDebug("Found stored printer port info: " + JSON.stringify(storedPortInfo))
       }
     } catch (e) {
-      logDebug("Error fetching status from Electron: " + (e as Error).message)
+      logDebug("Failed to retrieve stored port info: " + e)
     }
-  }
 
-  return {
-    connected: status.connected,
-    model: detectedPrinterModel,
-    simpleMode: getSimplePrintMode(),
-    port: status.port || null,
-    vendorId: status.vendorId || electronPrinterVendorId,
-    productId: status.productId || electronPrinterProductId,
-    lastCommand: commandLog.length > 0 ? commandLog[commandLog.length - 1] : undefined,
+    // Try to reconnect to previously used port first
+    if (storedPortInfo) {
+      try {
+        logDebug("Attempting to reconnect to previously used printer...")
+        const ports = await (navigator as any).serial.getPorts()
+
+        for (const port of ports) {
+          const info = port.getInfo ? await port.getInfo() : {}
+
+          // Check if this port matches our stored info
+          if (info.usbVendorId === storedPortInfo.usbVendorId && info.usbProductId === storedPortInfo.usbProductId) {
+            printerPort = port
+            logDebug("Found previously connected printer!")
+            break
+          }
+        }
+      } catch (err) {
+        logDebug("Failed to auto-reconnect to printer: " + err)
+      }
+    }
+
+    // If we couldn't reconnect automatically, ask user to select a port
+    if (!printerPort) {
+      try {
+        logDebug("Requesting user to select a printer port...")
+        printerPort = await (navigator as any).serial.requestPort()
+      } catch (err) {
+        logDebug("User cancelled port selection: " + err)
+        return false
+      }
+    }
+
+    // Open the port
+    await printerPort.open({
+      baudRate: 115200,
+      dataBits: 8,
+      stopBits: 1,
+      parity: "none",
+      flowControl: "hardware",
+    })
+
+    // Set up the output stream
+    const writableStream = printerPort.writable
+    printerWriter = writableStream.getWriter()
+
+    // Save connection info
+    lastConnectedPortInfo = printerPort.getInfo ? await printerPort.getInfo() : { usbVendorId: 0, usbProductId: 0 }
+
+    // Store port info in localStorage for future reconnections
+    try {
+      localStorage.setItem("lastPrinterPortInfo", JSON.stringify(lastConnectedPortInfo))
+      logDebug("Saved printer port info to localStorage: " + JSON.stringify(lastConnectedPortInfo))
+    } catch (e) {
+      logDebug("Failed to save port info to localStorage: " + e)
+    }
+
+    // Initialize printer
+    await initializePrinter()
+
+    // Detect printer model
+    await detectPrinterModel()
+
+    logDebug("Printer connected successfully.")
+    return true
+  } catch (error) {
+    logDebug("Error connecting to printer: " + error)
+    return false
+  }
+}
+
+// Update the autoConnectPrinter function to use stored port info
+export async function autoConnectPrinter(): Promise<boolean> {
+  try {
+    // Web Serial API support check
+    if (!("serial" in navigator)) {
+      logDebug("Web Serial API is not supported in this browser.")
+      return false
+    }
+
+    // If already connected, reuse the connection
+    if (printerPort && printerWriter) {
+      logDebug("Printer is already connected.")
+      return true
+    }
+
+    // 저장된 프린터 모델 정보 로드
+    loadSavedPrinterModel()
+
+    // Try to get previously stored port info
+    let storedPortInfo = null
+    try {
+      const storedInfo = localStorage.getItem("lastPrinterPortInfo")
+      if (storedInfo) {
+        storedPortInfo = JSON.parse(storedInfo)
+        logDebug("Found stored printer port info for auto-connect: " + JSON.stringify(storedPortInfo))
+      }
+    } catch (e) {
+      logDebug("Failed to retrieve stored port info: " + e)
+    }
+
+    // Get list of available ports
+    const ports = await (navigator as any).serial.getPorts()
+
+    if (ports.length === 0) {
+      logDebug("No available ports. User interaction required.")
+      return await connectPrinter() // Fall back to regular connection function
+    }
+
+    // Try to find the previously used port first
+    if (storedPortInfo) {
+      for (const port of ports) {
+        const info = port.getInfo ? await port.getInfo() : {}
+
+        // Check if this port matches our stored info
+        if (info.usbVendorId === storedPortInfo.usbVendorId && info.usbProductId === storedPortInfo.usbProductId) {
+          printerPort = port
+          logDebug("Auto-reconnected to previously used printer!")
+          break
+        }
+      }
+    }
+
+    // If we couldn't find the previously used port, use the first available port
+    if (!printerPort) {
+      printerPort = ports[0]
+      logDebug("Using first available port for auto-connect.")
+    }
+
+    // Open the port
+    await printerPort.open({
+      baudRate: 115200,
+      dataBits: 8,
+      stopBits: 1,
+      parity: "none",
+      flowControl: "hardware",
+    })
+
+    // Set up the output stream
+    const writableStream = printerPort.writable
+    printerWriter = writableStream.getWriter()
+
+    // Save connection info
+    lastConnectedPortInfo = printerPort.getInfo ? await printerPort.getInfo() : { usbVendorId: 0, usbProductId: 0 }
+
+    // Store port info in localStorage for future reconnections
+    try {
+      localStorage.setItem("lastPrinterPortInfo", JSON.stringify(lastConnectedPortInfo))
+    } catch (e) {
+      logDebug("Failed to save port info to localStorage: " + e)
+    }
+
+    // Initialize printer
+    await initializePrinter()
+
+    // Detect printer model
+    await detectPrinterModel()
+
+    logDebug("Printer auto-connected successfully.")
+    return true
+  } catch (error) {
+    logDebug("Error auto-connecting to printer: " + error)
+    return false
   }
 }
 
 /**
- * 프린터 진단 정보 가져오기 (Electron API 사용)
+ * 프린터 연결 해제 함수
  */
-export async function getPrinterDiagnostics(): Promise<any> {
-  const status = await getPrinterStatus() // 최신 상태 정보 가져오기
+export async function disconnectPrinter(): Promise<void> {
+  try {
+    if (printerWriter) {
+      await printerWriter.close()
+      printerWriter = null
+    }
 
-  // Electron 환경에서는 process.env 직접 접근이 어려울 수 있으므로,
-  // 해당 정보는 Main 프로세스에서 가져와야 할 수 있습니다.
-  const environmentVariables = {
-    PRINTER_SIMPLE_MODE: "N/A in Electron Renderer",
-    FORCE_SIMPLE_FOR_BK3: "N/A in Electron Renderer",
+    if (printerPort) {
+      await printerPort.close()
+      printerPort = null
+    }
+
+    logDebug("프린터 연결이 해제되었습니다.")
+  } catch (error) {
+    logDebug("프린터 연결 해제 중 오류 발생: " + error)
   }
+}
 
-  // Connection Info는 Electron API를 통해 얻은 포트 정보 사용
-  const connectionInfo = { port: status.port }
+/**
+ * 텍스트 인쇄 함수 - 명령어 로깅 추가
+ */
+export async function printText(text: string): Promise<boolean> {
+  try {
+    if (!printerWriter) {
+      logDebug("프린터가 연결되어 있지 않습니다.")
+      return false
+    }
 
+    // ASCII 텍스트만 처리 (영어, 숫자, 특수문자)
+    const encoded = new TextEncoder().encode(text)
+
+    // 명령 로깅
+    logCommand("TEXT", encoded)
+
+    await printerWriter.write(encoded)
+
+    return true
+  } catch (error) {
+    logDebug("텍스트 인쇄 중 오류 발생: " + error)
+    return false
+  }
+}
+
+/**
+ * 초기화 명령 전송 - 프린터 모델별 최적화
+ */
+export async function initializePrinter(): Promise<boolean> {
+  try {
+    console.log("Initializing printer...")
+
+    // 프린터 초기화 명령 전송
+    const initCommand = "\x1B\x40" // ESC @ (프린터 초기화)
+
+    return await sendToPrinter(initCommand)
+  } catch (error) {
+    console.error("Printer initialization error:", error)
+    return false
+  }
+}
+
+/**
+ * 프린터 상태 확인 함수
+ */
+export function isPrinterConnected(): boolean {
+  try {
+    // 실제 환경에서는 프린터 연결 상태를 확인하는 로직
+    // 현재는 개발 환경을 위해 항상 true 반환
+    return true
+  } catch (error) {
+    console.error("프린터 연결 확인 오류:", error)
+    return false
+  }
+}
+
+/**
+ * 프린터 진단 정보 가져오기
+ */
+export function getPrinterDiagnostics(): any {
   return {
-    connected: status.connected,
-    model: status.model,
-    simpleMode: status.simpleMode,
-    environmentVariables: environmentVariables,
-    connectionInfo: connectionInfo,
+    connected: isPrinterConnected(),
+    model: detectedPrinterModel,
+    simpleMode: getSimplePrintMode(),
+    environmentVariables: {
+      PRINTER_SIMPLE_MODE: process.env.PRINTER_SIMPLE_MODE || "not set",
+      FORCE_SIMPLE_FOR_BK3: process.env.FORCE_SIMPLE_FOR_BK3 || "not set",
+    },
+    connectionInfo: lastConnectedPortInfo,
     commandLog: commandLog.slice(-10), // 최근 10개 명령만 반환
   }
 }
 
-/**
- * (추가) 현장 결제 영수증 인쇄 함수 (printReceipt 복제) - Electron API 사용
- */
-export async function printOnSiteReservationReceipt(receiptData: any): Promise<boolean> {
-  logDebug("현장 결제 영수증 인쇄 요청")
-  // printReceipt 함수가 이미 모든 로직(Simple/Rich 모드, Electron 전송)을 처리하므로 재사용합니다.
-  return printReceipt(receiptData)
+interface ReceiptItem {
+  label: string
+  value: string
 }
 
-// --- Electron 상태 업데이트 리스너 설정 ---
-// 앱 초기화 시 한 번 호출되어야 합니다.
-function setupElectronStatusListener() {
-  if (!isBrowser()) {
-    return
-  }
+interface ReceiptData {
+  guestName: string
+  roomCode: string // roomNumber 대신 roomCode 사용
+  roomType: string
+  checkInDate: string
+  checkOutDate: string
+  password: string
+  reservationId: string
+  totalAmount: number
+  printTime: string
+}
 
-  if (hasElectronAPI() && window.electronAPI?.onPrinterStatus) {
-    window.electronAPI.onPrinterStatus((status) => {
-      logDebug(
-        `Received status update from Electron: Connected=${status.connected}, Port=${status.port}, Model=${status.model}, VID=${status.vendorId}, PID=${status.productId}`,
-      )
-      electronPrinterConnected = status.connected
-      electronPrinterPort = status.port || null
+interface PrintResult {
+  success: boolean
+  error?: string
+}
 
-      if (status.model === "BK3-3") {
-        detectedPrinterModel = "BK3-3"
-        electronPrinterModel = "BK3-3"
-        logDebug("Detected BK3-3 printer via VID/PID from Electron")
-      } else if (status.model) {
-        electronPrinterModel = status.model as "BK3-3" | "SAM4S" | "UNKNOWN"
-      }
+/**
+ * 영수증 인쇄 함수 - 모드에 따라 다른 형식 사용
+ */
+export async function printReceipt(data: ReceiptData): Promise<boolean> {
+  try {
+    console.log("Printing receipt with data:", data)
 
-      electronPrinterVendorId = status.vendorId || null
-      electronPrinterProductId = status.productId || null
-
-      if (status.connected && detectedPrinterModel === "UNKNOWN" && electronPrinterModel !== "UNKNOWN") {
-        detectedPrinterModel = electronPrinterModel
-        logDebug(`Auto-detected printer model: ${detectedPrinterModel}`)
-        try {
-          localStorage.setItem("detectedPrinterModel", detectedPrinterModel)
-        } catch (e) {
-          logDebug("Failed to save detected model: " + (e as Error).message)
-        }
-      }
-    })
-    logDebug("Electron printer status listener attached.")
-
-    if (window.electronAPI?.getPrinterStatus) {
-      window.electronAPI
-        .getPrinterStatus()
-        .then((status) => {
-          logDebug(
-            `Initial status from Electron: Connected=${status.connected}, Port=${status.port}, Model=${status.model}`,
-          )
-          electronPrinterConnected = status.connected
-          electronPrinterPort = status.port || null
-
-          if (status.model === "BK3-3") {
-            detectedPrinterModel = "BK3-3"
-            electronPrinterModel = "BK3-3"
-            logDebug("Initial detection: BK3-3 printer via VID/PID")
-            try {
-              localStorage.setItem("detectedPrinterModel", "BK3-3")
-            } catch (e) {
-              /* ignore */
-            }
-          }
-
-          if (status.connected) {
-            loadSavedPrinterModel()
-          }
-        })
-        .catch((e) => logDebug("Error getting initial status: " + (e as Error).message))
+    // 개발 환경에서는 콘솔에 출력
+    if (process.env.NODE_ENV === "development") {
+      console.log("=== 영수증 출력 (개발 모드) ===")
+      console.log(`예약자명: ${data.guestName}`)
+      console.log(`객실번호: ${data.roomCode}`) // roomCode 사용
+      console.log(`객실타입: ${data.roomType}`)
+      console.log(`체크인: ${data.checkInDate}`)
+      console.log(`체크아웃: ${data.checkOutDate}`)
+      console.log(`출입번호: ${data.password}`)
+      console.log(`예약번호: ${data.reservationId}`)
+      console.log(`결제금액: ${data.totalAmount.toLocaleString()}원`)
+      console.log(`출력시간: ${data.printTime}`)
+      console.log("================================")
+      return true
     }
-  } else {
-    logDebug("Electron API (onPrinterStatus) not available. Status updates will not be received.")
-  }
-}
 
-let lastPrinterResponse: { data: number[]; timestamp: string } | null = null
-let printerResponseCallbacks: Array<(data: number[]) => void> = []
+    // 실제 프린터 연결 시도
+    const printCommand = createPrintCommand(data)
 
-/**
- * 프린터 응답 리스너 설정
- */
-function setupPrinterDataListener() {
-  if (!isBrowser()) {
-    return
-  }
+    // 프린터 포트 연결 시도 (예: COM3, /dev/ttyUSB0 등)
+    const success = await sendToPrinter(printCommand)
 
-  if (hasElectronAPI() && window.electronAPI?.onPrinterData) {
-    window.electronAPI.onPrinterData((response) => {
-      logDebug(`Received printer response: ${response.data.length} bytes at ${response.timestamp}`)
-      logDebug(`Response hex: ${response.data.map((b: number) => b.toString(16).padStart(2, "0")).join(" ")}`)
-
-      lastPrinterResponse = response
-
-      // 대기 중인 콜백 실행
-      printerResponseCallbacks.forEach((callback) => callback(response.data))
-      printerResponseCallbacks = []
-    })
-    logDebug("Printer data listener attached.")
-  }
-}
-
-/**
- * 프린터 상태 쿼리 함수
- */
-export async function queryPrinterStatus(): Promise<boolean> {
-  if (!hasElectronAPI() || !window.electronAPI?.queryPrinterStatus) {
-    logDebug("Electron API (queryPrinterStatus) is not available.")
+    return success
+  } catch (error) {
+    console.error("Print error:", error)
     return false
   }
+}
 
+/**
+ * 프린터 명령어 생성
+ */
+function createPrintCommand(data: ReceiptData): string {
+  const lines = [
+    "더 비치스테이",
+    "체크인 영수증",
+    data.printTime,
+    "--------------------------------",
+    `예약자명: ${data.guestName}`,
+    `객실번호: ${data.roomCode}`, // roomCode 사용
+    `객실타입: ${data.roomType}`,
+    `체크인: ${data.checkInDate}`,
+    `체크아웃: ${data.checkOutDate}`,
+    `출입번호: ${data.password}`,
+    `예약번호: ${data.reservationId}`,
+    `결제금액: ${data.totalAmount.toLocaleString()}원`,
+    "--------------------------------",
+    "감사합니다",
+    "즐거운 여행 되세요!",
+    "",
+    "",
+    "", // 여백을 위한 빈 줄들
+  ]
+
+  return lines.join("\n")
+}
+
+/**
+ * 실제 프린터로 데이터 전송
+ */
+async function sendToPrinter(command: string): Promise<boolean> {
   try {
-    logDebug("Querying printer real-time status...")
-    const result = await window.electronAPI.queryPrinterStatus()
+    // 실제 환경에서는 시리얼 포트나 USB 프린터로 전송
+    // 여기서는 시뮬레이션
 
-    if (result.success) {
-      logDebug("Status query sent successfully. Waiting for response...")
-      return true
-    } else {
-      logDebug("Failed to send status query: " + result.error)
-      return false
+    console.log("Sending to printer:", command)
+
+    // 프린터 연결 시뮬레이션
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+
+    return true
+  } catch (error) {
+    console.error("Printer communication error:", error)
+    return false
+  }
+}
+
+/**
+ * 프린터 상태 확인
+ */
+export async function checkPrinterStatus(): Promise<{
+  connected: boolean
+  paperStatus: "ok" | "low" | "empty"
+  error?: string
+}> {
+  try {
+    // 실제 환경에서는 프린터 상태를 확인
+    // 개발 환경에서는 시뮬레이션
+
+    if (process.env.NODE_ENV === "development") {
+      return {
+        connected: true,
+        paperStatus: "ok",
+      }
+    }
+
+    // 실제 프린터 상태 확인 로직
+    return {
+      connected: false,
+      paperStatus: "ok",
+      error: "Printer not connected",
     }
   } catch (error) {
-    logDebug("Exception querying printer status: " + (error as Error).message)
-    return false
-  }
-}
-
-/**
- * 프린터 응답 대기 함수
- */
-export async function waitForPrinterResponse(timeoutMs = 2000): Promise<number[] | null> {
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      logDebug("Printer response timeout")
-      const index = printerResponseCallbacks.indexOf(callback)
-      if (index > -1) {
-        printerResponseCallbacks.splice(index, 1)
-      }
-      resolve(null)
-    }, timeoutMs)
-
-    const callback = (data: number[]) => {
-      clearTimeout(timeout)
-      resolve(data)
+    return {
+      connected: false,
+      paperStatus: "ok",
+      error: error instanceof Error ? error.message : "Unknown error",
     }
-
-    printerResponseCallbacks.push(callback)
-  })
-}
-
-if (isBrowser()) {
-  setupElectronStatusListener()
-  setupPrinterDataListener() // Added printer data listener setup
-  loadSavedPrinterModel()
-
-  // 기본 모델이 설정되지 않은 경우 BK3-3로 설정
-  if (detectedPrinterModel === "UNKNOWN") {
-    detectedPrinterModel = "BK3-3"
-    logDebug("기본 프린터 모델을 BK3-3로 설정")
   }
 }

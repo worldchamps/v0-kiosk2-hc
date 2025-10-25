@@ -23,12 +23,17 @@ let currentStatus = 0x01 // WAIT
 // 이벤트 처리 상태
 let eventProcessingEnabled = false
 let lastEventMessage: { command: string; data: number; timestamp: string } | null = null
+let isProcessingEvent = false // 새로 추가
+let lastProcessedEvent: { data: number; timestamp: number } | null = null // 중복 이벤트 방지
 
 // Debug logging
 const ENABLE_DEBUG_LOGGING = true
 const commandLog: Array<{ command: string; bytes: number[]; response?: number[]; timestamp: string; error?: string }> =
   []
 const connectionLog: Array<{ event: string; details: string; timestamp: string }> = []
+
+// 지폐 카운팅 콜백 함수 타입
+let billCountingCallback: ((amount: number) => void) | null = null
 
 /**
  * 디버그 로그 함수
@@ -130,21 +135,23 @@ function parseStreamBuffer(): Uint8Array[] {
     // 5바이트 패킷 추출
     const candidatePacket = streamBuffer.slice(startIndex, startIndex + 5)
 
+    // 모든 패킷을 더 명확하게 로깅
+    const packetHex = Array.from(candidatePacket)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join(" ")
+
     // 패킷 유효성 검증
     if (validatePacket(candidatePacket)) {
       packets.push(candidatePacket)
-      logDebug(
-        `유효한 패킷 추출: ${Array.from(candidatePacket)
-          .map((b) => b.toString(16).padStart(2, "0"))
-          .join(" ")}`,
-      )
+      // 특별히 0x05 패킷에 대해 더 명확한 로깅 추가
+      if (candidatePacket[3] === 0x05 && candidatePacket[1] === 0x45 && candidatePacket[2] === 0x53) {
+        console.log(`[CRITICAL_PACKET] 0x05 패킷 발견: ${packetHex}`)
+      }
+
+      logDebug(`유효한 패킷 추출: ${packetHex}`)
       searchIndex = startIndex + 5
     } else {
-      logDebug(
-        `유효하지 않은 패킷: ${Array.from(candidatePacket)
-          .map((b) => b.toString(16).padStart(2, "0"))
-          .join(" ")}`,
-      )
+      logDebug(`유효하지 않은 패킷: ${packetHex}`)
       searchIndex = startIndex + 1
     }
   }
@@ -210,9 +217,20 @@ async function processReceivedPacket(packet: Uint8Array): Promise<void> {
   const cmd2 = packet[2]
   const data = packet[3]
 
+  // 모든 수신 패킷에 대한 로깅 강화
+  const packetHex = Array.from(packet)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join(" ")
+
+  // 특별히 0x05 데이터를 포함한 패킷에 대해 추가 로깅
+  if (data === 0x05) {
+    console.log(`[CRITICAL_DATA] 0x05 데이터 포함 패킷 수신: ${packetHex}`)
+  }
+
   // 이벤트 메시지 처리 ($ES)
   if (cmd1 === 0x45 && cmd2 === 0x53) {
     // 'E' 'S'
+    console.log(`[EVENT_PACKET] 이벤트 패킷 수신: ${packetHex}, 데이터: 0x${data.toString(16)}`)
     await handleEventMessage(packet)
     return
   }
@@ -225,13 +243,9 @@ async function processReceivedPacket(packet: Uint8Array): Promise<void> {
     clearTimeout(pendingCommand.timeout)
     pendingCommands.delete(responseKey)
     pendingCommand.resolve(packet)
-    logDebug(`명령 응답 매칭 성공: ${responseKey}`)
+    logDebug(`명령 응답 매칭 성공: ${responseKey}, 데이터: 0x${data.toString(16)}`)
   } else {
-    logDebug(
-      `매칭되지 않은 응답: ${Array.from(packet)
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join(" ")}`,
-    )
+    logDebug(`매칭되지 않은 응답: ${packetHex}, 데이터: 0x${data.toString(16)}`)
   }
 }
 
@@ -255,6 +269,13 @@ async function sendCommandAndWaitResponse(
   if (!billAcceptorWriter) {
     logCommand("SEND_COMMAND", packet, undefined, "지폐인식기가 연결되지 않음")
     return null
+  }
+
+  // 이벤트 처리 중이면 잠시 대기
+  let waitCount = 0
+  while (isProcessingEvent && waitCount < 10) {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    waitCount++
   }
 
   for (let attempt = 1; attempt <= retries; attempt++) {
@@ -287,8 +308,7 @@ async function sendCommandAndWaitResponse(
           logCommand("SEND_COMMAND", packet, undefined, "최종 타임아웃")
           return null
         }
-        // 재시도 전 잠시 대기
-        await new Promise((resolve) => setTimeout(resolve, 100))
+        await new Promise((resolve) => setTimeout(resolve, 200)) // 재시도 간격 증가
       }
     } catch (error) {
       const errorMsg = `명령 전송 오류 (시도 ${attempt}/${retries}): ${error}`
@@ -297,7 +317,7 @@ async function sendCommandAndWaitResponse(
         logCommand("SEND_COMMAND", packet, undefined, errorMsg)
         return null
       }
-      await new Promise((resolve) => setTimeout(resolve, 100))
+      await new Promise((resolve) => setTimeout(resolve, 200))
     }
   }
 
@@ -305,10 +325,183 @@ async function sendCommandAndWaitResponse(
 }
 
 /**
- * 이벤트 메시지 처리 함수
+ * 지폐 수취 활성화 함수 (올바른 명령어 형식으로 수정)
+ */
+export async function enableAcceptance(): Promise<boolean> {
+  try {
+    // ['$'] ['S'] ['A'] [0x0D] [0xA1]
+    const packet = createPacket(0x53, 0x41, 0x0d) // 'S' 'A' 0x0D
+    const response = await sendCommandAndWaitResponse(packet, 0x4f, 0x4b) // 'O' 'K'
+
+    if (response && response.length === 5) {
+      if (response[1] === 0x4f && response[2] === 0x4b && response[3] === 0x61) {
+        // 'O' 'K' 'a'
+        isAcceptingBills = true
+        logCommand("Enable Acceptance", packet, response)
+        return true
+      }
+    }
+
+    logCommand("Enable Acceptance", packet, response || [], "예상되지 않은 응답")
+    return false
+  } catch (error) {
+    logCommand("Enable Acceptance", [], undefined, `오류: ${error}`)
+    return false
+  }
+}
+
+/**
+ * 지폐 수취 비활성화 함수 (올바른 명령어 형식으로 수정)
+ */
+export async function disableAcceptance(): Promise<boolean> {
+  try {
+    // ['$'] ['S'] ['A'] [0x0E] [0xA2]
+    const packet = createPacket(0x53, 0x41, 0x0e) // 'S' 'A' 0x0E
+    const response = await sendCommandAndWaitResponse(packet, 0x4f, 0x4b) // 'O' 'K'
+
+    if (response && response.length === 5) {
+      if (response[1] === 0x4f && response[2] === 0x4b && response[3] === 0x61) {
+        // 'O' 'K' 'a'
+        isAcceptingBills = false
+        logCommand("Disable Acceptance", packet, response)
+        return true
+      }
+    }
+
+    logCommand("Disable Acceptance", packet, response || [], "예상되지 않은 응답")
+    return false
+  } catch (error) {
+    logCommand("Disable Acceptance", [], undefined, `오류: ${error}`)
+    return false
+  }
+}
+
+/**
+ * 총 입수액 지우기 함수
+ */
+export async function clearTotalAcceptedAmount(): Promise<boolean> {
+  try {
+    const packet = createPacket(0x53, 0x42, 0x52) // 'S' 'B' 'R'
+    const response = await sendCommandAndWaitResponse(packet, 0x4f, 0x4b) // 'O' 'K'
+
+    if (response && response.length === 5) {
+      if (response[1] === 0x4f && response[2] === 0x4b && response[3] === 0x61) {
+        // 'O' 'K' 'a'
+        logCommand("Clear Total Accepted Amount", packet, response)
+        return true
+      }
+    }
+
+    logCommand("Clear Total Accepted Amount", packet, response || [], "예상되지 않은 응답")
+    return false
+  } catch (error) {
+    logCommand("Clear Total Accepted Amount", [], undefined, `오류: ${error}`)
+    return false
+  }
+}
+
+/**
+ * 투입금 지우기 함수
+ */
+export async function clearInsertedAmount(): Promise<boolean> {
+  try {
+    const packet = createPacket(0x53, 0x54, 0x43) // 'S' 'T' 'C'
+    const response = await sendCommandAndWaitResponse(packet, 0x4f, 0x4b) // 'O' 'K'
+
+    if (response && response.length === 5) {
+      if (response[1] === 0x4f && response[2] === 0x4b && response[3] === 0x72) {
+        // 'O' 'K' 'r'
+        logCommand("Clear Inserted Amount", packet, response)
+        return true
+      }
+    }
+
+    logCommand("Clear Inserted Amount", packet, response || [], "예상되지 않은 응답")
+    return false
+  } catch (error) {
+    logCommand("Clear Inserted Amount", [], undefined, `오류: ${error}`)
+    return false
+  }
+}
+
+/**
+ * 설정 변경 함수 (방어적 프로그래밍 적용)
+ */
+export async function setConfig(config: number): Promise<boolean> {
+  try {
+    const packet = createPacket(0x53, 0x43, config) // 'S' 'C' CONFIG
+    const response = await sendCommandAndWaitResponse(packet, 0x4f, 0x4b) // 'O' 'K'
+
+    if (response && response.length === 5) {
+      if (response[1] === 0x4f && response[2] === 0x4b && response[3] === 0x63) {
+        // 'O' 'K' 'c'
+        logCommand("Set Config", packet, response)
+        return true
+      }
+    }
+
+    logCommand("Set Config", packet, response || [], "예상되지 않은 응답")
+    return false
+  } catch (error) {
+    logCommand("Set Config", [], undefined, `오류: ${error}`)
+    return false
+  }
+}
+
+/**
+ * 이벤트 TX 명령 전송 함수 (개선된 버전)
+ */
+export async function sendEventTxCommand(): Promise<boolean> {
+  try {
+    // Event TX command: $ E S 0x0D CHK
+    const packet = createPacket(0x45, 0x53, 0x0d) // 'E' 'S' 0x0D
+
+    logDebug(
+      `Event TX 패킷 전송: ${Array.from(packet)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join(" ")}`,
+    )
+
+    const response = await sendCommandAndWaitResponse(packet, 0x4f, 0x4b, 1000) // 1초 타임아웃으로 단축
+
+    if (response && response.length === 5) {
+      if (response[1] === 0x4f && response[2] === 0x4b) {
+        logCommand("Event TX Command", packet, response)
+        return true
+      }
+    }
+
+    // 타임아웃은 정상적인 상황일 수 있으므로 에러 레벨을 낮춤
+    logCommand("Event TX Command", packet, response || [], "응답 없음 (이미 준비 상태일 수 있음)")
+    return false
+  } catch (error) {
+    // 타임아웃 에러도 조용히 처리
+    logCommand("Event TX Command", [], undefined, `타임아웃 (정상적일 수 있음): ${error}`)
+    return false
+  }
+}
+
+/**
+ * 이벤트 메시지 처리 함수 (상태 머신 기반 워크플로우)
  */
 async function handleEventMessage(packet: Uint8Array): Promise<void> {
   const eventData = packet[3]
+  const currentTime = Date.now()
+
+  // 중복 이벤트 필터링 (같은 이벤트가 500ms 이내에 다시 오면 무시)
+  if (lastProcessedEvent && lastProcessedEvent.data === eventData && currentTime - lastProcessedEvent.timestamp < 500) {
+    console.log(`[DUPLICATE_EVENT] 중복 이벤트 무시: 0x${eventData.toString(16)}`)
+    return
+  }
+
+  // 이벤트 처리 중 플래그 설정
+  isProcessingEvent = true
+  lastProcessedEvent = { data: eventData, timestamp: currentTime }
+
+  // 모든 이벤트 메시지를 더 명확하게 로깅
+  console.log(
+    `[EVENT_RECEIVED] 이벤트 데이터: 0x${eventData.toString(16).padStart(2, "0")} (${getStatusString(eventData)})`,
+  )
   logConnection(
     "EVENT_RECEIVED",
     `이벤트 데이터: 0x${eventData.toString(16).padStart(2, "0")} (${getStatusString(eventData)})`,
@@ -321,7 +514,7 @@ async function handleEventMessage(packet: Uint8Array): Promise<void> {
     timestamp: new Date().toISOString(),
   }
 
-  // 이벤트 확인 응답 전송 (항상 전송)
+  // 이벤트 확인 응답 먼저 전송 (빠른 응답으로 중복 방지)
   try {
     const ackPacket = createPacket(0x65, 0x73, eventData) // 'e' 's' + eventData
     if (billAcceptorWriter) {
@@ -331,6 +524,161 @@ async function handleEventMessage(packet: Uint8Array): Promise<void> {
   } catch (error) {
     logConnection("EVENT_ACK_ERROR", `이벤트 응답 전송 실패: ${error}`)
   }
+
+  // 이벤트 확인 응답 후 잠시 대기 (중복 방지)
+  await new Promise((resolve) => setTimeout(resolve, 50))
+
+  // 이벤트 처리 완료 플래그를 여기서 먼저 해제
+  isProcessingEvent = false
+
+  // 상태 머신에 따른 처리
+  switch (eventData) {
+    case 0x02: // START_WAIT - 지폐 입수 대기 상태
+      logConnection("STATE_MACHINE", "지폐 입수 대기 상태 - 지폐 삽입을 기다리는 중")
+      break
+
+    case 0x04: // RECOGNITION_WAIT - 지폐 인식 중
+      logConnection("STATE_MACHINE", "지폐 인식 진행 중 - 지폐 검증 및 종류 확인 중")
+
+      // 중요: 0x04 상태에서 즉시 지폐 데이터 확인 준비
+      console.log("[PROACTIVE_CHECK] 0x04 상태 감지 - 지폐 데이터 확인 준비")
+
+      // 약간의 지연 후 지폐 데이터 확인
+      setTimeout(async () => {
+        if (!isProcessingEvent) return // 다른 이벤트 처리 중이면 스킵
+
+        try {
+          console.log("[PROACTIVE_CHECK] 지폐 데이터 확인 시도")
+          const billData = await getBillData()
+          if (billData !== null && billData > 0) {
+            let amount = 0
+            switch (billData) {
+              case 1:
+                amount = 1000
+                break
+              case 5:
+                amount = 5000
+                break
+              case 10:
+                amount = 10000
+                break
+              case 50:
+                amount = 50000
+                break
+            }
+            console.log(`[PROACTIVE_CHECK] 지폐 데이터 확인 성공: ${amount}원`)
+            logConnection("PROACTIVE_BILL_CHECK", `${amount}원 지폐 인식됨 (0x04 상태 이후 확인)`)
+          }
+        } catch (error) {
+          console.log(`[PROACTIVE_CHECK] 지폐 데이터 확인 오류: ${error}`)
+        }
+      }, 100)
+      break
+
+    case 0x05: // RECOGNITION_END - 지폐 인식 완료
+      console.log("[CRITICAL_STATE] 지폐 인식 완료 - 0x05 상태 감지됨!")
+      logConnection("STATE_MACHINE", "지폐 인식 완료 - BillData 조회 가능 상태")
+      // 0x05 상태에서는 별도 처리 없이 Auto Stack 대기
+      break
+
+    case 0x0b: // STACK_END - 스택 완료
+      logConnection("STATE_MACHINE", "지폐 스택 완료 - 입수금지 상태")
+
+      // 스택 완료 후 처리 순서:
+      // 1. 딜레이 후 Bill Data 읽기
+      // 2. 수신된 데이터 누적
+      // 3. 딜레이 후 Event TX 명령으로 입수 가능 상태로 전환
+
+      // 즉시 비동기 처리 시작 (isProcessingEvent 체크 제거)
+      ;(async () => {
+        try {
+          logConnection("AUTO_PROCESS_START", "0x0B 상태 자동 처리 시작")
+
+          // 1단계: 딜레이 후 Bill Data 읽기
+          logConnection("STEP_1", "0x0B 상태 - Bill Data 읽기 시작")
+          await new Promise((resolve) => setTimeout(resolve, 500)) // 500ms 딜레이
+
+          const billData = await getBillData()
+          logConnection("BILL_DATA_READ", `Bill Data 응답: ${billData}`)
+
+          if (billData !== null && billData > 0) {
+            let amount = 0
+            switch (billData) {
+              case 1:
+                amount = 1000
+                break
+              case 5:
+                amount = 5000
+                break
+              case 10:
+                amount = 10000
+                break
+              case 50:
+                amount = 50000
+                break
+            }
+
+            // 2단계: 수신된 데이터 누적
+            if (amount > 0) {
+              logConnection("STEP_2", `지폐 금액 누적: ${amount}원`)
+              if (billCountingCallback) {
+                billCountingCallback(amount)
+                logConnection("BILL_ACCUMULATED", `${amount}원 누적 완료`)
+              }
+            }
+          } else {
+            logConnection("BILL_DATA_ERROR", "Bill Data를 읽을 수 없음")
+          }
+
+          // 3단계: Event TX 명령으로 다음 지폐 입수 가능하도록 전환 (조용한 처리)
+          logConnection("STEP_3", "Event TX 명령 전송 준비")
+          await new Promise((resolve) => setTimeout(resolve, 800)) // 800ms 딜레이
+
+          const eventTxResult = await sendEventTxCommand()
+
+          if (eventTxResult) {
+            logConnection("EVENT_TX_SUCCESS", "Event TX 명령 성공 - 다음 지폐 입수 가능 상태로 전환됨")
+          } else {
+            // Event TX 실패는 정상적인 상황일 수 있음 (이미 준비 상태)
+            logConnection("EVENT_TX_INFO", "Event TX 명령 응답 없음 - 지폐인식기가 이미 준비 상태일 수 있음")
+
+            // 상태 확인으로 실제 준비 상태인지 검증
+            const currentStatus = await getStatus()
+            if (currentStatus === 0x02 || currentStatus === 0x01) {
+              logConnection("STATUS_VERIFIED", "지폐인식기가 이미 입수 준비 상태임을 확인")
+            } else {
+              // 정말 문제가 있는 경우에만 대안 시도
+              logConnection("FALLBACK_ATTEMPT", "상태 확인 후 수동 입수 가능 설정 시도")
+              await new Promise((resolve) => setTimeout(resolve, 500))
+              const enabled = await enableAcceptance()
+              if (enabled) {
+                logConnection("FALLBACK_SUCCESS", "수동 입수 가능 설정 성공")
+              }
+            }
+          }
+
+          logConnection("AUTO_PROCESS_COMPLETE", "0x0B 상태 자동 처리 완료")
+        } catch (error) {
+          logConnection("STACK_END_ERROR", `0x0B 상태 처리 중 오류: ${error}`)
+        }
+      })()
+      break
+
+    case 0x08: // RETURN_END - 지폐 반환 완료
+      logConnection("STATE_MACHINE", "지폐 반환 완료")
+      break
+
+    case 0x0c: // ERROR_WAIT - 오류 상태
+      logConnection("STATE_MACHINE", "오류 상태 감지")
+      break
+
+    default:
+      logConnection("STATE_MACHINE", `알 수 없는 상태: 0x${eventData.toString(16)}`)
+      break
+  }
+
+  // 이벤트 처리 완료
+  isProcessingEvent = false
 }
 
 /**
@@ -653,10 +1001,10 @@ export async function checkConnection(): Promise<boolean> {
 
     // 일반적인 연결 테스트 시도
     const packet = createPacket(0x48, 0x69, 0x3f) // 'H' 'i' '?'
-    const response = await sendCommandAndWaitResponse(packet, 0x68, 0x69, 2000) // 2초 타임아웃
+    const response = await sendCommandAndWaitResponse(packet, 0x6d, 0x65, 2000) // 2초 타임아웃
 
     if (response && response.length === 5) {
-      if (response[1] === 0x68 && response[2] === 0x69 && response[3] === 0x3f) {
+      if (response[1] === 0x6d && response[2] === 0x65 && response[3] === 0x21) {
         // 'h' 'i' '?'
         logCommand("Check Connection", packet, response)
         return true
@@ -810,57 +1158,7 @@ export async function getVersion(): Promise<{ major: number; minor: number } | n
 }
 
 /**
- * 지폐 수취 활성화 함수 (방어적 프로그래밍 적용)
- */
-export async function enableAcceptance(): Promise<boolean> {
-  try {
-    const packet = createPacket(0x53, 0x41, 0x0d) // 'S' 'A' 0x0D
-    const response = await sendCommandAndWaitResponse(packet, 0x4f, 0x4b) // 'O' 'K'
-
-    if (response && response.length === 5) {
-      if (response[1] === 0x4f && response[2] === 0x4b && response[3] === 0x61) {
-        // 'O' 'K' 'a'
-        isAcceptingBills = true
-        logCommand("Enable Acceptance", packet, response)
-        return true
-      }
-    }
-
-    logCommand("Enable Acceptance", packet, response || [], "예상되지 않은 응답")
-    return false
-  } catch (error) {
-    logCommand("Enable Acceptance", [], undefined, `오류: ${error}`)
-    return false
-  }
-}
-
-/**
- * 지폐 수취 비활성화 함수 (방어적 프로그래밍 적용)
- */
-export async function disableAcceptance(): Promise<boolean> {
-  try {
-    const packet = createPacket(0x53, 0x41, 0x0e) // 'S' 'A' 0x0E
-    const response = await sendCommandAndWaitResponse(packet, 0x4f, 0x4b) // 'O' 'K'
-
-    if (response && response.length === 5) {
-      if (response[1] === 0x4f && response[2] === 0x4b && response[3] === 0x61) {
-        // 'O' 'K' 'a'
-        isAcceptingBills = false
-        logCommand("Disable Acceptance", packet, response)
-        return true
-      }
-    }
-
-    logCommand("Disable Acceptance", packet, response || [], "예상되지 않은 응답")
-    return false
-  } catch (error) {
-    logCommand("Disable Acceptance", [], undefined, `오류: ${error}`)
-    return false
-  }
-}
-
-/**
- * 지폐 반환 함수 (방어적 프로그래밍 적용)
+ * 지폐 수취 반환 함수 (방어적 프로그래밍 적용)
  */
 export async function returnBill(): Promise<boolean> {
   try {
@@ -903,30 +1201,6 @@ export async function stackBill(): Promise<boolean> {
     return false
   } catch (error) {
     logCommand("Stack Bill", [], undefined, `오류: ${error}`)
-    return false
-  }
-}
-
-/**
- * 설정 변경 함수 (방어적 프로그래밍 적용)
- */
-export async function setConfig(config: number): Promise<boolean> {
-  try {
-    const packet = createPacket(0x53, 0x43, config) // 'S' 'C' CONFIG
-    const response = await sendCommandAndWaitResponse(packet, 0x4f, 0x4b) // 'O' 'K'
-
-    if (response && response.length === 5) {
-      if (response[1] === 0x4f && response[2] === 0x4b && response[3] === 0x63) {
-        // 'O' 'K' 'c'
-        logCommand("Set Config", packet, response)
-        return true
-      }
-    }
-
-    logCommand("Set Config", packet, response || [], "예상되지 않은 응답")
-    return false
-  } catch (error) {
-    logCommand("Set Config", [], undefined, `오류: ${error}`)
     return false
   }
 }
@@ -1049,6 +1323,13 @@ export async function processBillAcceptance(): Promise<{ success: boolean; amoun
 }
 
 /**
+ * 지폐 카운팅 콜백 설정
+ */
+export function setBillCountingCallback(callback: (amount: number) => void): void {
+  billCountingCallback = callback
+}
+
+/**
  * 이벤트 처리 활성화/비활성화
  */
 export function setEventProcessing(enabled: boolean): void {
@@ -1146,7 +1427,7 @@ export async function getBillAcceptorDiagnostics(): Promise<{
 }
 
 /**
- * 상태 코드를 문자열로 변환
+ * 상태 코드를 문자열로 변환 (완전한 상태 머신)
  */
 export function getStatusString(status: number): string {
   switch (status) {
@@ -1154,12 +1435,16 @@ export function getStatusString(status: number): string {
       return "WAIT (대기)"
     case 0x02:
       return "START_WAIT (수취 준비)"
+    case 0x04:
+      return "RECOGNITION_WAIT (인식 중)"
     case 0x05:
       return "RECOGNITION_END (인식 완료)"
     case 0x08:
       return "RETURN_END (반환 완료)"
+    case 0x0a:
+      return "STACK_WAIT (스택 중)"
     case 0x0b:
-      return "STACK_END (적재 완료)"
+      return "STACK_END (스택 완료 - 지폐 삽입 비활성화 상태)"
     case 0x0c:
       return "ERROR_WAIT (오류 대기)"
     default:

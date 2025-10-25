@@ -1,197 +1,151 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Printer, Loader2 } from "lucide-react"
-
-interface ReceiptData {
-  guestName: string
-  roomNumber: string
-  roomType: string
-  checkInDate: string
-  checkOutDate: string
-  price?: string
-  reservationId: string
-  timestamp?: string
-  password?: string
-  floor?: string
-}
+import { Card, CardContent } from "@/components/ui/card"
+import { X, Printer, Check } from "lucide-react"
+import { printReceipt } from "@/lib/printer-utils"
 
 interface ReceiptPrinterProps {
-  receiptData: ReceiptData
-  onClose?: () => void
+  reservation: any
+  revealedInfo: {
+    roomNumber: string
+    password: string
+    floor: string
+  }
+  onClose: () => void
 }
 
-export default function ReceiptPrinter({ receiptData, onClose }: ReceiptPrinterProps) {
+export default function ReceiptPrinter({ reservation, revealedInfo, onClose }: ReceiptPrinterProps) {
   const [isPrinting, setIsPrinting] = useState(false)
-  const receiptRef = useRef<HTMLDivElement>(null)
+  const [printSuccess, setPrintSuccess] = useState(false)
 
-  // 현재 시간 포맷팅
-  const formatTime = () => {
-    const now = new Date()
-    return now.toLocaleString("ko-KR", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    })
-  }
-
-  const formatDateForReceipt = (dateString: string) => {
-    if (!dateString) return "N/A"
-
-    // 이미 YYYY.MM.DD 형식이면 그대로 반환
-    if (dateString.includes(".")) return dateString
-
-    // YYYY-MM-DD 형식을 YYYY.MM.DD로 변환
-    return dateString.replace(/-/g, ".")
-  }
-
-  // 객실 타입을 영어로 변환하는 함수
-  function translateRoomType(roomType: string): string {
-    if (!roomType) return "Standard Room"
-
-    const lowerType = roomType.toLowerCase()
-
-    if (lowerType.includes("스탠다드") && lowerType.includes("더블")) {
-      return "Standard Double"
-    } else if (lowerType.includes("스탠다드") && lowerType.includes("트윈")) {
-      return "Standard Twin"
-    } else if (
-      lowerType.includes("디럭스") &&
-      lowerType.includes("더블") &&
-      (lowerType.includes("오션") || lowerType.includes("오션뷰"))
-    ) {
-      return "Deluxe Double Ocean"
-    } else if (lowerType.includes("디럭스") && lowerType.includes("더블")) {
-      return "Deluxe Double"
-    } else if (
-      lowerType.includes("스위트") &&
-      lowerType.includes("트윈") &&
-      (lowerType.includes("오션") || lowerType.includes("오션뷰"))
-    ) {
-      return "Suite Twin Ocean"
-    } else if (lowerType.includes("스위트") && lowerType.includes("트윈")) {
-      return "Suite Twin"
-    } else if (lowerType.includes("스위트")) {
-      return "Suite Room"
-    } else if (lowerType.includes("디럭스")) {
-      return "Deluxe Room"
-    } else if (lowerType.includes("스탠다드")) {
-      return "Standard Room"
-    }
-
-    return "Standard Room"
-  }
-
-  // 영수증 인쇄 함수
-  const handlePrint = () => {
+  const handlePrint = async () => {
     setIsPrinting(true)
-
-    setTimeout(() => {
-      try {
-        const originalContents = document.body.innerHTML
-        const printContents = receiptRef.current?.innerHTML || ""
-
-        // 인쇄용 스타일 추가
-        const printStyles = `
-          <style>
-            @page { size: 80mm 200mm; margin: 0; }
-            body { font-family: 'Do Hyeon', sans-serif; width: 76mm; margin: 2mm; }
-            .receipt { width: 100%; }
-            .receipt-header { text-align: center; margin-bottom: 10px; font-size: 24px; font-weight: bold; }
-            .receipt-divider { border-top: 1px dashed #000; margin: 10px 0; }
-            .receipt-body { margin: 15px 0; font-size: 20px; }
-            .receipt-row { display: flex; justify-content: space-between; margin: 8px 0; }
-            .receipt-label { font-weight: bold; }
-            .receipt-room-number { font-size: 32px; font-weight: bold; }
-          </style>
-        `
-
-        // 인쇄용 문서 생성
-        document.body.innerHTML = printStyles + printContents
-
-        // 인쇄 다이얼로그 열기
-        window.print()
-
-        // 원래 문서로 복원
-        document.body.innerHTML = originalContents
-
-        setIsPrinting(false)
-      } catch (error) {
-        console.error("인쇄 중 오류 발생:", error)
-        setIsPrinting(false)
+    try {
+      const receiptData = {
+        guestName: reservation.guestName,
+        roomCode: reservation.roomCode || revealedInfo.roomNumber, // roomCode 사용
+        roomType: reservation.roomType,
+        checkInDate: reservation.checkInDate,
+        checkOutDate: reservation.checkOutDate,
+        password: revealedInfo.password,
+        reservationId: reservation.reservationId,
+        totalAmount: reservation.totalAmount || reservation.price || 0,
+        printTime: new Date().toLocaleString("ko-KR"),
       }
-    }, 500)
+
+      const success = await printReceipt(receiptData)
+
+      if (success) {
+        setPrintSuccess(true)
+        setTimeout(() => {
+          onClose()
+        }, 2000)
+      } else {
+        alert("영수증 출력에 실패했습니다. 다시 시도해주세요.")
+      }
+    } catch (error) {
+      console.error("Print error:", error)
+      alert("영수증 출력 중 오류가 발생했습니다.")
+    } finally {
+      setIsPrinting(false)
+    }
   }
 
-  // 층수 정보를 영수증에 표시하도록 수정
-  // 층수 결정
-  const roomNumber = receiptData.roomNumber || "000"
-  const floor = receiptData.floor ? `${receiptData.floor}F` : "2F"
-
-  // 객실 타입을 영어로 변환
-  const englishRoomType = translateRoomType(receiptData.roomType)
+  if (printSuccess) {
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <Card className="w-96">
+          <CardContent className="p-8 text-center">
+            <Check className="h-16 w-16 text-green-500 mx-auto mb-4" />
+            <h3 className="text-2xl font-bold text-green-600 mb-2">출력 완료!</h3>
+            <p className="text-lg text-gray-600">영수증이 출력되었습니다</p>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   return (
-    <div className="p-4">
-      {/* 실제 인쇄될 영수증 (숨겨진 상태) */}
-      <div ref={receiptRef} className="receipt" style={{ display: "none" }}>
-        <div className="receipt-header">The Beach Stay</div>
-
-        <div className="receipt-divider"></div>
-
-        <div className="receipt-body">
-          <div className="receipt-row">
-            <span className="receipt-room-number">
-              {floor} {receiptData.roomNumber}
-            </span>
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <Card className="w-[500px] max-h-[80vh] overflow-auto">
+        <CardContent className="p-6">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-2xl font-bold">영수증 출력</h3>
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              <X className="h-6 w-6" />
+            </Button>
           </div>
 
-          <div className="receipt-row">
-            <span>Door PW: {receiptData.password || "0000"}</span>
+          {/* 영수증 미리보기 */}
+          <div className="bg-white border-2 border-gray-300 p-6 mb-6 font-mono text-sm">
+            <div className="text-center mb-4">
+              <h4 className="text-lg font-bold">더 비치스테이</h4>
+              <p>체크인 영수증</p>
+              <p>{new Date().toLocaleString("ko-KR")}</p>
+            </div>
+
+            <div className="border-t border-b border-gray-300 py-4 my-4">
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span>예약자명:</span>
+                  <span>{reservation.guestName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>객실번호:</span>
+                  <span>{reservation.roomCode || revealedInfo.roomNumber}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>객실타입:</span>
+                  <span>{reservation.roomType}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>체크인:</span>
+                  <span>{reservation.checkInDate}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>체크아웃:</span>
+                  <span>{reservation.checkOutDate}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>출입번호:</span>
+                  <span>{revealedInfo.password}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>예약번호:</span>
+                  <span>{reservation.reservationId}</span>
+                </div>
+                <div className="flex justify-between font-bold">
+                  <span>결제금액:</span>
+                  <span>{(reservation.totalAmount || reservation.price || 0).toLocaleString()}원</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="text-center text-xs">
+              <p>감사합니다</p>
+              <p>즐거운 여행 되세요!</p>
+            </div>
           </div>
 
-          <div className="receipt-divider"></div>
-
-          <div className="receipt-row">
-            <span>Check-in: {formatDateForReceipt(receiptData.checkInDate)}</span>
+          <div className="flex gap-4">
+            <Button variant="outline" onClick={onClose} className="flex-1 bg-transparent" disabled={isPrinting}>
+              취소
+            </Button>
+            <Button onClick={handlePrint} className="flex-1" disabled={isPrinting}>
+              {isPrinting ? (
+                "출력 중..."
+              ) : (
+                <>
+                  <Printer className="mr-2 h-4 w-4" />
+                  출력하기
+                </>
+              )}
+            </Button>
           </div>
-
-          <div className="receipt-row">
-            <span>Check-out: {formatDateForReceipt(receiptData.checkOutDate)}</span>
-          </div>
-        </div>
-
-        <div className="receipt-divider"></div>
-      </div>
-
-      {/* 사용자 인터페이스 */}
-      <div className="flex flex-col space-y-4">
-        <h3 className="text-xl font-bold">영수증 출력</h3>
-
-        <div className="flex space-x-4">
-          <Button onClick={handlePrint} disabled={isPrinting} className="flex items-center space-x-2">
-            {isPrinting ? (
-              <>
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span>인쇄 중...</span>
-              </>
-            ) : (
-              <>
-                <Printer className="h-5 w-5" />
-                <span>영수증 인쇄</span>
-              </>
-            )}
-          </Button>
-
-          <Button variant="outline" onClick={onClose} disabled={isPrinting}>
-            닫기
-          </Button>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }

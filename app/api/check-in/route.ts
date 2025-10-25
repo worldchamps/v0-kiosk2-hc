@@ -1,39 +1,35 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { headers } from "next/headers"
-import { createSheetsClient, SHEET_COLUMNS } from "@/lib/google-sheets"
-import { addToPMSQueue } from "@/lib/firebase-admin"
-import { getPropertyFromReservation, canCheckInAtKiosk } from "@/lib/property-utils"
-import type { PropertyId } from "@/lib/property-utils"
+import { createSheetsClient, SHEET_COLUMNS, getRoomInfoFromStatus } from "@/lib/google-sheets"
 
 // API Key for authentication
 const API_KEY = process.env.API_KEY || ""
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || ""
 
-async function authenticateRequest(request: NextRequest) {
-  const headersList = await headers()
+// Update the authentication function
+function authenticateRequest(request: NextRequest) {
+  const headersList = headers()
   const apiKey = headersList.get("x-api-key")
 
+  // 클라이언트에서 API 키 없이 호출할 수 있도록 허용
+  // 이 API는 공개적으로 접근 가능하지만, 서버 측에서 요청을 검증합니다
   if (!apiKey) return true
 
+  // 관리자 키가 제공된 경우 검증
   return apiKey === API_KEY || apiKey === ADMIN_API_KEY
 }
 
+// 체크인 API에서 층수 정보도 함께 반환하도록 수정
 export async function POST(request: NextRequest) {
   try {
-    if (!(await authenticateRequest(request))) {
+    // Authenticate the request
+    if (!authenticateRequest(request)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
     const body = await request.json()
-    const { reservationId, kioskProperty, adminOverride = false } = body
-
-    console.log("[v0] ========================================")
-    console.log("[v0] 🔍 Check-in Request")
-    console.log("[v0] ========================================")
-    console.log("[v0] Reservation ID:", reservationId)
-    console.log("[v0] Kiosk Property:", kioskProperty)
-    console.log("[v0] Admin Override:", adminOverride)
+    const { reservationId } = body
 
     if (!reservationId) {
       return NextResponse.json({ error: "Reservation ID is required" }, { status: 400 })
@@ -46,9 +42,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Spreadsheet ID not configured" }, { status: 500 })
     }
 
+    // First, get all reservations to find the row index
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "Reservations!A94:N",
+      range: "Reservations!A2:C", // Just need place, guestName, and reservationId columns
     })
 
     const rows = response.data.values
@@ -56,13 +53,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No reservations found" }, { status: 404 })
     }
 
+    // Find the row with the matching reservation ID
     let rowIndex = -1
-    let reservationData: string[] = []
-
     for (let i = 0; i < rows.length; i++) {
       if (rows[i][SHEET_COLUMNS.RESERVATION_ID] === reservationId) {
-        rowIndex = i + 94
-        reservationData = rows[i]
+        rowIndex = i + 2 // +2 because we start at A2 (1-indexed)
         break
       }
     }
@@ -71,86 +66,53 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Reservation not found" }, { status: 404 })
     }
 
+    // Get the reservation data to return the room number
+    const reservationResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `Reservations!A${rowIndex}:N${rowIndex}`, // 범위를 N열까지 확장
+    })
+
+    const reservationData = reservationResponse.data.values?.[0] || []
     const roomNumber = reservationData[SHEET_COLUMNS.ROOM_NUMBER] || ""
-    const place = reservationData[SHEET_COLUMNS.PLACE] || ""
-    const guestName = reservationData[SHEET_COLUMNS.GUEST_NAME] || ""
-    const checkInDate = reservationData[SHEET_COLUMNS.CHECK_IN_DATE] || ""
-    const password = reservationData[SHEET_COLUMNS.PASSWORD] || ""
-    const floor = reservationData[SHEET_COLUMNS.FLOOR] || ""
 
-    console.log("[v0] 📋 Reservation Data:")
-    console.log("[v0]   Room Number:", roomNumber)
-    console.log("[v0]   Place:", place)
-    console.log("[v0]   Guest Name:", guestName)
+    // Beach Room Status 시트에서 객실 정보 조회
+    const roomInfo = await getRoomInfoFromStatus(spreadsheetId, roomNumber)
 
-    if (kioskProperty) {
-      const reservationProperty = getPropertyFromReservation({
-        roomNumber,
-        place,
-      })
+    let password = ""
+    let floor = ""
 
-      if (!reservationProperty) {
-        console.log("[v0] Could not detect reservation property - allowing check-in")
-      } else {
-        const validation = canCheckInAtKiosk(
-          reservationProperty as PropertyId,
-          kioskProperty as PropertyId,
-          adminOverride,
-        )
-
-        if (!validation.allowed) {
-          return NextResponse.json(
-            {
-              error: "Property mismatch",
-              message: validation.reason,
-              reservationProperty,
-              kioskProperty,
-            },
-            { status: 403 },
-          )
-        }
-
-        if (adminOverride) {
-          console.log("[v0] Admin override used for check-in")
-        }
-      }
+    if (roomInfo) {
+      // Beach Room Status에서 정보를 찾은 경우
+      password = roomInfo.password
+      floor = roomInfo.floor
+      console.log("Room info from Beach Room Status:", roomInfo)
+    } else {
+      // Beach Room Status에서 정보를 찾지 못한 경우 기존 예약 정보 사용
+      password = reservationData[SHEET_COLUMNS.PASSWORD] || ""
+      floor = reservationData[SHEET_COLUMNS.FLOOR] || ""
+      console.warn("Using reservation data as fallback for room info")
     }
 
-    const checkInTime = new Date().toISOString()
-
-    console.log("[v0] 📝 Updating Google Sheets...")
-    await sheets.spreadsheets.values.batchUpdate({
+    // Update the check-in status
+    await sheets.spreadsheets.values.update({
       spreadsheetId,
+      range: `Reservations!${String.fromCharCode(65 + SHEET_COLUMNS.CHECK_IN_STATUS)}${rowIndex}`,
+      valueInputOption: "USER_ENTERED",
       requestBody: {
-        valueInputOption: "USER_ENTERED",
-        data: [
-          {
-            range: `Reservations!${String.fromCharCode(65 + SHEET_COLUMNS.CHECK_IN_STATUS)}${rowIndex}`,
-            values: [["Checked In"]],
-          },
-          {
-            range: `Reservations!${String.fromCharCode(65 + SHEET_COLUMNS.CHECK_IN_TIME)}${rowIndex}`,
-            values: [[checkInTime]],
-          },
-        ],
+        values: [["Checked In"]],
       },
     })
-    console.log("[v0] ✅ Google Sheets updated")
 
-    try {
-      console.log("[v0] 🔥 Adding to Firebase PMS Queue")
-      await addToPMSQueue({
-        roomNumber,
-        guestName,
-        checkInDate,
-      })
-      console.log("[v0] ✅ Firebase PMS Queue added")
-    } catch (firebaseError) {
-      console.error("[v0] ❌ Firebase PMS Queue failed:", firebaseError)
-    }
-
-    console.log("[v0] ✅ Check-in completed successfully!")
-    console.log("[v0] ========================================")
+    // Update the check-in timestamp
+    const checkInTime = new Date().toISOString()
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `Reservations!${String.fromCharCode(65 + SHEET_COLUMNS.CHECK_IN_TIME)}${rowIndex}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [[checkInTime]],
+      },
+    })
 
     return NextResponse.json({
       success: true,
@@ -165,7 +127,7 @@ export async function POST(request: NextRequest) {
       },
     })
   } catch (error) {
-    console.error("[v0] Check-in error:", error)
+    console.error("Error during check-in:", error)
     return NextResponse.json(
       { error: "Failed to complete check-in", details: (error as Error).message },
       { status: 500 },

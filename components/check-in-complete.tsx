@@ -5,12 +5,18 @@ import { Button } from "@/components/ui/button"
 import { Check, Printer, Eye, EyeOff } from "lucide-react"
 import { useEffect, useState, useRef } from "react"
 import DirectPrinter from "./direct-printer"
-import { printReceipt, getSimplePrintMode, autoConnectPrinter, getPrinterModel } from "@/lib/printer-utils"
+import {
+  printReceipt,
+  disconnectPrinter,
+  getSimplePrintMode,
+  autoConnectPrinter,
+  getPrinterModel,
+} from "@/lib/printer-utils"
 import Image from "next/image"
 import { getBuildingZoomImagePath } from "@/lib/location-utils"
 import type { KioskLocation } from "@/lib/location-utils"
+// 음성 유틸리티 import 추가
 import { playBuildingGuide, stopAllAudio } from "@/lib/audio-utils"
-import { useIdleTimer } from "@/hooks/use-idle-timer"
 
 interface CheckInCompleteProps {
   reservation?: any
@@ -21,7 +27,6 @@ interface CheckInCompleteProps {
   }
   kioskLocation?: KioskLocation
   onNavigate?: (screen: string) => void
-  isPopupMode?: boolean
 }
 
 export default function CheckInComplete({
@@ -29,7 +34,6 @@ export default function CheckInComplete({
   revealedInfo,
   kioskLocation,
   onNavigate,
-  isPopupMode = false,
 }: CheckInCompleteProps) {
   const [countdown, setCountdown] = useState<number | null>(null)
   const [showPrinter, setShowPrinter] = useState(false)
@@ -38,13 +42,13 @@ export default function CheckInComplete({
   const [showPassword, setShowPassword] = useState(false)
   const [simpleMode, setSimpleMode] = useState(false)
   const [printerModel, setPrinterModel] = useState<string>("UNKNOWN")
-  const [audioPlayed, setAudioPlayed] = useState(false)
+  const [audioPlayed, setAudioPlayed] = useState(false) // 음성 재생 여부 추적
 
   // Timers refs to properly clean up
   const printTimerRef = useRef<NodeJS.Timeout | null>(null)
   const countdownTimerRef = useRef<NodeJS.Timeout | null>(null)
   const redirectTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const audioTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const audioTimerRef = useRef<NodeJS.Timeout | null>(null) // 음성 재생 타이머
 
   // Debug info
   const [debugInfo, setDebugInfo] = useState<string[]>([])
@@ -66,6 +70,7 @@ export default function CheckInComplete({
     if (roomNumber.startsWith("Camp")) return "CAMP"
     if (roomNumber.startsWith("Kariv")) return "KARIV"
 
+    // 첫 글자가 건물 타입 (A, B, C, D 등)
     return roomNumber.charAt(0).toUpperCase()
   }
 
@@ -97,19 +102,22 @@ export default function CheckInComplete({
   // Component mount - clean up all timers
   useEffect(() => {
     logDebug("Component mounted with new reservation data")
-    logDebug(`Popup mode: ${isPopupMode}`)
 
+    // Reset print status when component mounts with new data
     setPrintStatus("idle")
     setAutoPrintAttempted(false)
-    setAudioPlayed(false)
+    setAudioPlayed(false) // 음성 재생 상태 초기화
 
+    // Load simple mode preference on component mount
     setSimpleMode(getSimplePrintMode())
     setPrinterModel(getPrinterModel())
 
+    // 체크인 완료 후 1초 후에 건물 안내 음성 재생
     const buildingType = getBuildingType()
     if (buildingType) {
       logDebug(`Building type detected: ${buildingType}`)
 
+      // 음성 재생 타이머 설정 (1초 후)
       audioTimerRef.current = setTimeout(() => {
         logDebug(`Playing building guide audio for ${buildingType}`)
         playBuildingGuide(buildingType)
@@ -119,12 +127,13 @@ export default function CheckInComplete({
       logDebug("No building type detected")
     }
 
+    // Clean up all timers on unmount
     return () => {
       logDebug("Component unmounting: clearing all timers")
       clearAllTimers()
-      stopAllAudio()
+      stopAllAudio() // 모든 오디오 중지
     }
-  }, [reservation?.reservationId, revealedInfo?.roomNumber, isPopupMode])
+  }, [reservation?.reservationId, revealedInfo?.roomNumber])
 
   // Clear all timers function
   const clearAllTimers = () => {
@@ -155,22 +164,17 @@ export default function CheckInComplete({
 
   // Auto print receipt attempt
   useEffect(() => {
-    if (isPopupMode) {
-      logDebug("Popup mode: skipping auto print")
-      setAutoPrintAttempted(true)
-      setPrintStatus("idle")
-      startRedirectCountdown()
-      return
-    }
-
+    // Don't try again if already attempted
     if (autoPrintAttempted) return
 
     logDebug("Setting up auto print timer (1 second)")
 
+    // Clear existing timer if any
     if (printTimerRef.current) {
       clearTimeout(printTimerRef.current)
     }
 
+    // Try auto printing 1 second after check-in completion
     printTimerRef.current = setTimeout(() => {
       logDebug("Starting auto print")
       autoPrintReceipt()
@@ -183,7 +187,7 @@ export default function CheckInComplete({
         printTimerRef.current = null
       }
     }
-  }, [autoPrintAttempted, isPopupMode])
+  }, [autoPrintAttempted])
 
   // Auto print function
   const autoPrintReceipt = async () => {
@@ -194,28 +198,33 @@ export default function CheckInComplete({
     logDebug(`Printer model: ${printerModel}`)
 
     try {
+      // Try to auto-connect to previously used printer first
       const connected = await autoConnectPrinter()
 
       if (connected) {
+        // Update printer model after connection
         setPrinterModel(getPrinterModel())
         logDebug(`Connected printer model: ${getPrinterModel()}`)
 
         setPrintStatus("printing")
         logDebug("Print status: printing")
 
+        // Print receipt
         const success = await printReceipt(receiptData)
 
         if (success) {
           setPrintStatus("success")
           logDebug(`Print status: success (${simpleMode ? "simple mode" : "normal mode"})`)
 
+          // Start 25-second redirect countdown ONLY after successful printing
           startRedirectCountdown()
         } else {
           setPrintStatus("error")
           logDebug("Print status: error (print failed)")
         }
 
-        // await disconnectPrinter()
+        // Disconnect printer
+        await disconnectPrinter()
       } else {
         setPrintStatus("error")
         logDebug("Print status: error (connection failed)")
@@ -229,12 +238,14 @@ export default function CheckInComplete({
 
   // Start redirect countdown
   const startRedirectCountdown = () => {
+    // Clear all existing timers
     clearAllTimers()
 
-    const countdownSeconds = isPopupMode ? 10 : 25
-    setCountdown(countdownSeconds)
-    logDebug(`Starting ${countdownSeconds}-second countdown (popup mode: ${isPopupMode})`)
+    // Initialize countdown to 25 seconds
+    setCountdown(25)
+    logDebug("Starting 25-second countdown")
 
+    // Set up countdown timer
     countdownTimerRef.current = setInterval(() => {
       setCountdown((prev) => {
         if (prev === null || prev <= 0) return 0
@@ -242,49 +253,27 @@ export default function CheckInComplete({
       })
     }, 1000)
 
+    // Set up redirect timer for exactly 25 seconds
     redirectTimerRef.current = setTimeout(() => {
       logDebug("Executing redirect")
-      handleRedirect()
-    }, countdownSeconds * 1000)
-  }
-
-  const handleRedirect = () => {
-    if (isPopupMode) {
-      // Popup mode: notify Electron to close popup and restore PMS focus
-      logDebug("Popup mode: notifying Electron to close popup")
-      if (typeof window !== "undefined" && (window as any).electronAPI) {
-        ;(window as any).electronAPI.send("checkin-complete")
-      }
-    } else {
-      // Normal mode: navigate to standby
       if (onNavigate) {
         onNavigate("standby")
       } else {
+        // Fallback for backward compatibility
         window.location.href = "/loading?redirect=/"
       }
-    }
+    }, 25000)
   }
 
+  // Log countdown changes
   useEffect(() => {
     if (countdown !== null) {
       logDebug(`Countdown: ${countdown} seconds`)
     }
   }, [countdown])
 
+  // Building name display (A동, B동, etc.)
   const buildingName = roomNumber && roomNumber.length > 0 ? `${roomNumber.charAt(0)}동` : ""
-
-  useIdleTimer({
-    onIdle: () => {
-      console.log("[v0] Check-in complete idle, navigating to idle screen")
-      clearAllTimers()
-      stopAllAudio()
-      if (onNavigate) {
-        onNavigate("idle")
-      }
-    },
-    idleTime: 60000,
-    enabled: !isPopupMode, // Disable idle timer in popup mode
-  })
 
   return (
     <div className="flex items-start justify-start w-full h-full">
@@ -332,6 +321,7 @@ export default function CheckInComplete({
                 </div>
               )}
 
+              {/* Building zoom image display - updated to fill available space */}
               <div className="w-full mt-4">
                 <p className="text-gray-500 font-bold mb-2">{buildingName} 위치</p>
                 <div className="bg-gray-100 rounded-lg w-full h-[40vh] relative overflow-hidden p-0">
@@ -345,6 +335,7 @@ export default function CheckInComplete({
                 </div>
               </div>
 
+              {/* Printer status display */}
               <div className="w-full">
                 {printStatus === "connecting" && (
                   <div className="bg-blue-50 p-4 rounded-lg text-blue-700">COM2 프린터에 연결 중입니다...</div>
@@ -363,40 +354,46 @@ export default function CheckInComplete({
               </div>
 
               <div className="w-full flex justify-between mt-6">
-                {!isPopupMode && (
-                  <Button
-                    className="h-20 text-2xl text-black bg-[#42c0ff] hover:bg-[#3ab0e8] shadow-md font-bold rounded-xl flex items-center space-x-2 px-6"
-                    onClick={() => setShowPrinter(true)}
-                  >
-                    <Printer className="h-6 w-6" />
-                    <span>영수증 인쇄</span>
-                  </Button>
-                )}
+                <Button
+                  className="text-xl font-bold flex items-center space-x-2 h-16 px-6"
+                  onClick={() => setShowPrinter(true)}
+                >
+                  <Printer className="h-6 w-6" />
+                  <span>영수증 인쇄</span>
+                </Button>
 
                 <Button
                   variant="outline"
-                  className="h-20 text-2xl border-3 border-gray-300 font-bold rounded-xl bg-transparent px-6"
+                  className="text-xl font-bold h-16 px-6"
                   onClick={() => {
                     logDebug("Back button clicked: clearing all timers")
+                    // Clear all timers
                     clearAllTimers()
+                    // 모든 오디오 중지
                     stopAllAudio()
-                    handleRedirect()
+                    // Use onNavigate function instead of redirect
+                    if (onNavigate) {
+                      onNavigate("standby")
+                    } else {
+                      // Fallback for backward compatibility
+                      window.location.href = "/loading?redirect=/"
+                    }
                   }}
                 >
-                  {isPopupMode ? "닫기" : "돌아가기"}
+                  돌아가기
                 </Button>
               </div>
 
+              {/* Only show countdown if printing was successful */}
               {countdown !== null && printStatus === "success" && (
                 <div className="w-full bg-gray-100 rounded-lg p-4 mt-4">
                   <p className="text-left text-sm text-gray-500 font-bold">
-                    {isPopupMode
-                      ? `${countdown}초 후 자동으로 창이 닫힙니다.`
-                      : `${countdown}초 후 자동으로 대기 화면으로 돌아갑니다.`}
+                    {countdown}초 후 자동으로 대기 화면으로 돌아갑니다.
                   </p>
                 </div>
               )}
 
+              {/* 음성 안내 상태 표시 */}
               {audioPlayed && (
                 <div className="w-full bg-blue-50 rounded-lg p-4 mt-2">
                   <p className="text-left text-sm text-blue-600 font-bold">
@@ -405,13 +402,13 @@ export default function CheckInComplete({
                 </div>
               )}
 
+              {/* Debug information */}
               <div className="w-full mt-2 text-xs text-gray-400 border-t pt-2">
                 <p>Print Status: {printStatus}</p>
                 <p>Print Mode: {simpleMode ? "Simple" : "Formatted"}</p>
                 <p>Printer Model: {printerModel}</p>
                 <p>Building Type: {getBuildingType()}</p>
                 <p>Audio Played: {audioPlayed ? "Yes" : "No"}</p>
-                <p>Popup Mode: {isPopupMode ? "Yes" : "No"}</p>
                 {countdown !== null && <p>Countdown: {countdown}s</p>}
                 <details>
                   <summary>Debug Logs</summary>

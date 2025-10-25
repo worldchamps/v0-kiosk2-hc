@@ -1,38 +1,27 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import StandbyScreen from "@/components/standby-screen"
-import IdleScreen from "@/components/idle-screen"
 import ReservationConfirm from "@/components/reservation-confirm"
 import CurrentLocation from "@/components/current-location"
 import OnSiteReservation from "@/components/on-site-reservation"
 import ReservationDetails from "@/components/reservation-details"
 import CheckInComplete from "@/components/check-in-complete"
 import ReservationNotFound from "@/components/reservation-not-found"
-import ReservationList from "@/components/reservation-list"
+import { getCurrentDateKST } from "@/lib/date-utils"
 import { type KioskLocation, getKioskLocation } from "@/lib/location-utils"
 import { useRouter } from "next/navigation"
 import AdminKeypad from "@/components/admin-keypad"
+// 음성 유틸리티 import 수정
 import { stopAllAudio, pauseBGM, resumeBGM } from "@/lib/audio-utils"
-import { PrintQueueListener } from "@/components/print-queue-listener"
-import {
-  getKioskPropertyId,
-  type PropertyId,
-  getPropertyDisplayName,
-  getPropertyFromRoomNumber,
-  getPropertyFromPlace,
-} from "@/lib/property-utils"
-import PropertyMismatchDialog from "@/components/property-mismatch-dialog"
-import PropertyRedirectDialog from "@/components/property-redirect-dialog"
 
 interface KioskLayoutProps {
   onChangeMode: () => void
 }
 
 export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
-  const [currentScreen, setCurrentScreen] = useState("idle")
+  const [currentScreen, setCurrentScreen] = useState("standby")
   const [reservationData, setReservationData] = useState(null)
-  const [reservationsList, setReservationsList] = useState([])
   const [guestName, setGuestName] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -41,135 +30,69 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     password: "",
     floor: "",
   })
+  const [debugInfo, setDebugInfo] = useState(null)
   const [showAdminKeypad, setShowAdminKeypad] = useState(false)
   const [kioskLocation, setKioskLocation] = useState<KioskLocation>("A")
-  const [isPopupMode, setIsPopupMode] = useState(false)
-  const [kioskProperty, setKioskProperty] = useState<PropertyId>("property3")
-  const [showPropertyMismatch, setShowPropertyMismatch] = useState(false)
-  const [mismatchData, setMismatchData] = useState<{
-    reservationProperty: PropertyId
-    kioskProperty: PropertyId
-    debugInfo?: {
-      roomNumber: string
-      place: string
-      detectedFromRoom: PropertyId | null
-      detectedFromPlace: PropertyId | null
-    }
-  } | null>(null)
-  const [adminOverride, setAdminOverride] = useState(false)
-  const [showPropertyRedirect, setShowPropertyRedirect] = useState(false)
-  const [redirectTargetProperty, setRedirectTargetProperty] = useState<PropertyId | null>(null)
   const router = useRouter()
-  const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const INACTIVITY_TIMEOUT = 30000 // 30 seconds
 
+  // 관리자 비밀번호 - 변경됨
   const adminPassword = "KIM1334**"
 
+  // 키오스크 위치 불러오기
   useEffect(() => {
     const savedLocation = getKioskLocation()
     setKioskLocation(savedLocation)
-
-    const savedProperty = getKioskPropertyId()
-    setKioskProperty(savedProperty)
-
-    const checkPopupMode = () => {
-      if (typeof window !== "undefined") {
-        const urlParams = new URLSearchParams(window.location.search)
-        const isPopup = urlParams.get("popup") === "true"
-        const isElectronPopup = !!(window as any).electronAPI && window.opener
-        return isPopup || isElectronPopup
-      }
-      return false
-    }
-
-    const popupMode = checkPopupMode()
-    setIsPopupMode(popupMode)
-
-    if (typeof window !== "undefined") {
-      const urlParams = new URLSearchParams(window.location.search)
-      const directScreen = urlParams.get("direct")
-
-      if (popupMode && directScreen) {
-        setCurrentScreen(directScreen)
-      } else if (popupMode) {
-        setCurrentScreen("reservationConfirm")
-      }
-    }
-
-    console.log("[v0] Kiosk initialized:", {
-      property: getPropertyDisplayName(savedProperty),
-      location: savedLocation,
-      isPopupMode: popupMode,
-      initialScreen: popupMode ? "reservationConfirm" : "idle",
-    })
   }, [])
 
+  // 디버깅 정보 표시
   useEffect(() => {
+    if (debugInfo) {
+      console.log("Debug Info:", debugInfo)
+    }
+  }, [debugInfo])
+
+  // 컴포넌트가 마운트될 때 body에 kiosk-mode 클래스 추가
+  useEffect(() => {
+    // body에 kiosk-mode 클래스 추가
     document.body.classList.add("kiosk-mode")
+
+    // 컴포넌트가 언마운트될 때 kiosk-mode 클래스 제거
     return () => {
       document.body.classList.remove("kiosk-mode")
+      // 모든 오디오 중지 (BGM 포함)
       stopAllAudio(true)
     }
   }, [])
 
+  // 화면 전환 시 BGM 관리
   useEffect(() => {
+    // 대기 화면일 때 BGM 재개, 다른 화면일 때는 BGM 일시 중지
     if (currentScreen === "standby") {
+      console.log("Resuming BGM (screen changed to standby)")
       resumeBGM()
     } else {
+      console.log("Pausing BGM (screen changed from standby)")
       pauseBGM()
     }
   }, [currentScreen])
 
-  useEffect(() => {
-    if (!isPopupMode) return
-
-    const resetTimer = () => {
-      if (inactivityTimerRef.current) {
-        clearTimeout(inactivityTimerRef.current)
-      }
-
-      inactivityTimerRef.current = setTimeout(() => {
-        if (typeof window !== "undefined" && (window as any).electronAPI) {
-          ;(window as any).electronAPI.send("close-popup")
-        }
-      }, INACTIVITY_TIMEOUT)
-    }
-
-    resetTimer()
-
-    const handleUserActivity = () => {
-      resetTimer()
-    }
-
-    window.addEventListener("click", handleUserActivity)
-    window.addEventListener("touchstart", handleUserActivity)
-    window.addEventListener("keydown", handleUserActivity)
-    window.addEventListener("mousemove", handleUserActivity)
-
-    return () => {
-      if (inactivityTimerRef.current) {
-        clearTimeout(inactivityTimerRef.current)
-      }
-      window.removeEventListener("click", handleUserActivity)
-      window.removeEventListener("touchstart", handleUserActivity)
-      window.removeEventListener("keydown", handleUserActivity)
-      window.removeEventListener("mousemove", handleUserActivity)
-    }
-  }, [isPopupMode])
-
+  // handleNavigate 함수 수정
   const handleNavigate = (screen) => {
+    // 화면 전환 시 모든 오디오 중지 (BGM 제외)
     stopAllAudio(false)
 
     setCurrentScreen(screen)
+    // Clear any previous errors when navigating
     setError("")
 
-    if (screen !== "reservationConfirm" && screen !== "reservationDetails" && screen !== "reservationList") {
+    // Clear the guest name when navigating away from reservation confirmation
+    if (screen !== "reservationConfirm" && screen !== "reservationDetails") {
       setGuestName("")
     }
 
-    if (screen === "standby" || screen === "idle") {
+    // Reset reservation data and revealed info when going back to standby
+    if (screen === "standby") {
       setReservationData(null)
-      setReservationsList([])
       setRevealedInfo({
         roomNumber: "",
         password: "",
@@ -179,73 +102,79 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   }
 
   const handleModeChangeClick = () => {
+    console.log("관리자 버튼 클릭됨!")
     setShowAdminKeypad(true)
+    console.log("showAdminKeypad 상태:", true)
   }
 
   const handlePasswordConfirm = (password: string) => {
+    console.log("비밀번호 확인됨:", password)
     setShowAdminKeypad(false)
     onChangeMode()
   }
 
   const handleAdminKeypadClose = () => {
+    console.log("관리자 키패드 닫기")
     setShowAdminKeypad(false)
   }
 
-  const handleCheckReservation = async (name) => {
-    if (!name.trim()) return
+  // 예약 확인 함수 수정 - 이름 또는 예약 ID로 검색
+  const handleCheckReservation = async (searchTerm) => {
+    if (!searchTerm.trim()) return
 
     setLoading(true)
     setError("")
+    setDebugInfo(null)
 
     try {
-      const response = await fetch(
-        `/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false&kioskProperty=${kioskProperty}`,
-        {
-          method: "GET",
-        },
-      )
+      console.log(`Checking reservation for: ${searchTerm}, today: ${getCurrentDateKST()}`)
+
+      // 검색어가 숫자/영문자 조합이고 6자리인지 확인 (예약 ID 뒷자리)
+      const isReservationId = /^[A-Za-z0-9]{6}$/.test(searchTerm.trim())
+
+      let apiUrl = ""
+      if (isReservationId) {
+        // 예약 ID 뒷자리로 검색
+        apiUrl = `/api/reservations?reservationIdSuffix=${encodeURIComponent(searchTerm)}&todayOnly=true`
+      } else {
+        // 이름으로 검색
+        apiUrl = `/api/reservations?name=${encodeURIComponent(searchTerm)}&todayOnly=true`
+      }
+
+      const response = await fetch(apiUrl, {
+        method: "GET",
+      })
 
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`)
       }
 
       const data = await response.json()
+      setDebugInfo(data.debug || null)
+
+      console.log("API Response:", data)
 
       if (data.reservations && data.reservations.length > 0) {
+        // 여러 예약이 있는 경우 처리
         if (data.reservations.length > 1) {
-          setReservationsList(data.reservations)
-          setCurrentScreen("reservationList")
-        } else {
-          const reservation = data.reservations[0]
-          setReservationData(reservation)
-          setCurrentScreen("reservationDetails")
+          console.log(`Multiple reservations found for ${searchTerm}:`, data.reservations)
+          // 첫 번째 예약을 선택하거나, 별도 선택 화면으로 이동할 수 있음
+          // 현재는 첫 번째 예약을 선택
         }
+
+        const reservation = data.reservations[0]
+        console.log("Found reservation:", reservation)
+
+        setReservationData(reservation)
+        setCurrentScreen("reservationDetails")
       } else {
-        const allPropertiesResponse = await fetch(
-          `/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false&searchAll=true`,
-          {
-            method: "GET",
-          },
-        )
-
-        if (!allPropertiesResponse.ok) {
-          throw new Error(`API error: ${allPropertiesResponse.status}`)
-        }
-
-        const allPropertiesData = await allPropertiesResponse.json()
-
-        if (allPropertiesData.reservations && allPropertiesData.reservations.length > 0) {
-          const foundReservation = allPropertiesData.reservations[0]
-          const targetProperty = foundReservation.property
-
-          setRedirectTargetProperty(targetProperty)
-          setShowPropertyRedirect(true)
-        } else {
-          setCurrentScreen("reservationNotFound")
-        }
+        // 오늘 날짜에 예약이 없는 경우
+        const today = getCurrentDateKST()
+        console.log(`No reservation found for ${searchTerm} on ${today}`)
+        setCurrentScreen("reservationNotFound")
       }
     } catch (err) {
-      console.error("[v0] Reservation check error:", err)
+      console.error("Error checking reservation:", err)
       setError("예약 확인 중 오류가 발생했습니다. 다시 시도해 주세요.")
       setCurrentScreen("reservationNotFound")
     } finally {
@@ -253,6 +182,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     }
   }
 
+  // Update the handleCheckIn function to remove API key
   const handleCheckIn = async () => {
     if (!reservationData || !reservationData.reservationId) return
 
@@ -260,6 +190,8 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     setError("")
 
     try {
+      console.log(`Checking in reservation: ${reservationData.reservationId}`)
+
       const response = await fetch("/api/check-in", {
         method: "POST",
         headers: {
@@ -267,82 +199,50 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         },
         body: JSON.stringify({
           reservationId: reservationData.reservationId,
-          kioskProperty: kioskProperty,
-          adminOverride: adminOverride,
         }),
       })
-
-      if (response.status === 403) {
-        const errorData = await response.json()
-
-        const detectedFromRoom = getPropertyFromRoomNumber(reservationData.roomNumber)
-        const detectedFromPlace = getPropertyFromPlace(reservationData.place)
-
-        setMismatchData({
-          reservationProperty: errorData.reservationProperty,
-          kioskProperty: errorData.kioskProperty,
-          debugInfo: {
-            roomNumber: reservationData.roomNumber,
-            place: reservationData.place,
-            detectedFromRoom,
-            detectedFromPlace,
-          },
-        })
-        setShowPropertyMismatch(true)
-        setLoading(false)
-        return
-      }
 
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`)
       }
 
       const data = await response.json()
+      console.log("Check-in response:", data)
 
+      // Save room number and password
       if (data.data) {
         setRevealedInfo({
           roomNumber: data.data.roomNumber || "",
           password: data.data.password || "",
-          floor: data.data.floor || "",
+          floor: data.data.floor || "", // Add floor information
+        })
+
+        console.log("Revealed info:", {
+          roomNumber: data.data.roomNumber,
+          password: data.data.password,
+          floor: data.data.floor,
         })
       }
 
-      setAdminOverride(false)
-
-      if (!isPopupMode) {
-        setCurrentScreen("checkInComplete")
-      }
+      // Switch to check-in complete screen
+      setCurrentScreen("checkInComplete")
     } catch (err) {
-      console.error("[v0] Check-in error:", err)
+      console.error("Error during check-in:", err)
       setError("체크인 중 오류가 발생했습니다. 다시 시도해 주세요.")
-
-      if (isPopupMode) {
-        alert("체크인 중 오류가 발생했습니다. 다시 시도해 주세요.")
-      }
     } finally {
       setLoading(false)
     }
   }
 
-  const handleSelectReservation = (reservation) => {
-    setReservationData(reservation)
-    setCurrentScreen("reservationDetails")
-  }
-
-  const handleAdminOverride = () => {
-    setShowPropertyMismatch(false)
-    setAdminOverride(true)
-    handleCheckIn()
-  }
+  // 디버깅을 위한 상태 로그
+  useEffect(() => {
+    console.log("showAdminKeypad 상태 변경:", showAdminKeypad)
+  }, [showAdminKeypad])
 
   return (
     <div className="w-full h-full bg-[#fefef7] overflow-hidden kiosk-mode relative">
       <div className="h-full w-full">
         {error && <div className="m-4 p-3 bg-red-100 text-red-700 rounded-md">{error}</div>}
-
-        {currentScreen === "idle" && (
-          <IdleScreen onNavigate={handleNavigate} kioskLocation={kioskLocation} imageUrl="/idle-image.jpg" />
-        )}
 
         {currentScreen === "standby" && <StandbyScreen onNavigate={handleNavigate} kioskLocation={kioskLocation} />}
 
@@ -354,18 +254,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             setGuestName={setGuestName}
             loading={loading}
             kioskLocation={kioskLocation}
-            isPopupMode={isPopupMode}
-          />
-        )}
-
-        {currentScreen === "reservationList" && (
-          <ReservationList
-            reservations={reservationsList}
-            onSelectReservation={handleSelectReservation}
-            onNavigate={handleNavigate}
-            kioskLocation={kioskLocation}
-            guestName={guestName}
-            isPopupMode={isPopupMode}
           />
         )}
 
@@ -374,7 +262,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         )}
 
         {currentScreen === "onSiteReservation" && (
-          <OnSiteReservation onNavigate={handleNavigate} location={kioskLocation} />
+          <OnSiteReservation onNavigate={handleNavigate} kioskLocation={kioskLocation} />
         )}
 
         {currentScreen === "reservationDetails" && (
@@ -384,7 +272,6 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             onNavigate={handleNavigate}
             loading={loading}
             revealedInfo={revealedInfo}
-            isPopupMode={isPopupMode}
             kioskLocation={kioskLocation}
           />
         )}
@@ -394,8 +281,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             reservation={reservationData}
             revealedInfo={revealedInfo}
             kioskLocation={kioskLocation}
-            onNavigate={handleNavigate}
-            isPopupMode={isPopupMode}
+            onNavigate={handleNavigate} // Add this line
           />
         )}
 
@@ -404,23 +290,22 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
             onRecheck={() => setCurrentScreen("reservationConfirm")}
             onNavigate={handleNavigate}
             kioskLocation={kioskLocation}
-            isPopupMode={isPopupMode}
           />
         )}
       </div>
 
-      {!isPopupMode && (
-        <div className="absolute bottom-4 right-4">
-          <button
-            className="px-4 py-2 bg-gray-800 text-white rounded-lg opacity-70 hover:opacity-100 transition-opacity text-sm font-medium shadow-lg"
-            onClick={handleModeChangeClick}
-            aria-label="관리자 모드"
-          >
-            관리자
-          </button>
-        </div>
-      )}
+      {/* 관리자 모드 접근 버튼 - 더 명확하게 표시 */}
+      <div className="absolute bottom-4 right-4">
+        <button
+          className="px-4 py-2 bg-gray-800 text-white rounded-lg opacity-70 hover:opacity-100 transition-opacity text-sm font-medium shadow-lg"
+          onClick={handleModeChangeClick}
+          aria-label="관리자 모드"
+        >
+          관리자
+        </button>
+      </div>
 
+      {/* 관리자 키패드 - z-index 추가 */}
       {showAdminKeypad && (
         <div className="fixed inset-0 z-50">
           <AdminKeypad
@@ -431,32 +316,12 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         </div>
       )}
 
-      {showPropertyMismatch && mismatchData && (
-        <PropertyMismatchDialog
-          reservationProperty={mismatchData.reservationProperty}
-          kioskProperty={mismatchData.kioskProperty}
-          onClose={() => {
-            setShowPropertyMismatch(false)
-            setCurrentScreen("reservationConfirm")
-          }}
-          onAdminOverride={handleAdminOverride}
-          debugInfo={mismatchData.debugInfo}
-        />
+      {/* 디버깅용 상태 표시 (개발 중에만 사용) */}
+      {process.env.NODE_ENV === "development" && (
+        <div className="fixed top-4 left-4 bg-black text-white p-2 rounded text-xs z-40">
+          Admin Keypad: {showAdminKeypad ? "OPEN" : "CLOSED"}
+        </div>
       )}
-
-      {showPropertyRedirect && redirectTargetProperty && (
-        <PropertyRedirectDialog
-          targetProperty={redirectTargetProperty}
-          guestName={guestName}
-          onClose={() => {
-            setShowPropertyRedirect(false)
-            setRedirectTargetProperty(null)
-            setCurrentScreen("reservationConfirm")
-          }}
-        />
-      )}
-
-      <PrintQueueListener />
     </div>
   )
 }
