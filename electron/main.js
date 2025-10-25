@@ -536,14 +536,52 @@ ipcMain.handle("send-to-printer", async (event, data) => {
 
   try {
     const buffer = Buffer.from(data)
+
+    if (isDev) {
+      console.log("[v0] [PRINTER] Sending command to printer:")
+      console.log("[v0] [PRINTER] Buffer length:", buffer.length)
+      console.log(
+        "[v0] [PRINTER] Hex dump:",
+        buffer
+          .toString("hex")
+          .match(/.{1,2}/g)
+          .join(" "),
+      )
+      console.log("[v0] [PRINTER] ASCII (printable):", buffer.toString("ascii").replace(/[^\x20-\x7E]/g, "."))
+    }
+
     await new Promise((resolve, reject) => {
       printerPort.write(buffer, (err) => {
-        if (err) reject(err)
-        else resolve()
+        if (err) {
+          if (isDev) {
+            console.error("[v0] [PRINTER] Write error:", err.message)
+          }
+          reject(err)
+        } else {
+          if (isDev) {
+            console.log("[v0] [PRINTER] Write successful")
+          }
+          printerPort.drain((drainErr) => {
+            if (drainErr) {
+              if (isDev) {
+                console.error("[v0] [PRINTER] Drain error:", drainErr.message)
+              }
+              reject(drainErr)
+            } else {
+              if (isDev) {
+                console.log("[v0] [PRINTER] Data drained successfully")
+              }
+              resolve()
+            }
+          })
+        }
       })
     })
     return { success: true }
   } catch (error) {
+    if (isDev) {
+      console.error("[v0] [PRINTER] Exception:", error.message)
+    }
     return { success: false, error: error.message }
   }
 })
