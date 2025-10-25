@@ -69,25 +69,26 @@ export function normalizeDate(dateString: string): string {
   // 디버깅을 위한 로그
   console.log(`Normalizing date: "${dateString}"`)
 
+  const cleaned = dateString.replace(/^'/, "").trim()
+
   // 이미 YYYY-MM-DD 형식인 경우
-  if (dateString.match(/^\d{4}-\d{2}-\d{2}$/)) {
-    return dateString
+  if (cleaned.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    return cleaned
   }
 
   // YYYY.MM.DD 형식인 경우
-  if (dateString.match(/^\d{4}\.\d{2}\.\d{2}$/)) {
-    return dateString.replace(/\./g, "-")
+  if (cleaned.match(/^\d{4}\.\d{2}\.\d{2}$/)) {
+    return cleaned.replace(/\./g, "-")
   }
 
-  // 스프레드시트 날짜 형식 (YYYY. MM. DD)
-  const spreadsheetMatch = dateString.match(/^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})$/)
+  const spreadsheetMatch = cleaned.match(/^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})$/)
   if (spreadsheetMatch) {
     const [_, year, month, day] = spreadsheetMatch
     return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`
   }
 
   // MM/DD/YYYY 형식인 경우
-  const mmddyyyyMatch = dateString.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  const mmddyyyyMatch = cleaned.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
   if (mmddyyyyMatch) {
     const [_, month, day, year] = mmddyyyyMatch
     return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`
@@ -95,7 +96,7 @@ export function normalizeDate(dateString: string): string {
 
   // 다른 형식의 날짜 문자열을 파싱 시도
   try {
-    const date = new Date(dateString)
+    const date = new Date(cleaned)
     if (!isNaN(date.getTime())) {
       const year = date.getFullYear()
       const month = String(date.getMonth() + 1).padStart(2, "0")
@@ -103,10 +104,10 @@ export function normalizeDate(dateString: string): string {
       return `${year}-${month}-${day}`
     }
   } catch (e) {
-    console.error("Failed to parse date:", dateString)
+    console.error("Failed to parse date:", cleaned)
   }
 
   // 정규화 실패 시 원본 반환
-  console.warn(`Failed to normalize date: "${dateString}"`)
-  return dateString
+  console.warn(`Failed to normalize date: "${cleaned}"`)
+  return cleaned
 }

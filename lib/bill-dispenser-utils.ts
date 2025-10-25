@@ -225,22 +225,22 @@ async function processReceivedPacket(packet: Uint8Array): Promise<void> {
     )
   }
 
-  // 상태 업데이트 - 실제 응답 패턴에 맞춰 수정
+  // 상태 업데이트
   if ((cmd1 === 0x73 || cmd1 === 0x53) && cmd2 === 0x74 && data === 0x62) {
-    // 대기 상태 ('s' 't' 'b')
+    // 대기 상태
     currentStatus = 0
   } else if ((cmd1 === 0x73 || cmd1 === 0x53) && cmd2 === 0x6f && data === 0x6e) {
-    // 배출 동작 중 ('s' 'o' 'n')
+    // 배출 동작 중
     currentStatus = 1
   } else if ((cmd1 === 0x73 || cmd1 === 0x53) && cmd2 === 0x68 && data === 0x21) {
-    // 방출기 동작 금지 상태 ('s' 'h' '!')
+    // 방출기 동작 금지 상태
     currentStatus = 2
   } else if ((cmd1 === 0x73 || cmd1 === 0x53) && cmd2 === 0x6f) {
-    // 정상 종료 상태 ('s' 'o' + count)
+    // 정상 종료 상태
     currentStatus = 3
     dispensedCount = data
   } else if ((cmd1 === 0x73 || cmd1 === 0x53) && cmd2 === 0x65) {
-    // 에러 상태 ('s' 'e' + error_code)
+    // 에러 상태
     lastErrorCode = data
   }
 }
@@ -545,26 +545,7 @@ export async function connectBillDispenser(): Promise<boolean> {
       )
     }
 
-    // Step 10: 초기화 명령 실행 후 상태 확인
-    logConnection("DEVICE_INIT", "지폐방출기 초기화 명령 실행")
-    const resetResult = await resetDispenser()
-    if (!resetResult) {
-      logConnection("DEVICE_INIT", "지폐방출기 초기화 실패")
-      await disconnectBillDispenser()
-      throw new Error(
-        "지폐방출기 초기화에 실패했습니다.\n\n확인사항:\n" +
-          "1. 지폐방출기 전원 상태 (DC 12V/24V)\n" +
-          "2. RS-232 케이블 연결 (Pin 1: RX, Pin 2: TX, Pin 3: GND)\n" +
-          "3. COM 포트 설정 (9600-8-N-1)",
-      )
-    }
-
-    logConnection("DEVICE_INIT", "지폐방출기 초기화 성공")
-
-    // 초기화 후 잠시 대기
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    // 상태 확인
+    // Step 10: 초기 상태 확인
     logConnection("STATUS_CHECK", "초기 상태 확인")
     await getStatus()
 
@@ -672,9 +653,6 @@ export function setProtocolVersion(isOld: boolean): void {
  */
 export async function resetDispenser(): Promise<boolean> {
   try {
-    // 초기화 전 잠시 대기
-    await new Promise((resolve) => setTimeout(resolve, 300))
-
     const cmd1 = isOldProtocol ? 0x49 : 0x69 // 'I' or 'i'
     const cmd2 = 0x00
     const data = 0x00
@@ -683,21 +661,14 @@ export async function resetDispenser(): Promise<boolean> {
 
     // 응답 예상 값
     const expectedCmd1 = isOldProtocol ? 0x69 : 0x49 // 'i' or 'I'
-    const expectedCmd2 = 0x00
+    const expectedCmd2 = isOldProtocol ? 0x00 : 0x00
 
-    // 명령 전송 전 대기 중인 모든 명령 취소
-    pendingCommands.forEach((command, key) => {
-      clearTimeout(command.timeout)
-      command.reject(new Error("초기화 명령으로 취소됨"))
-    })
-    pendingCommands.clear()
-
-    const response = await sendCommandAndWaitResponse(packet, expectedCmd1, expectedCmd2, 2000)
+    const response = await sendCommandAndWaitResponse(packet, expectedCmd1, expectedCmd2)
 
     if (response && response.length === 5) {
       if (
-        (isOldProtocol && response[1] === 0x69 && response[2] === 0x00 && response[3] === 0x61) || // 'i' + '0x00' + 'a'
-        (!isOldProtocol && response[1] === 0x49 && response[2] === 0x00 && response[3] === 0x41) // 'I' + '0x00' + 'A'
+        (isOldProtocol && response[1] === 0x69 && response[3] === 0x61) || // 'i' + 'a'
+        (!isOldProtocol && response[1] === 0x49 && response[3] === 0x41) // 'I' + 'A'
       ) {
         logCommand("Reset Dispenser", packet, response)
         return true
@@ -722,16 +693,6 @@ export async function dispenseBills(count: number): Promise<boolean> {
   }
 
   try {
-    // 방출 전 상태 확인
-    const status = await getStatus()
-    logDebug(`방출 전 상태: ${status}`)
-
-    // 이미 방출 중이면 중복 방출 방지
-    if (currentStatus === 1) {
-      logCommand("Dispense Bills", [], undefined, "이미 방출 중입니다. 중복 방출 방지")
-      return false
-    }
-
     const cmd1 = isOldProtocol ? 0x44 : 0x64 // 'D' or 'd'
     const cmd2 = count // 방출할 지폐 수
     const data = isOldProtocol ? 0x53 : 0x73 // 'S' or 's'
@@ -741,13 +702,6 @@ export async function dispenseBills(count: number): Promise<boolean> {
     // 응답 예상 값
     const expectedCmd1 = isOldProtocol ? 0x64 : 0x44 // 'd' or 'D'
     const expectedCmd2 = count
-
-    // 명령 전송 전 대기 중인 모든 명령 취소
-    pendingCommands.forEach((command, key) => {
-      clearTimeout(command.timeout)
-      command.reject(new Error("새 명령 시작으로 취소됨"))
-    })
-    pendingCommands.clear()
 
     const response = await sendCommandAndWaitResponse(packet, expectedCmd1, expectedCmd2)
 
@@ -886,77 +840,39 @@ export async function getTotalDispensedCount(): Promise<number | null> {
 
     const packet = createPacket(cmd1, cmd2, data)
 
-    // 명령 전송
-    if (!billDispenserWriter) {
-      logCommand("Get Total Dispensed Count", packet, undefined, "지폐방출기가 연결되지 않음")
-      return null
-    }
+    // 응답 예상 값 (2개의 패킷으로 나눠서 전송됨)
+    const expectedCmd1 = isOldProtocol ? 0x74 : 0x54 // 't' or 'T'
+    const expectedCmd2 = 0x00 // 첫 번째 패킷의 데이터는 가변적
 
-    await billDispenserWriter.write(packet)
-    logDebug("총 배출 수량 확인 명령 전송 완료")
+    const response = await sendCommandAndWaitResponse(packet, expectedCmd1, expectedCmd2, 2000)
 
-    // 첫 번째 패킷 응답 대기 ('t'로 시작하는 패킷)
-    let firstPacket: Uint8Array | null = null
-    let secondPacket: Uint8Array | null = null
+    if (response && response.length === 5) {
+      // 첫 번째 패킷 처리
+      const highBytes = response[2] * 16777216 + response[3] * 65536
 
-    // 최대 2초 동안 응답 대기
-    const startTime = Date.now()
-    while (Date.now() - startTime < 2000) {
-      // 스트림에서 패킷 확인
-      const packets = parseStreamBuffer()
+      // 두 번째 패킷 기다리기
+      const expectedCmd1_2 = isOldProtocol ? 0x67 : 0x47 // 'g' or 'G'
+      const expectedCmd2_2 = 0x00 // 두 번째 패킷의 데이터는 가변적
 
-      for (const packet of packets) {
-        if (packet.length === 5 && packet[0] === 0x24) {
-          // '$'
-          if (packet[1] === 0x74) {
-            // 't' - 첫 번째 패킷
-            firstPacket = packet
-            logDebug("첫 번째 패킷(t) 수신 완료")
-          } else if (packet[1] === 0x67) {
-            // 'g' - 두 번째 패킷
-            secondPacket = packet
-            logDebug("두 번째 패킷(g) 수신 완료")
-          }
-        }
+      const response2 = await sendCommandAndWaitResponse(
+        createPacket(0x00, 0x00, 0x00),
+        expectedCmd1_2,
+        expectedCmd2_2,
+        2000,
+      )
+
+      if (response2 && response2.length === 5) {
+        const lowBytes = response2[2] * 256 + response2[3]
+        const total = highBytes + lowBytes
+
+        logCommand("Get Total Dispensed Count", packet, [...Array.from(response), ...Array.from(response2)])
+
+        totalDispensedCount = total
+        return total
       }
-
-      // 두 패킷 모두 수신했으면 종료
-      if (firstPacket && secondPacket) {
-        break
-      }
-
-      // 잠시 대기
-      await new Promise((resolve) => setTimeout(resolve, 100))
     }
 
-    // 두 패킷 모두 수신했는지 확인
-    if (firstPacket && secondPacket) {
-      // 32비트 숫자 계산
-      const msb = firstPacket[2]
-      const secondByte = firstPacket[3]
-      const thirdByte = secondPacket[2]
-      const lsb = secondPacket[3]
-
-      const total = msb * 16777216 + secondByte * 65536 + thirdByte * 256 + lsb
-
-      logCommand("Get Total Dispensed Count", packet, [...Array.from(firstPacket), ...Array.from(secondPacket)], "성공")
-
-      totalDispensedCount = total
-      return total
-    }
-
-    // 패킷을 모두 수신하지 못한 경우
-    const receivedPackets = []
-    if (firstPacket) receivedPackets.push(...Array.from(firstPacket))
-    if (secondPacket) receivedPackets.push(...Array.from(secondPacket))
-
-    logCommand(
-      "Get Total Dispensed Count",
-      packet,
-      receivedPackets.length > 0 ? receivedPackets : undefined,
-      firstPacket ? "두 번째 패킷 수신 실패" : "응답 패킷 수신 실패",
-    )
-
+    logCommand("Get Total Dispensed Count", packet, response || [], "예상되지 않은 응답")
     return null
   } catch (error) {
     logCommand("Get Total Dispensed Count", [], undefined, `오류: ${error}`)
@@ -1005,66 +921,48 @@ export async function clearTotalDispensedCount(): Promise<boolean> {
  */
 export async function getStatus(): Promise<string | null> {
   try {
-    const cmd1 = 0x53 // 'S'
+    const cmd1 = isOldProtocol ? 0x53 : 0x73 // 'S' or 's'
     const cmd2 = 0x00
     const data = 0x00
 
     const packet = createPacket(cmd1, cmd2, data)
 
-    // 명령 전송
-    if (!billDispenserWriter) {
-      logCommand("Get Status", packet, undefined, "지폐방출기가 연결되지 않음")
-      return null
-    }
+    // 응답 예상 값
+    const expectedCmd1 = isOldProtocol ? 0x73 : 0x53 // 's' or 'S'
+    const expectedCmd2 = 0x00 // 다양한 상태 코드가 올 수 있음
 
-    await billDispenserWriter.write(packet)
-    logDebug("상태 확인 명령 전송 완료")
+    const response = await sendCommandAndWaitResponse(packet, expectedCmd1, expectedCmd2)
 
-    // 응답 대기 (더 유연한 방식)
-    await new Promise((resolve) => setTimeout(resolve, 200)) // 200ms 대기
+    if (response && response.length === 5) {
+      const statusCode = response[2]
+      const statusData = response[3]
 
-    // 스트림에서 응답 찾기
-    const packets = parseStreamBuffer()
-    for (const response of packets) {
-      if (response[1] === 0x73) {
-        // 's' 응답
-        const statusCode = response[2]
-        const statusData = response[3]
+      let statusText = ""
 
-        let statusText = ""
-
-        if (statusCode === 0x74 && statusData === 0x62) {
-          // 't' 'b'
-          statusText = "대기 상태"
-          currentStatus = 0
-        } else if (statusCode === 0x6f && statusData === 0x6e) {
-          // 'o' 'n'
-          statusText = "배출 동작 중"
-          currentStatus = 1
-        } else if (statusCode === 0x68 && statusData === 0x21) {
-          // 'h' '!'
-          statusText = "방출기 동작 금지 상태"
-          currentStatus = 2
-        } else if (statusCode === 0x6f) {
-          // 'o' + count
-          statusText = `${statusData}장 배출 후 정상 종료 상태`
-          currentStatus = 3
-          dispensedCount = statusData
-        } else if (statusCode === 0x6e) {
-          // 'n' + count
-          statusText = `${statusData}장 배출 후 비정상 종료 상태`
-          currentStatus = 4
-          dispensedCount = statusData
-        } else {
-          statusText = `알 수 없는 상태 (CMD2: 0x${statusCode.toString(16)}, DATA: 0x${statusData.toString(16)})`
-        }
-
-        logCommand("Get Status", packet, response)
-        return statusText
+      if (statusCode === 0x74 && statusData === 0x62) {
+        statusText = "대기 상태"
+        currentStatus = 0
+      } else if (statusCode === 0x6f && statusData === 0x6e) {
+        statusText = "배출 동작 중"
+        currentStatus = 1
+      } else if (statusCode === 0x68 && statusData === 0x21) {
+        statusText = "방출기 동작 금지 상태"
+        currentStatus = 2
+      } else if (statusCode === 0x6f) {
+        statusText = `${statusData}장 배출 후 정상 종료 상태`
+        currentStatus = 3
+        dispensedCount = statusData
+      } else if (statusCode === 0x6e) {
+        statusText = `${statusData}장 배출 후 비정상 종료 상태`
+        currentStatus = 4
+        dispensedCount = statusData
       }
+
+      logCommand("Get Status", packet, response)
+      return statusText
     }
 
-    logCommand("Get Status", packet, [], "응답 없음")
+    logCommand("Get Status", packet, response || [], "예상되지 않은 응답")
     return null
   } catch (error) {
     logCommand("Get Status", [], undefined, `오류: ${error}`)
@@ -1241,74 +1139,4 @@ export function getStatusString(status: number): string {
     default:
       return `알 수 없는 상태 (${status})`
   }
-}
-
-async function sendCommandWithFlexibleResponse(
-  packet: Uint8Array,
-  expectedCmd1: number,
-  timeoutMs = 1000,
-  retries = 3,
-): Promise<Uint8Array | null> {
-  if (!billDispenserWriter) {
-    logCommand("SEND_COMMAND", packet, undefined, "지폐방출기가 연결되지 않음")
-    return null
-  }
-
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      logDebug(`명령 전송 시도 ${attempt}/${retries}`)
-
-      // 응답 대기 설정 - CMD1만 매칭
-      const responsePromise = new Promise<Uint8Array>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error(`명령 타임아웃: ${expectedCmd1.toString(16)}`))
-        }, timeoutMs)
-
-        // 임시 리스너 설정
-        const checkResponse = () => {
-          // 스트림에서 패킷 확인
-          const packets = parseStreamBuffer()
-          for (const responsePacket of packets) {
-            if (responsePacket[1] === expectedCmd1) {
-              clearTimeout(timeout)
-              resolve(responsePacket)
-              return
-            }
-          }
-          // 응답이 없으면 다시 확인
-          setTimeout(checkResponse, 50)
-        }
-
-        setTimeout(checkResponse, 50)
-      })
-
-      // 명령 전송
-      await billDispenserWriter.write(packet)
-      logDebug("명령 전송 완료")
-
-      // 응답 대기
-      try {
-        const response = await responsePromise
-        logDebug("유효한 응답 수신")
-        return response
-      } catch (timeoutError) {
-        logDebug(`명령 타임아웃 (시도 ${attempt}/${retries}): ${timeoutError}`)
-        if (attempt === retries) {
-          logCommand("SEND_COMMAND", packet, undefined, "최종 타임아웃")
-          return null
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100))
-      }
-    } catch (error) {
-      const errorMsg = `명령 전송 오류 (시도 ${attempt}/${retries}): ${error}`
-      logDebug(errorMsg)
-      if (attempt === retries) {
-        logCommand("SEND_COMMAND", packet, undefined, errorMsg)
-        return null
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100))
-    }
-  }
-
-  return null
 }
