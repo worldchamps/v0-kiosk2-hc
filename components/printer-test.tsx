@@ -13,6 +13,7 @@ import {
 } from "@/lib/printer-utils"
 
 export default function PrinterTest() {
+  const [isConnecting, setIsConnecting] = useState(false)
   const [isPrinting, setIsPrinting] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
   const [connectionType, setConnectionType] = useState<"serial" | "usb" | null>(null)
@@ -20,29 +21,10 @@ export default function PrinterTest() {
   const [success, setSuccess] = useState("")
   const [simpleMode, setSimpleMode] = useState(false)
 
-  const isElectron = typeof window !== "undefined" && window.electronAPI
-
   // Load simple mode preference on component mount
   useEffect(() => {
     setSimpleMode(getSimplePrintMode())
-
-    if (isElectron) {
-      checkPrinterStatus()
-      const interval = setInterval(checkPrinterStatus, 5000)
-      return () => clearInterval(interval)
-    }
-  }, [isElectron])
-
-  const checkPrinterStatus = async () => {
-    if (isElectron && window.electronAPI.getPrinterStatus) {
-      try {
-        const status = await window.electronAPI.getPrinterStatus()
-        setIsConnected(status && status.connected)
-      } catch (err) {
-        console.error("프린터 상태 확인 오류:", err)
-      }
-    }
-  }
+  }, [])
 
   // Toggle simple mode
   const handleToggleSimpleMode = () => {
@@ -51,19 +33,27 @@ export default function PrinterTest() {
     setSimplePrintMode(newMode)
   }
 
-  const handleSerialConnect = async () => {
-    if (isElectron) {
-      // Electron 환경: 이미 연결되어 있는지 확인
-      const status = await window.electronAPI.getPrinterStatus()
-      if (status && status.connected) {
-        setIsConnected(true)
-        setConnectionType("serial")
-        setSuccess("프린터가 이미 연결되어 있습니다 (COM2)")
-      } else {
-        setError("프린터가 연결되어 있지 않습니다. Electron 앱을 재시작하세요.")
+  // iconv-lite 라이브러리 로드
+  useEffect(() => {
+    const loadIconvLite = () => {
+      if (typeof window !== "undefined" && !(window as any).iconv) {
+        const script = document.createElement("script")
+        script.src = "https://cdn.jsdelivr.net/npm/iconv-lite@0.6.3/lib/index.min.js"
+        document.head.appendChild(script)
       }
-    } else {
-      // 웹 환경: Web Serial API 사용
+    }
+
+    loadIconvLite()
+  }, [])
+
+  // 시리얼 프린터 연결 함수 (COM2 자동 연결 시도)
+  const handleSerialConnect = async () => {
+    setIsConnecting(true)
+    setError("")
+    setSuccess("")
+
+    try {
+      // COM2 포트에 자동 연결 시도
       const connected = await connectPrinter()
       setIsConnected(connected)
       setConnectionType("serial")
@@ -73,6 +63,11 @@ export default function PrinterTest() {
       } else {
         setError("프린터 연결에 실패했습니다. COM2 포트가 있는지 확인하세요.")
       }
+    } catch (err) {
+      console.error("프린터 연결 오류:", err)
+      setError("프린터 연결 중 오류가 발생했습니다. COM2 포트를 확인하세요.")
+    } finally {
+      setIsConnecting(false)
     }
   }
 
@@ -93,8 +88,8 @@ export default function PrinterTest() {
   }
 
   const handlePrintTest = async () => {
-    if (!isConnected && isElectron) {
-      setError("프린터가 연결되어 있지 않습니다. Electron 앱을 재시작하세요.")
+    if (!isConnected) {
+      setError("프린터가 연결되어 있지 않습니다.")
       return
     }
 
@@ -143,12 +138,7 @@ export default function PrinterTest() {
         )}
 
         <div className="space-y-4">
-          {isElectron ? (
-            <div className="flex items-center gap-2 text-green-600">
-              <Wifi className="h-5 w-5" />
-              <span>{isConnected ? "프린터 연결됨 (COM2)" : "프린터 연결 안됨"}</span>
-            </div>
-          ) : (
+          {!isConnected ? (
             <div className="space-y-4">
               <div className="bg-blue-50 p-3 rounded-md text-blue-700 text-sm">
                 <p className="font-bold">안내:</p>
@@ -160,28 +150,35 @@ export default function PrinterTest() {
 
               <Button
                 onClick={handleSerialConnect}
-                disabled={isPrinting}
+                disabled={isConnecting}
                 className="w-full flex items-center justify-center gap-2"
               >
-                {isPrinting ? <Loader2 className="h-5 w-5 animate-spin" /> : <WifiOff className="h-5 w-5" />}
+                {isConnecting ? <Loader2 className="h-5 w-5 animate-spin" /> : <WifiOff className="h-5 w-5" />}
                 프린터 연결
               </Button>
             </div>
-          )}
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-green-600">
+                <Wifi className="h-5 w-5" />
+                <span>프린터가 연결되었습니다 (COM2)</span>
+              </div>
 
-          <Button
-            onClick={handlePrintTest}
-            disabled={isPrinting || (isElectron && !isConnected)}
-            className="w-full flex items-center justify-center gap-2"
-          >
-            {isPrinting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Printer className="h-5 w-5" />}
-            테스트 인쇄
-          </Button>
+              <div className="grid grid-cols-2 gap-4">
+                <Button
+                  onClick={handlePrintTest}
+                  disabled={isPrinting}
+                  className="flex items-center justify-center gap-2"
+                >
+                  {isPrinting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Printer className="h-5 w-5" />}
+                  테스트 인쇄
+                </Button>
 
-          {!isElectron && isConnected && (
-            <Button variant="outline" onClick={handleDisconnect} disabled={isPrinting}>
-              연결 해제
-            </Button>
+                <Button variant="outline" onClick={handleDisconnect} disabled={isPrinting}>
+                  결 해제
+                </Button>
+              </div>
+            </div>
           )}
         </div>
 

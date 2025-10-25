@@ -6,8 +6,8 @@ import { Input } from "@/components/ui/input"
 import KoreanKeyboard from "./korean-keyboard"
 import { Loader2 } from "lucide-react"
 import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
+// 상단에 음성 유틸리티 import 추가
 import { playAudio } from "@/lib/audio-utils"
-import { useIdleTimer } from "@/hooks/use-idle-timer"
 
 interface ReservationConfirmProps {
   onNavigate: (screen: string) => void
@@ -16,7 +16,6 @@ interface ReservationConfirmProps {
   setGuestName: (name: string) => void
   loading?: boolean
   kioskLocation: KioskLocation
-  isPopupMode?: boolean
 }
 
 export default function ReservationConfirm({
@@ -26,27 +25,22 @@ export default function ReservationConfirm({
   setGuestName,
   loading = false,
   kioskLocation,
-  isPopupMode = false,
 }: ReservationConfirmProps) {
+  // Always show keyboard by default
   const [showKeyboard, setShowKeyboard] = useState(true)
+  // 입력창에 대한 ref 추가
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // 위치에 따른 제목
   const locationTitle = getLocationTitle(kioskLocation)
 
-  useIdleTimer({
-    onIdle: () => {
-      console.log("[v0] Reservation confirm idle, navigating to idle screen")
-      onNavigate("idle")
-    },
-    idleTime: 60000,
-    enabled: true,
-  })
-
+  // 컴포넌트가 마운트될 때 자동으로 입력창에 포커스
   useEffect(() => {
     if (inputRef.current) {
       inputRef.current.focus()
     }
 
+    // 컴포넌트 마운트 시 음성 재생
     playAudio("RESERVATION_PROMPT")
   }, [])
 
@@ -56,21 +50,11 @@ export default function ReservationConfirm({
     }
   }
 
-  const handleBackClick = () => {
-    if (isPopupMode) {
-      if (typeof window !== "undefined" && window.electronAPI) {
-        window.electronAPI.send("checkin-complete")
-      }
-    } else {
-      onNavigate("standby")
-      setGuestName("")
-    }
-  }
-
   return (
     <div className="flex items-start justify-start w-full h-full">
       <div className="kiosk-content-container">
         <div>
+          <h1 className="kiosk-title">{locationTitle}</h1>
           <div className="kiosk-highlight">예약 확인</div>
         </div>
 
@@ -91,6 +75,7 @@ export default function ReservationConfirm({
             />
           </div>
 
+          {/* Always show keyboard */}
           <div className="mt-8">
             <KoreanKeyboard
               text={guestName}
@@ -118,8 +103,11 @@ export default function ReservationConfirm({
 
             <Button
               variant="outline"
-              onClick={handleBackClick}
-              className="h-20 text-2xl border-3 border-gray-300 font-bold rounded-xl bg-transparent"
+              onClick={() => {
+                onNavigate("standby")
+                setGuestName("")
+              }}
+              className="h-20 text-2xl border-3 border-gray-300 font-bold rounded-xl"
               disabled={loading}
             >
               돌아가기

@@ -44,6 +44,11 @@ import {
   getStatusString,
   getErrorString,
   getLastEventMessage,
+  disableAcceptance,
+  clearTotalAcceptedAmount,
+  clearInsertedAmount,
+  setBillCountingCallback,
+  sendEventTxCommand,
 } from "@/lib/bill-acceptor-utils"
 import BillAcceptorDiagnostics from "./bill-acceptor-diagnostics"
 
@@ -70,8 +75,14 @@ export default function BillAcceptorTest() {
     autoStack: false,
     eventTx: false,
   })
-  const [acceptedBills, setAcceptedBills] = useState<number[]>([])
-  const [rejectedBills, setRejectedBills] = useState<number[]>([])
+  // 지폐 개수 추적
+  const [billCounts, setBillCounts] = useState({
+    bill1000: 0,
+    bill5000: 0,
+    bill10000: 0,
+    bill50000: 0,
+  })
+  const [totalAmount, setTotalAmount] = useState(0)
   const [currentBillType, setCurrentBillType] = useState<number>(0)
   const [txMessages, setTxMessages] = useState<string[]>([])
   const [rxMessages, setRxMessages] = useState<string[]>([])
@@ -79,10 +90,13 @@ export default function BillAcceptorTest() {
   const [selectedPort, setSelectedPort] = useState("COM4")
   const [lastEvent, setLastEvent] = useState<any>(null)
 
-  const isElectron = typeof window !== "undefined" && window.electronAPI
-
   // Update connection status and device info
   useEffect(() => {
+    // 지폐 카운팅 콜백 설정
+    setBillCountingCallback((amount: number) => {
+      updateBillCount(amount)
+    })
+
     const interval = setInterval(async () => {
       const connected = isBillAcceptorConnected()
       setIsConnected(connected)
@@ -131,49 +145,35 @@ export default function BillAcceptorTest() {
     setError("")
 
     try {
-      if (isElectron) {
-        // Electron 환경: 이미 연결되어 있는지 확인
-        const status = await window.electronAPI.getBillAcceptorStatus()
-        if (status && status.connected) {
-          setIsConnected(true)
-          setStatus("지폐인식기가 이미 연결되어 있습니다 (COM4)")
-        } else {
-          setError("지폐인식기가 연결되어 있지 않습니다. Electron 앱을 재시작하세요.")
+      const connected = await connectBillAcceptor()
+      if (connected) {
+        setIsConnected(true)
+        setStatus("연결 완료")
+
+        // Get initial device info
+        const config = await getConfig()
+        const currentStatus = await getStatus()
+
+        setDeviceStatus({
+          ...getBillAcceptorStatus(),
+          config,
+          currentStatus,
+        })
+
+        // Parse config to update checkboxes
+        if (config !== null) {
+          setBillConfig({
+            bill1000: (config & 0x01) !== 0,
+            bill5000: (config & 0x02) !== 0,
+            bill10000: (config & 0x04) !== 0,
+            bill50000: (config & 0x08) !== 0,
+            autoStack: (config & 0x10) !== 0,
+            eventTx: (config & 0x20) !== 0,
+          })
         }
       } else {
-        // 웹 환경: Web Serial API 사용
-        const connected = await connectBillAcceptor()
-        if (connected) {
-          setIsConnected(true)
-          setStatus("연결 완료")
-
-          // Get initial device info
-          const version = await getVersion()
-          const config = await getConfig()
-          const currentStatus = await getStatus()
-
-          setDeviceStatus({
-            ...getBillAcceptorStatus(),
-            version,
-            config,
-            currentStatus,
-          })
-
-          // Parse config to update checkboxes
-          if (config !== null) {
-            setBillConfig({
-              bill1000: (config & 0x01) !== 0,
-              bill5000: (config & 0x02) !== 0,
-              bill10000: (config & 0x04) !== 0,
-              bill50000: (config & 0x08) !== 0,
-              autoStack: (config & 0x10) !== 0,
-              eventTx: (config & 0x20) !== 0,
-            })
-          }
-        } else {
-          setStatus("연결 실패")
-          setError("지폐인식기와 연결할 수 없습니다.")
-        }
+        setStatus("연결 실패")
+        setError("지폐인식기와 연결할 수 없습니다.")
       }
     } catch (error: any) {
       setStatus("연결 실패")
@@ -356,7 +356,6 @@ export default function BillAcceptorTest() {
       const result = await returnBill()
       if (result) {
         setStatus("지폐 반환 완료")
-        setRejectedBills((prev) => [...prev, currentBillType])
         setError("")
       } else {
         setStatus("지폐 반환 실패")
@@ -378,7 +377,7 @@ export default function BillAcceptorTest() {
       const result = await stackBill()
       if (result) {
         setStatus("지폐 적재 완료")
-        setAcceptedBills((prev) => [...prev, currentBillType])
+        updateBillCount(currentBillType)
         setError("")
       } else {
         setStatus("지폐 적재 실패")
@@ -438,6 +437,118 @@ export default function BillAcceptorTest() {
     setError("")
   }
 
+  // 입수총액 지움
+  const handleClearTotalAmount = () => {
+    setBillCounts({
+      bill1000: 0,
+      bill5000: 0,
+      bill10000: 0,
+      bill50000: 0,
+    })
+    setTotalAmount(0)
+    setStatus("입수총액이 초기화되었습니다")
+  }
+
+  // 입수 금지
+  const handleProhibitAcceptance = async () => {
+    setIsProcessing(true)
+    setStatus("입수 금지 설정 중...")
+    try {
+      const result = await disableAcceptance()
+      setStatus(result ? "입수 금지 설정됨" : "입수 금지 설정 실패")
+    } catch (error: any) {
+      setStatus("입수 금지 설정 오류")
+      setError(error.message || "입수 금지 설정 중 오류가 발생했습니다.")
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // 지폐 입수 시 개수 업데이트
+  const updateBillCount = (amount: number) => {
+    setBillCounts((prev) => {
+      const newCounts = { ...prev }
+      switch (amount) {
+        case 1000:
+          newCounts.bill1000++
+          break
+        case 5000:
+          newCounts.bill5000++
+          break
+        case 10000:
+          newCounts.bill10000++
+          break
+        case 50000:
+          newCounts.bill50000++
+          break
+      }
+      return newCounts
+    })
+    setTotalAmount((prev) => prev + amount)
+  }
+
+  // 입수총액 지움 (하드웨어 명령)
+  const handleClearTotalAmountHardware = async () => {
+    setIsProcessing(true)
+    setStatus("입수총액 지우는 중...")
+    try {
+      const result = await clearTotalAcceptedAmount()
+      if (result) {
+        setBillCounts({
+          bill1000: 0,
+          bill5000: 0,
+          bill10000: 0,
+          bill50000: 0,
+        })
+        setTotalAmount(0)
+        setStatus("입수총액이 초기화되었습니다")
+      } else {
+        setStatus("입수총액 초기화 실패")
+      }
+    } catch (error: any) {
+      setStatus("입수총액 초기화 오류")
+      setError(error.message || "입수총액 초기화 중 오류가 발생했습니다.")
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // 투입금 지움
+  const handleClearInsertedAmount = async () => {
+    setIsProcessing(true)
+    setStatus("투입금 지우는 중...")
+    try {
+      const result = await clearInsertedAmount()
+      setStatus(result ? "투입금이 초기화되었습니다" : "투입금 초기화 실패")
+    } catch (error: any) {
+      setStatus("투입금 초기화 오류")
+      setError(error.message || "투입금 초기화 중 오류가 발생했습니다.")
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // Send Event TX command
+  const handleSendEventTx = async () => {
+    setIsProcessing(true)
+    setStatus("Event TX 명령 전송 중...")
+    try {
+      const result = await sendEventTxCommand()
+      if (result) {
+        setStatus("Event TX 명령 전송 성공")
+        setError("")
+      } else {
+        setStatus("Event TX 명령 전송 실패")
+        setError("Event TX 명령을 전송할 수 없습니다.")
+      }
+    } catch (error: any) {
+      setStatus("Event TX 명령 전송 오류")
+      setError(error.message || "Event TX 명령 전송 중 오류가 발생했습니다.")
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <Card>
@@ -484,66 +595,56 @@ export default function BillAcceptorTest() {
                 </Alert>
               )}
 
+              {/* 상단: COM Port 선택과 OPEN 버튼 */}
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-sm">포트:</span>
+                <Select value={selectedPort} onValueChange={setSelectedPort}>
+                  <SelectTrigger className="w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="COM4">COM4</SelectItem>
+                    <SelectItem value="COM3">COM3</SelectItem>
+                    <SelectItem value="COM2">COM2</SelectItem>
+                    <SelectItem value="COM1">COM1</SelectItem>
+                  </SelectContent>
+                </Select>
+                {!isConnected ? (
+                  <Button size="sm" onClick={handleConnect} disabled={isProcessing || !("serial" in navigator)}>
+                    <Power className="h-4 w-4 mr-1" />
+                    {isProcessing ? "연결 중..." : "OPEN"}
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="outline" onClick={handleDisconnect} disabled={isProcessing}>
+                    <PowerOff className="h-4 w-4 mr-1" />
+                    CLOSE
+                  </Button>
+                )}
+              </div>
+
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Left Column - Connection & Configuration */}
                 <div className="space-y-4">
-                  {/* Connection Section */}
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-sm">연결 설정</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm">포트:</span>
-                        <Select value={selectedPort} onValueChange={setSelectedPort}>
-                          <SelectTrigger className="w-24">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="COM4">COM4</SelectItem>
-                            <SelectItem value="COM3">COM3</SelectItem>
-                            <SelectItem value="COM2">COM2</SelectItem>
-                            <SelectItem value="COM1">COM1</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        {!isConnected ? (
-                          <Button size="sm" onClick={handleConnect} disabled={isProcessing || !("serial" in navigator)}>
-                            <Power className="h-4 w-4 mr-1" />
-                            {isProcessing ? "연결 중..." : "OPEN"}
-                          </Button>
-                        ) : (
-                          <Button size="sm" variant="outline" onClick={handleDisconnect} disabled={isProcessing}>
-                            <PowerOff className="h-4 w-4 mr-1" />
-                            CLOSE
-                          </Button>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-
                   {/* Device Control */}
                   <Card>
                     <CardHeader className="pb-3">
                       <CardTitle className="text-sm">지폐인식기</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-2">
-                      <div className="grid grid-cols-2 gap-2">
-                        <Button size="sm" onClick={handleConnect} disabled={!isConnected || isProcessing}>
-                          Connection
-                        </Button>
+                      <div className="grid grid-cols-1 gap-2">
                         <Button size="sm" onClick={handleReset} disabled={!isConnected || isProcessing}>
                           <RotateCcw className="h-4 w-4 mr-1" />
                           RESET
                         </Button>
+                        <Button
+                          size="sm"
+                          className="w-full"
+                          onClick={handleVersionCheck}
+                          disabled={!isConnected || isProcessing}
+                        >
+                          Version Check
+                        </Button>
                       </div>
-                      <Button
-                        size="sm"
-                        className="w-full"
-                        onClick={handleVersionCheck}
-                        disabled={!isConnected || isProcessing}
-                      >
-                        Version Check
-                      </Button>
                     </CardContent>
                   </Card>
 
@@ -633,39 +734,33 @@ export default function BillAcceptorTest() {
                   </Card>
                 </div>
 
-                {/* Center Column - Status & Control */}
+                {/* Center Column - 지폐 개수 표시 */}
                 <div className="space-y-4">
-                  {/* Bill Status */}
                   <Card>
                     <CardHeader className="pb-3">
-                      <CardTitle className="text-sm">지폐 현황</CardTitle>
+                      <CardTitle className="text-sm">지폐 개수</CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <p className="text-sm font-medium mb-2">취급권:</p>
-                          <div className="bg-green-50 p-2 rounded min-h-[60px]">
-                            {acceptedBills.map((bill, index) => (
-                              <Badge key={index} variant="default" className="mr-1 mb-1">
-                                {bill.toLocaleString()}원
-                              </Badge>
-                            ))}
-                          </div>
+                          <p className="text-sm">천원권: {billCounts.bill1000}</p>
+                          <p className="text-sm">만원권: {billCounts.bill10000}</p>
                         </div>
                         <div>
-                          <p className="text-sm font-medium mb-2">오취급권:</p>
-                          <div className="bg-red-50 p-2 rounded min-h-[60px]">
-                            {rejectedBills.map((bill, index) => (
-                              <Badge key={index} variant="destructive" className="mr-1 mb-1">
-                                {bill.toLocaleString()}원
-                              </Badge>
-                            ))}
-                          </div>
+                          <p className="text-sm">오천원권: {billCounts.bill5000}</p>
+                          <p className="text-sm">오만원권: {billCounts.bill50000}</p>
                         </div>
                       </div>
+                      <p className="text-sm mt-4">총 입수액: {totalAmount.toLocaleString()}원</p>
+                      <Button size="sm" variant="outline" onClick={handleClearTotalAmount}>
+                        입수총액 지움
+                      </Button>
                     </CardContent>
                   </Card>
+                </div>
 
+                {/* Right Column - Bill Control */}
+                <div className="space-y-4">
                   {/* Device Status */}
                   <Card>
                     <CardHeader className="pb-3">
@@ -693,42 +788,17 @@ export default function BillAcceptorTest() {
                           )}
                         </div>
                       )}
-                      <div className="grid grid-cols-2 gap-2">
-                        <Button size="sm" onClick={handleReadStatus} disabled={!isConnected || isProcessing}>
-                          <Eye className="h-4 w-4 mr-1" />
-                          Read Status
-                        </Button>
-                        <Button size="sm" onClick={handleReadStatus} disabled={!isConnected || isProcessing}>
-                          오류 내용
-                        </Button>
-                      </div>
+                      <Button size="sm" onClick={handleReadStatus} disabled={!isConnected || isProcessing}>
+                        <Eye className="h-4 w-4 mr-1" />
+                        Read Status
+                      </Button>
                     </CardContent>
                   </Card>
 
-                  {/* Status Display */}
-                  <Card>
-                    <CardContent className="pt-6">
-                      <div
-                        className={`p-3 rounded text-sm ${
-                          status.includes("실패") || status.includes("오류")
-                            ? "bg-red-50 text-red-700"
-                            : status.includes("완료") || status.includes("성공")
-                              ? "bg-green-50 text-green-700"
-                              : "bg-blue-50 text-blue-700"
-                        }`}
-                      >
-                        {status || "대기 중..."}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-
-                {/* Right Column - Bill Control */}
-                <div className="space-y-4">
                   {/* Bill Input Control */}
                   <Card>
                     <CardHeader className="pb-3">
-                      <CardTitle className="text-sm">입수 립 지폐 종류</CardTitle>
+                      <CardTitle className="text-sm">수동 제어</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       <div className="flex items-center space-x-2">
@@ -750,19 +820,7 @@ export default function BillAcceptorTest() {
                         </p>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2">
-                        <Button size="sm" onClick={handleEnableAcceptance} disabled={!isConnected || isProcessing}>
-                          <Check className="h-4 w-4 mr-1" />
-                          입수 가능
-                        </Button>
-                        <Button size="sm" onClick={handleReturnBill} disabled={!isConnected || isProcessing}>
-                          <ArrowLeft className="h-4 w-4 mr-1" />
-                          입수 반환
-                        </Button>
-                        <Button size="sm" onClick={handleStackBill} disabled={!isConnected || isProcessing}>
-                          <Download className="h-4 w-4 mr-1" />
-                          독립금 지출
-                        </Button>
+                      <div className="grid grid-cols-1 gap-2">
                         <Button size="sm" onClick={handleCheckBillType} disabled={!isConnected || isProcessing}>
                           <Eye className="h-4 w-4 mr-1" />
                           지폐 종류 확인
@@ -773,9 +831,40 @@ export default function BillAcceptorTest() {
                 </div>
               </div>
 
+              {/* 하단: Read Status, 오류 내용, 입수 관련 버튼들 */}
               <Separator className="my-6" />
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                <Button size="sm" onClick={handleReadStatus} disabled={!isConnected || isProcessing}>
+                  오류 내용
+                </Button>
+                <Button size="sm" onClick={handleClearTotalAmountHardware} disabled={!isConnected || isProcessing}>
+                  입수총액 지움
+                </Button>
+                <Button size="sm" onClick={handleEnableAcceptance} disabled={!isConnected || isProcessing}>
+                  <Check className="h-4 w-4 mr-1" />
+                  입수 가능
+                </Button>
+                <Button size="sm" onClick={handleProhibitAcceptance} disabled={!isConnected || isProcessing}>
+                  입수 금지
+                </Button>
+                <Button size="sm" onClick={handleReturnBill} disabled={!isConnected || isProcessing}>
+                  <ArrowLeft className="h-4 w-4 mr-1" />
+                  입수 반환
+                </Button>
+                <Button size="sm" onClick={handleStackBill} disabled={!isConnected || isProcessing}>
+                  <Download className="h-4 w-4 mr-1" />
+                  독립금 지출
+                </Button>
+                <Button size="sm" onClick={handleClearInsertedAmount} disabled={!isConnected || isProcessing}>
+                  투입금 지움
+                </Button>
+                <Button size="sm" onClick={handleSendEventTx} disabled={!isConnected || isProcessing}>
+                  Event TX
+                </Button>
+              </div>
 
-              {/* RS232 Message Log */}
+              {/* 최하단: RS232 Message 로그 */}
+              <Separator className="my-6" />
               <Card>
                 <CardHeader className="pb-3">
                   <div className="flex justify-between items-center">

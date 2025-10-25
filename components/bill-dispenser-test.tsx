@@ -61,8 +61,6 @@ export default function BillDispenserTest() {
   const [totalDispensed, setTotalDispensed] = useState<number | null>(null)
   const [errorInfo, setErrorInfo] = useState<{ code: number; description: string } | null>(null)
 
-  const isElectron = typeof window !== "undefined" && window.electronAPI
-
   // Update connection status and device info
   useEffect(() => {
     const interval = setInterval(async () => {
@@ -107,39 +105,27 @@ export default function BillDispenserTest() {
     setError("")
 
     try {
-      if (isElectron) {
-        // Electron 환경: 이미 연결되어 있는지 확인
-        const status = await window.electronAPI.getBillDispenserStatus()
-        if (status && status.connected) {
-          setIsConnected(true)
-          setStatus("지폐방출기가 이미 연결되어 있습니다 (COM5)")
-        } else {
-          setError("지폐방출기가 연결되어 있지 않습니다. Electron 앱을 재시작하세요.")
+      const connected = await connectBillDispenser()
+      if (connected) {
+        setIsConnected(true)
+        setStatus("연결 완료")
+
+        // Get initial device info
+        const statusText = await getStatus()
+        const totalCount = await getTotalDispensedCount()
+
+        if (statusText) {
+          setStatus(statusText)
         }
+
+        if (totalCount !== null) {
+          setTotalDispensed(totalCount)
+        }
+
+        setDeviceStatus(getBillDispenserStatus())
       } else {
-        // 웹 환경: Web Serial API 사용
-        const connected = await connectBillDispenser()
-        if (connected) {
-          setIsConnected(true)
-          setStatus("연결 완료")
-
-          // Get initial device info
-          const statusText = await getStatus()
-          const totalCount = await getTotalDispensedCount()
-
-          if (statusText) {
-            setStatus(statusText)
-          }
-
-          if (totalCount !== null) {
-            setTotalDispensed(totalCount)
-          }
-
-          setDeviceStatus(getBillDispenserStatus())
-        } else {
-          setStatus("연결 실패")
-          setError("지폐방출기와 연결할 수 없습니다.")
-        }
+        setStatus("연결 실패")
+        setError("지폐방출기와 연결할 수 없습니다.")
       }
     } catch (error: any) {
       setStatus("연결 실패")
@@ -474,7 +460,7 @@ export default function BillDispenserTest() {
                   <Button
                     onClick={handleReset}
                     disabled={!isConnected || isProcessing}
-                    className="w-full bg-transparent"
+                    className="w-full"
                     variant="outline"
                   >
                     <RotateCcw className="h-4 w-4 mr-2" />
@@ -580,7 +566,7 @@ export default function BillDispenserTest() {
                     onClick={handleGetErrorCode}
                     disabled={!isConnected || isProcessing}
                     variant="outline"
-                    className="w-full bg-transparent"
+                    className="w-full"
                   >
                     <AlertTriangle className="h-4 w-4 mr-2" />
                     에러 코드 확인
