@@ -11,6 +11,10 @@ let billAcceptorPort = null
 let billDispenserPort = null
 let printerPort = null
 
+let printerConnecting = false
+let billAcceptorConnecting = false
+let billDispenserConnecting = false
+
 const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
 const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"
 const isDev = process.env.NODE_ENV !== "production"
@@ -179,6 +183,22 @@ async function detectPrinterPort() {
 }
 
 async function connectBillAcceptor() {
+  if (billAcceptorConnecting) {
+    if (isDev) {
+      console.log("[v0] 지폐 인식기 연결 시도 중... 대기")
+    }
+    return
+  }
+
+  if (billAcceptorPort && billAcceptorPort.isOpen) {
+    if (isDev) {
+      console.log("[v0] 지폐 인식기 이미 연결됨")
+    }
+    return
+  }
+
+  billAcceptorConnecting = true
+
   try {
     if (billAcceptorPort && billAcceptorPort.isOpen) {
       await new Promise((resolve) => {
@@ -189,6 +209,7 @@ async function connectBillAcceptor() {
           resolve()
         })
       })
+      await new Promise((resolve) => setTimeout(resolve, 500))
     }
 
     billAcceptorPort = new SerialPort({
@@ -201,6 +222,8 @@ async function connectBillAcceptor() {
     })
 
     billAcceptorPort.open((err) => {
+      billAcceptorConnecting = false
+
       if (err) {
         if (isDev) {
           console.error("[v0] 지폐 인식기 연결 실패:", err.message)
@@ -260,6 +283,7 @@ async function connectBillAcceptor() {
       setTimeout(connectBillAcceptor, 5000)
     })
   } catch (error) {
+    billAcceptorConnecting = false
     if (isDev) {
       console.error("[v0] 지폐 인식기 초기화 실패:", error)
     }
@@ -268,6 +292,22 @@ async function connectBillAcceptor() {
 }
 
 async function connectBillDispenser() {
+  if (billDispenserConnecting) {
+    if (isDev) {
+      console.log("[v0] 지폐 방출기 연결 시도 중... 대기")
+    }
+    return
+  }
+
+  if (billDispenserPort && billDispenserPort.isOpen) {
+    if (isDev) {
+      console.log("[v0] 지폐 방출기 이미 연결됨")
+    }
+    return
+  }
+
+  billDispenserConnecting = true
+
   try {
     if (billDispenserPort && billDispenserPort.isOpen) {
       await new Promise((resolve) => {
@@ -278,6 +318,7 @@ async function connectBillDispenser() {
           resolve()
         })
       })
+      await new Promise((resolve) => setTimeout(resolve, 500))
     }
 
     billDispenserPort = new SerialPort({
@@ -290,6 +331,8 @@ async function connectBillDispenser() {
     })
 
     billDispenserPort.open((err) => {
+      billDispenserConnecting = false
+
       if (err) {
         if (isDev) {
           console.error("[v0] 지폐 방출기 연결 실패:", err.message)
@@ -349,6 +392,7 @@ async function connectBillDispenser() {
       setTimeout(connectBillDispenser, 5000)
     })
   } catch (error) {
+    billDispenserConnecting = false
     if (isDev) {
       console.error("[v0] 지폐 방출기 초기화 실패:", error)
     }
@@ -357,6 +401,22 @@ async function connectBillDispenser() {
 }
 
 async function connectPrinter() {
+  if (printerConnecting) {
+    if (isDev) {
+      console.log("[PRINTER] Connection attempt already in progress, waiting...")
+    }
+    return
+  }
+
+  if (printerPort && printerPort.isOpen) {
+    if (isDev) {
+      console.log("[PRINTER] Already connected and port is open")
+    }
+    return
+  }
+
+  printerConnecting = true
+
   try {
     if (printerPort && printerPort.isOpen) {
       await new Promise((resolve) => {
@@ -367,7 +427,7 @@ async function connectPrinter() {
           resolve()
         })
       })
-      await new Promise((resolve) => setTimeout(resolve, 100))
+      await new Promise((resolve) => setTimeout(resolve, 500))
     }
 
     const detectedPrinter = await detectPrinterPort()
@@ -402,10 +462,79 @@ async function connectPrinter() {
       autoOpen: false,
     })
 
+    let errorBeforeClose = null
+
+    printerPort.on("error", (err) => {
+      errorBeforeClose = err
+      if (isDev) {
+        console.error("[PRINTER] ❌ Error event:", err.message)
+        console.error("[PRINTER] Error code:", err.code || "N/A")
+        console.error("[PRINTER] Error stack:", err.stack)
+      }
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("printer-status", {
+          connected: false,
+          error: err.message,
+        })
+      }
+    })
+
+    printerPort.on("close", (hadError) => {
+      if (isDev) {
+        console.log("[PRINTER] 🔌 Connection closed")
+        console.log("[PRINTER] Close event details:")
+        console.log("  - Had error flag:", hadError)
+        console.log("  - Error before close:", errorBeforeClose ? errorBeforeClose.message : "None")
+        console.log("  - Port was open:", printerPort ? "Yes" : "No")
+
+        if (!errorBeforeClose && !hadError) {
+          console.log("[PRINTER] ⚠️  Port closed without error - possible causes:")
+          console.log("  1. Hardware disconnected (cable unplugged)")
+          console.log("  2. Printer powered off")
+          console.log("  3. Wrong serial port settings (baud rate, parity, etc.)")
+          console.log("  4. Printer doesn't support these settings")
+        }
+      }
+
+      errorBeforeClose = null
+
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("printer-status", {
+          connected: false,
+        })
+      }
+      setTimeout(connectPrinter, 5000)
+    })
+
+    printerPort.on("data", (data) => {
+      if (isDev) {
+        console.log("[PRINTER] Received response from printer:")
+        console.log("[PRINTER] Raw bytes:", Array.from(data))
+        console.log(
+          "[PRINTER] Hex:",
+          Array.from(data)
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join(" "),
+        )
+        console.log("[PRINTER] ASCII:", data.toString("ascii").replace(/[^\x20-\x7E]/g, "."))
+      }
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send("printer-data", {
+          data: Array.from(data),
+          timestamp: new Date().toISOString(),
+        })
+      }
+    })
+
     printerPort.open((err) => {
+      printerConnecting = false
+
       if (err) {
         if (isDev) {
           console.error("[PRINTER] Failed to connect:", err.message)
+          if (err.message.includes("Access denied")) {
+            console.log("[PRINTER] Port may still be in use. Will retry in 10 seconds...")
+          }
         }
         if (mainWindow && mainWindow.webContents) {
           mainWindow.webContents.send("printer-status", {
@@ -434,51 +563,8 @@ async function connectPrinter() {
         })
       }
     })
-
-    printerPort.on("data", (data) => {
-      if (isDev) {
-        console.log("[PRINTER] Received response from printer:")
-        console.log("[PRINTER] Raw bytes:", Array.from(data))
-        console.log(
-          "[PRINTER] Hex:",
-          Array.from(data)
-            .map((b) => b.toString(16).padStart(2, "0"))
-            .join(" "),
-        )
-        console.log("[PRINTER] ASCII:", data.toString("ascii").replace(/[^\x20-\x7E]/g, "."))
-      }
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("printer-data", {
-          data: Array.from(data),
-          timestamp: new Date().toISOString(),
-        })
-      }
-    })
-
-    printerPort.on("error", (err) => {
-      if (isDev) {
-        console.error("[PRINTER] Error:", err)
-      }
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("printer-status", {
-          connected: false,
-          error: err.message,
-        })
-      }
-    })
-
-    printerPort.on("close", () => {
-      if (isDev) {
-        console.log("[PRINTER] Connection closed")
-      }
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("printer-status", {
-          connected: false,
-        })
-      }
-      setTimeout(connectPrinter, 5000)
-    })
   } catch (error) {
+    printerConnecting = false
     if (isDev) {
       console.error("[PRINTER] Initialization failed:", error)
     }
