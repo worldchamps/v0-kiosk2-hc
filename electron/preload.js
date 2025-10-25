@@ -43,6 +43,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   reconnectPrinter: () => ipcRenderer.invoke("reconnect-printer"),
   getPrinterStatus: () => ipcRenderer.invoke("get-printer-status"),
   onPrinterStatus: (callback) => ipcRenderer.on("printer-status", (event, status) => callback(status)),
+  onPrinterData: (callback) => ipcRenderer.on("printer-data", (event, data) => callback(data)),
+  queryPrinterStatus: () => ipcRenderer.invoke("query-printer-status"),
 
   // Electron 환경 확인
   isElectron: true,

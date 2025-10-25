@@ -90,6 +90,8 @@ declare global {
           error?: string
         }) => void,
       ) => void
+      onPrinterData: (callback: (response: { data: number[]; timestamp: string }) => void) => void
+      queryPrinterStatus: () => Promise<{ success: boolean; error?: string }>
       // 필요한 다른 함수들...
     }
   }
@@ -987,8 +989,170 @@ function setupElectronStatusListener() {
   }
 }
 
+let lastPrinterResponse: { data: number[]; timestamp: string } | null = null
+let printerResponseCallbacks: Array<(data: number[]) => void> = []
+
+/**
+ * 프린터 응답 리스너 설정
+ */
+function setupPrinterDataListener() {
+  if (!isBrowser()) {
+    return
+  }
+
+  if (hasElectronAPI() && window.electronAPI?.onPrinterData) {
+    window.electronAPI.onPrinterData((response) => {
+      logDebug(`Received printer response: ${response.data.length} bytes at ${response.timestamp}`)
+      logDebug(`Response hex: ${response.data.map((b: number) => b.toString(16).padStart(2, "0")).join(" ")}`)
+
+      lastPrinterResponse = response
+
+      // 대기 중인 콜백 실행
+      printerResponseCallbacks.forEach((callback) => callback(response.data))
+      printerResponseCallbacks = []
+    })
+    logDebug("Printer data listener attached.")
+  }
+}
+
+/**
+ * 프린터 상태 쿼리 함수
+ */
+export async function queryPrinterStatus(): Promise<boolean> {
+  if (!hasElectronAPI() || !window.electronAPI?.queryPrinterStatus) {
+    logDebug("Electron API (queryPrinterStatus) is not available.")
+    return false
+  }
+
+  try {
+    logDebug("Querying printer real-time status...")
+    const result = await window.electronAPI.queryPrinterStatus()
+
+    if (result.success) {
+      logDebug("Status query sent successfully. Waiting for response...")
+      return true
+    } else {
+      logDebug("Failed to send status query: " + result.error)
+      return false
+    }
+  } catch (error) {
+    logDebug("Exception querying printer status: " + (error as Error).message)
+    return false
+  }
+}
+
+/**
+ * 프린터 응답 대기 함수
+ */
+export async function waitForPrinterResponse(timeoutMs = 2000): Promise<number[] | null> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      logDebug("Printer response timeout")
+      const index = printerResponseCallbacks.indexOf(callback)
+      if (index > -1) {
+        printerResponseCallbacks.splice(index, 1)
+      }
+      resolve(null)
+    }, timeoutMs)
+
+    const callback = (data: number[]) => {
+      clearTimeout(timeout)
+      resolve(data)
+    }
+
+    printerResponseCallbacks.push(callback)
+  })
+}
+
+/**
+ * 프린터 상태 확인 및 응답 파싱
+ */
+export async function checkPrinterReady(): Promise<{
+  ready: boolean
+  online: boolean
+  paperOut: boolean
+  error: boolean
+  statusByte?: number
+  message: string
+}> {
+  try {
+    // 상태 쿼리 전송
+    const querySent = await queryPrinterStatus()
+    if (!querySent) {
+      return {
+        ready: false,
+        online: false,
+        paperOut: false,
+        error: true,
+        message: "상태 쿼리를 보낼 수 없습니다",
+      }
+    }
+
+    // 응답 대기
+    const response = await waitForPrinterResponse(2000)
+
+    if (!response || response.length === 0) {
+      return {
+        ready: false,
+        online: false,
+        paperOut: false,
+        error: true,
+        message: "프린터로부터 응답이 없습니다. 프린터가 꺼져있거나 케이블이 연결되지 않았을 수 있습니다.",
+      }
+    }
+
+    // DLE EOT 응답 파싱 (1바이트 상태)
+    const statusByte = response[0]
+    logDebug(`Printer status byte: 0x${statusByte.toString(16).padStart(2, "0")} (${statusByte})`)
+
+    // 비트 분석
+    const online = (statusByte & 0x08) === 0 // bit 3: 0 = online, 1 = offline
+    const paperOut = (statusByte & 0x20) !== 0 // bit 5: 1 = paper end
+    const error = (statusByte & 0x40) !== 0 // bit 6: 1 = error
+
+    let message = "프린터 상태: "
+    if (!online) {
+      message += "오프라인"
+    } else if (paperOut) {
+      message += "용지 없음"
+    } else if (error) {
+      message += "에러 발생"
+    } else {
+      message += "정상 (인쇄 가능)"
+    }
+
+    logDebug(message)
+
+    return {
+      ready: online && !paperOut && !error,
+      online,
+      paperOut,
+      error,
+      statusByte,
+      message,
+    }
+  } catch (error) {
+    logDebug("Error checking printer status: " + (error as Error).message)
+    return {
+      ready: false,
+      online: false,
+      paperOut: false,
+      error: true,
+      message: "상태 확인 중 오류 발생: " + (error as Error).message,
+    }
+  }
+}
+
+/**
+ * 마지막 프린터 응답 가져오기
+ */
+export function getLastPrinterResponse(): { data: number[]; timestamp: string } | null {
+  return lastPrinterResponse
+}
+
 if (isBrowser()) {
   setupElectronStatusListener()
+  setupPrinterDataListener() // Added printer data listener setup
   loadSavedPrinterModel()
 
   // 기본 모델이 설정되지 않은 경우 BK3-3로 설정

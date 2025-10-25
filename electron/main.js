@@ -416,11 +416,20 @@ async function connectPrinter() {
 
     printerPort.on("data", (data) => {
       if (isDev) {
-        console.log("[PRINTER] Received data:", data)
+        console.log("[PRINTER] Received response from printer:")
+        console.log("[PRINTER] Raw bytes:", Array.from(data))
+        console.log(
+          "[PRINTER] Hex:",
+          Array.from(data)
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join(" "),
+        )
+        console.log("[PRINTER] ASCII:", data.toString("ascii").replace(/[^\x20-\x7E]/g, "."))
       }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("printer-data", {
           data: Array.from(data),
+          timestamp: new Date().toISOString(),
         })
       }
     })
@@ -570,6 +579,9 @@ ipcMain.handle("send-to-printer", async (event, data) => {
             } else {
               if (isDev) {
                 console.log("[v0] [PRINTER] Data drained successfully")
+                console.log("[v0] [PRINTER] ⚠️  Note: 'Write successful' means data was sent from computer.")
+                console.log("[v0] [PRINTER] ⚠️  This does NOT confirm the printer received or printed it.")
+                console.log("[v0] [PRINTER] ⚠️  Check if paper actually came out of the printer!")
               }
               resolve()
             }
@@ -626,6 +638,47 @@ ipcMain.handle("connect-printer", async () => {
   return {
     success: printerPort && printerPort.isOpen,
     port: printerPort && printerPort.isOpen ? PRINTER_CONFIG.path : null,
+  }
+})
+
+ipcMain.handle("query-printer-status", async () => {
+  if (!printerPort || !printerPort.isOpen) {
+    return { success: false, error: "프린터가 연결되지 않았습니다" }
+  }
+
+  try {
+    // DLE EOT n - Real-time status transmission
+    // DLE = 0x10, EOT = 0x04, n = 1 (printer status)
+    const statusQuery = Buffer.from([0x10, 0x04, 0x01])
+
+    if (isDev) {
+      console.log("[PRINTER] Sending real-time status query: DLE EOT 1")
+      console.log("[PRINTER] Hex: 10 04 01")
+    }
+
+    await new Promise((resolve, reject) => {
+      printerPort.write(statusQuery, (err) => {
+        if (err) {
+          if (isDev) {
+            console.error("[PRINTER] Status query write error:", err.message)
+          }
+          reject(err)
+        } else {
+          if (isDev) {
+            console.log("[PRINTER] Status query sent successfully")
+            console.log("[PRINTER] Waiting for printer response...")
+          }
+          resolve()
+        }
+      })
+    })
+
+    return { success: true }
+  } catch (error) {
+    if (isDev) {
+      console.error("[PRINTER] Status query exception:", error.message)
+    }
+    return { success: false, error: error.message }
   }
 })
 
