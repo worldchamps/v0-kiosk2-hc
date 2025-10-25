@@ -798,7 +798,7 @@ async function printSimpleOnSiteReservationReceipt(reservationData: {
     await printText(`Room: ${reservationData.roomCode}\r\n`)
     await printText(`Type: ${translateRoomType(reservationData.roomType)}\r\n\r\n`)
     await printText(`DOOR PASSWORD: ${reservationData.password}\r\n\r\n`)
-    await printText("-------------------------------------\r\n\r\n" )
+    await printText("-------------------------------------\r\n\r\n")
     await printText(`Check-in: ${formatDateForReceipt(reservationData.checkInDate)}\r\n`)
     await printText(`Check-out: ${formatDateForReceipt(reservationData.checkOutDate)}\r\n\r\n\r\n`)
 
@@ -849,17 +849,14 @@ async function printFormattedTestPage(): Promise<boolean> {
   try {
     if (!printerWriter) {
       logDebug("프린터가 연결되어 있지 않습니다.")
-      \
       return false
     }
 
     logDebug("Rich Mode로 테스트 페이지 인쇄 시작")
-    \
     await initializePrinter()
-\
+
     const midSizeCommand = new Uint8Array([ESC, 0x21, 0x10])
     logCommand("ESC ! (Mid Size Font)", midSizeCommand)
-    \
     await printerWriter.write(midSizeCommand)
 
     await printText("The Beach Stay\n")
