@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Printer, Type, Settings, Info, AlertTriangle, Check, RefreshCw, Bug, X } from "lucide-react"
+import { Printer, Type, Settings, Info, AlertTriangle, Check, RefreshCw, Bug, X, Activity } from "lucide-react"
 import {
   getSimplePrintMode,
   setSimplePrintMode,
@@ -14,17 +14,20 @@ import {
   getPrinterModel,
   getPrinterDiagnostics,
   clearCommandLog,
+  checkPrinterReady,
 } from "@/lib/printer-utils"
 
 export default function PrinterSettings() {
   const [simpleMode, setSimpleMode] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
   const [isPrinting, setIsPrinting] = useState(false)
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false)
   const [status, setStatus] = useState("")
   const [printerInfo, setPrinterInfo] = useState<string | null>(null)
   const [printerModel, setPrinterModel] = useState<string>("UNKNOWN")
   const [showDiagnostics, setShowDiagnostics] = useState(false)
   const [diagnosticsData, setDiagnosticsData] = useState<any>(null)
+  const [printerStatus, setPrinterStatus] = useState<any>(null)
 
   // Load current settings on component mount
   useEffect(() => {
@@ -129,6 +132,38 @@ export default function PrinterSettings() {
     }
   }
 
+  const handleCheckPrinterStatus = async () => {
+    setIsCheckingStatus(true)
+    setStatus("프린터 상태 확인 중...")
+
+    try {
+      if (!isConnected) {
+        const connected = await connectPrinter()
+        if (!connected) {
+          setStatus("프린터 연결에 실패했습니다.")
+          setIsCheckingStatus(false)
+          return
+        }
+        setIsConnected(true)
+        setPrinterModel(getPrinterModel())
+      }
+
+      const statusResult = await checkPrinterReady()
+      setPrinterStatus(statusResult)
+
+      if (statusResult.ready) {
+        setStatus(`✅ ${statusResult.message}`)
+      } else {
+        setStatus(`❌ ${statusResult.message}`)
+      }
+    } catch (error) {
+      console.error("프린터 상태 확인 오류:", error)
+      setStatus(`상태 확인 오류: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setIsCheckingStatus(false)
+    }
+  }
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
@@ -147,19 +182,19 @@ export default function PrinterSettings() {
         {status && (
           <div
             className={`p-3 rounded-md ${
-              status.includes("실패") || status.includes("오류")
+              status.includes("실패") || status.includes("오류") || status.includes("❌")
                 ? "bg-red-50 text-red-700"
-                : status.includes("완료") || status.includes("연결되었습니다")
+                : status.includes("완료") || status.includes("연결되었습니다") || status.includes("✅")
                   ? "bg-green-50 text-green-700"
                   : "bg-blue-50 text-blue-700"
             }`}
           >
-            {status.includes("실패") || status.includes("오류") ? (
+            {status.includes("실패") || status.includes("오류") || status.includes("❌") ? (
               <div className="flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4" />
                 <span>{status}</span>
               </div>
-            ) : status.includes("완료") || status.includes("연결되었습니다") ? (
+            ) : status.includes("완료") || status.includes("연결되었습니다") || status.includes("✅") ? (
               <div className="flex items-center gap-2">
                 <Check className="h-4 w-4" />
                 <span>{status}</span>
@@ -167,6 +202,28 @@ export default function PrinterSettings() {
             ) : (
               <span>{status}</span>
             )}
+          </div>
+        )}
+
+        {printerStatus && (
+          <div className={`p-3 rounded-md ${printerStatus.ready ? "bg-green-50" : "bg-yellow-50"}`}>
+            <h4 className="font-medium mb-2">프린터 실시간 상태</h4>
+            <div className="text-sm space-y-1">
+              <p>
+                <strong>온라인:</strong> {printerStatus.online ? "✅ 예" : "❌ 아니오"}
+              </p>
+              <p>
+                <strong>용지:</strong> {printerStatus.paperOut ? "❌ 없음" : "✅ 있음"}
+              </p>
+              <p>
+                <strong>에러:</strong> {printerStatus.error ? "❌ 있음" : "✅ 없음"}
+              </p>
+              {printerStatus.statusByte !== undefined && (
+                <p className="text-xs text-gray-500">
+                  상태 바이트: 0x{printerStatus.statusByte.toString(16).padStart(2, "0")}
+                </p>
+              )}
+            </div>
           </div>
         )}
 
@@ -215,18 +272,41 @@ export default function PrinterSettings() {
               </div>
             )}
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               {!isConnected ? (
                 <Button onClick={handleConnectPrinter} className="flex items-center gap-2">
                   <Printer className="h-4 w-4" />
                   <span>프린터 연결</span>
                 </Button>
               ) : (
-                <Button onClick={handleDisconnectPrinter} variant="outline" className="flex items-center gap-2">
+                <Button
+                  onClick={handleDisconnectPrinter}
+                  variant="outline"
+                  className="flex items-center gap-2 bg-transparent"
+                >
                   <Printer className="h-4 w-4" />
                   <span>연결 해제</span>
                 </Button>
               )}
+
+              <Button
+                onClick={handleCheckPrinterStatus}
+                disabled={isCheckingStatus}
+                variant="outline"
+                className="flex items-center gap-2 bg-transparent"
+              >
+                {isCheckingStatus ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    <span>확인 중...</span>
+                  </>
+                ) : (
+                  <>
+                    <Activity className="h-4 w-4" />
+                    <span>상태 확인</span>
+                  </>
+                )}
+              </Button>
 
               <Button onClick={handleTestPrint} disabled={isPrinting} className="flex items-center gap-2">
                 {isPrinting ? (
