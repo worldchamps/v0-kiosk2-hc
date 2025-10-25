@@ -506,6 +506,14 @@ ipcMain.handle("send-to-bill-dispenser", async (event, command) => {
 ipcMain.handle("list-serial-ports", async () => {
   try {
     const ports = await SerialPort.list()
+    if (isDev) {
+      console.log("[PRINTER] Available serial ports:")
+      ports.forEach((port) => {
+        console.log(`  - ${port.path}`)
+        console.log(`    Manufacturer: ${port.manufacturer || "N/A"}`)
+        console.log(`    VID: ${port.vendorId || "N/A"}, PID: ${port.productId || "N/A"}`)
+      })
+    }
     return { success: true, ports }
   } catch (error) {
     return { success: false, error: error.message }
@@ -551,25 +559,9 @@ ipcMain.handle("send-to-printer", async (event, data) => {
 
 ipcMain.handle("reconnect-printer", async () => {
   await connectPrinter()
-  return { success: true }
-})
-
-ipcMain.handle("get-printer-status", async () => {
   return {
-    connected: printerPort && printerPort.isOpen,
-    port: PRINTER_CONFIG.path,
-  }
-})
-
-ipcMain.handle("connect-printer", async () => {
-  try {
-    await connectPrinter()
-    return {
-      success: printerPort && printerPort.isOpen,
-      port: printerPort && printerPort.isOpen ? PRINTER_CONFIG.path : null,
-    }
-  } catch (error) {
-    return { success: false, error: error.message }
+    success: printerPort && printerPort.isOpen,
+    port: printerPort && printerPort.isOpen ? PRINTER_CONFIG.path : null,
   }
 })
 
