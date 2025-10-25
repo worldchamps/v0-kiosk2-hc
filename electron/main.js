@@ -300,6 +300,17 @@ async function connectPrinter() {
       printerPort.close()
     }
 
+    if (isDev) {
+      console.log(`[PRINTER] Attempting to connect to ${PRINTER_CONFIG.path}...`)
+      console.log(`[PRINTER] Config:`, {
+        baudRate: PRINTER_CONFIG.baudRate,
+        dataBits: PRINTER_CONFIG.dataBits,
+        stopBits: PRINTER_CONFIG.stopBits,
+        parity: PRINTER_CONFIG.parity,
+        flowControl: "DTR/DSR",
+      })
+    }
+
     printerPort = new SerialPort({
       path: PRINTER_CONFIG.path,
       baudRate: PRINTER_CONFIG.baudRate,
@@ -316,7 +327,7 @@ async function connectPrinter() {
     printerPort.open((err) => {
       if (err) {
         if (isDev) {
-          console.error("[v0] 프린터 연결 실패:", err.message)
+          console.error("[PRINTER] Failed to connect:", err.message)
         }
         if (mainWindow && mainWindow.webContents) {
           mainWindow.webContents.send("printer-status", {
@@ -329,14 +340,22 @@ async function connectPrinter() {
       }
 
       printerPort.set({ dtr: true, rts: false }, (err) => {
-        if (err && isDev) {
-          console.error("[v0] DTR 설정 실패:", err)
+        if (err) {
+          if (isDev) {
+            console.error("[PRINTER] Failed to set DTR/RTS:", err)
+          }
+        } else {
+          if (isDev) {
+            console.log("[PRINTER] DTR set to HIGH, RTS set to LOW (DTR/DSR flow control)")
+          }
         }
       })
 
       if (isDev) {
-        console.log(`[v0] 프린터 연결 성공 (${PRINTER_CONFIG.path}, DTR/DSR flow control)`)
+        console.log(`[PRINTER] Successfully connected to ${PRINTER_CONFIG.path}`)
+        console.log(`[PRINTER] Status update: {connected: true, port: "${PRINTER_CONFIG.path}"}`)
       }
+
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("printer-status", {
           connected: true,
@@ -347,7 +366,7 @@ async function connectPrinter() {
 
     printerPort.on("data", (data) => {
       if (isDev) {
-        console.log("[v0] 프린터 데이터:", data)
+        console.log("[PRINTER] Received data:", data)
       }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("printer-data", {
@@ -358,7 +377,7 @@ async function connectPrinter() {
 
     printerPort.on("error", (err) => {
       if (isDev) {
-        console.error("[v0] 프린터 에러:", err)
+        console.error("[PRINTER] Error:", err)
       }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("printer-status", {
@@ -370,7 +389,7 @@ async function connectPrinter() {
 
     printerPort.on("close", () => {
       if (isDev) {
-        console.log("[v0] 프린터 연결 끊김")
+        console.log("[PRINTER] Connection closed")
       }
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("printer-status", {
@@ -381,7 +400,7 @@ async function connectPrinter() {
     })
   } catch (error) {
     if (isDev) {
-      console.error("[v0] 프린터 초기화 실패:", error)
+      console.error("[PRINTER] Initialization failed:", error)
     }
     setTimeout(connectPrinter, 10000)
   }
