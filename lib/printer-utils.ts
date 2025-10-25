@@ -435,6 +435,10 @@ function formatDateForReceipt(dateString: string): string {
 
 export async function printReceipt(receiptData: any): Promise<boolean> {
   try {
+    if (typeof window !== "undefined" && (window as any).electronAPI) {
+      return await printReceiptViaElectron(receiptData)
+    }
+
     if (!printerWriter) {
       logDebug("프린터가 연결되어 있지 않습니다.")
       return false
@@ -454,6 +458,67 @@ export async function printReceipt(receiptData: any): Promise<boolean> {
     }
   } catch (error) {
     logDebug("영수증 인쇄 중 오류 발생: " + error)
+    return false
+  }
+}
+
+async function printReceiptViaElectron(receiptData: any): Promise<boolean> {
+  try {
+    const electronAPI = (window as any).electronAPI
+    if (!electronAPI || !electronAPI.sendToPrinter) {
+      logDebug("Electron API를 사용할 수 없습니다.")
+      return false
+    }
+
+    // ESC/POS 명령어 생성
+    const commands: number[] = []
+
+    // 초기화
+    commands.push(0x1b, 0x40)
+
+    // 텍스트 추가
+    const encoder = new TextEncoder()
+    const headerText = encoder.encode("THE BEACH STAY\r\n\r\n")
+    commands.push(...Array.from(headerText))
+
+    const divider = encoder.encode("-------------------------------------\r\n\r\n")
+    commands.push(...Array.from(divider))
+
+    const buildingChar =
+      receiptData.roomNumber && receiptData.roomNumber.length > 0 ? receiptData.roomNumber.charAt(0) : "A"
+    const buildingText = encoder.encode(`${buildingChar} BUILDING\r\n\r\n`)
+    commands.push(...Array.from(buildingText))
+
+    const floor = receiptData.floor ? `${receiptData.floor}F` : "2F"
+    const roomNumber = receiptData.roomNumber || "0000"
+    const roomText = encoder.encode(`ROOM: ${floor} ${roomNumber}\r\n\r\n`)
+    commands.push(...Array.from(roomText))
+
+    const pwText = encoder.encode(`DOOR PASSWORD: ${receiptData.password || "0000"}\r\n\r\n`)
+    commands.push(...Array.from(pwText))
+
+    commands.push(...Array.from(divider))
+
+    const checkInText = encoder.encode(`Check-in: ${formatDateForReceipt(receiptData.checkInDate)}\r\n`)
+    commands.push(...Array.from(checkInText))
+
+    const checkOutText = encoder.encode(`Check-out: ${formatDateForReceipt(receiptData.checkOutDate)}\r\n\r\n\r\n`)
+    commands.push(...Array.from(checkOutText))
+
+    // 용지 절단
+    commands.push(0x1d, 0x56, 0x01)
+
+    const result = await electronAPI.sendToPrinter(commands)
+
+    if (result.success) {
+      logDebug("Electron을 통한 영수증 인쇄 성공")
+      return true
+    } else {
+      logDebug(`Electron 프린터 오류: ${result.error}`)
+      return false
+    }
+  } catch (error) {
+    logDebug("Electron 프린터 인쇄 중 오류: " + error)
     return false
   }
 }

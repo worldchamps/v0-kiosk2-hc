@@ -19,7 +19,7 @@ if (isDev) {
 }
 
 const BILL_ACCEPTOR_CONFIG = {
-  path: process.env.BILL_ACCEPTOR_PATH || "COM3", // Windows 기본값, 실제 포트로 변경 필요
+  path: process.env.BILL_ACCEPTOR_PATH || "COM4", // Windows 기본값, 실제 포트로 변경 필요
   baudRate: process.env.BILL_ACCEPTOR_BAUD_RATE || 9600,
   dataBits: process.env.BILL_ACCEPTOR_DATA_BITS || 8,
   stopBits: process.env.BILL_ACCEPTOR_STOP_BITS || 1,
@@ -27,7 +27,7 @@ const BILL_ACCEPTOR_CONFIG = {
 }
 
 const BILL_DISPENSER_CONFIG = {
-  path: process.env.BILL_DISPENSER_PATH || "COM4", // Windows 기본값, 실제 포트로 변경 필요
+  path: process.env.BILL_DISPENSER_PATH || "COM5", // Windows 기본값, 실제 포트로 변경 필요
   baudRate: process.env.BILL_DISPENSER_BAUD_RATE || 9600,
   dataBits: process.env.BILL_DISPENSER_DATA_BITS || 8,
   stopBits: process.env.BILL_DISPENSER_STOP_BITS || 1,
