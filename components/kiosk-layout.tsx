@@ -118,19 +118,30 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     setShowAdminKeypad(false)
   }
 
-  // 클라이언트 코드에서 API 키 참조 제거
-  const handleCheckReservation = async (name) => {
-    if (!name.trim()) return
+  // 예약 확인 함수 수정 - 이름 또는 예약 ID로 검색
+  const handleCheckReservation = async (searchTerm) => {
+    if (!searchTerm.trim()) return
 
     setLoading(true)
     setError("")
     setDebugInfo(null)
 
     try {
-      console.log(`Checking reservation for: ${name}, today: ${getCurrentDateKST()}`)
+      console.log(`Checking reservation for: ${searchTerm}, today: ${getCurrentDateKST()}`)
 
-      // API 엔드포인트 변경 - admin/reservations 대신 reservations 사용
-      const response = await fetch(`/api/reservations?name=${encodeURIComponent(name)}&todayOnly=true`, {
+      // 검색어가 숫자/영문자 조합이고 6자리인지 확인 (예약 ID 뒷자리)
+      const isReservationId = /^[A-Za-z0-9]{6}$/.test(searchTerm.trim())
+
+      let apiUrl = ""
+      if (isReservationId) {
+        // 예약 ID 뒷자리로 검색
+        apiUrl = `/api/reservations?reservationIdSuffix=${encodeURIComponent(searchTerm)}&todayOnly=true`
+      } else {
+        // 이름으로 검색
+        apiUrl = `/api/reservations?name=${encodeURIComponent(searchTerm)}&todayOnly=true`
+      }
+
+      const response = await fetch(apiUrl, {
         method: "GET",
       })
 
@@ -144,7 +155,13 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       console.log("API Response:", data)
 
       if (data.reservations && data.reservations.length > 0) {
-        // 예약 데이터 저장
+        // 여러 예약이 있는 경우 처리
+        if (data.reservations.length > 1) {
+          console.log(`Multiple reservations found for ${searchTerm}:`, data.reservations)
+          // 첫 번째 예약을 선택하거나, 별도 선택 화면으로 이동할 수 있음
+          // 현재는 첫 번째 예약을 선택
+        }
+
         const reservation = data.reservations[0]
         console.log("Found reservation:", reservation)
 
@@ -153,7 +170,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       } else {
         // 오늘 날짜에 예약이 없는 경우
         const today = getCurrentDateKST()
-        console.log(`No reservation found for ${name} on ${today}`)
+        console.log(`No reservation found for ${searchTerm} on ${today}`)
         setCurrentScreen("reservationNotFound")
       }
     } catch (err) {

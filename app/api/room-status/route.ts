@@ -1,99 +1,128 @@
-import { NextResponse } from "next/server"
-import type { NextRequest } from "next/server"
-import { headers } from "next/headers"
-import { createSheetsClient } from "@/lib/google-sheets"
-
-// API Key for authentication
-const API_KEY = process.env.API_KEY || ""
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY || ""
-
-// Authentication function
-function authenticateRequest(request: NextRequest) {
-  const headersList = headers()
-  const apiKey = headersList.get("x-api-key")
-
-  // 클라이언트에서 API 키 없이 호출할 수 있도록 허용
-  // 이 API는 공개적으로 접근 가능하지만, 서버 측에서 요청을 검증합니다
-  if (!apiKey) return true
-
-  return apiKey === API_KEY || apiKey === ADMIN_API_KEY
-}
+import { type NextRequest, NextResponse } from "next/server"
+import { getGoogleSheetsData } from "@/lib/google-sheets"
 
 export async function GET(request: NextRequest) {
   try {
-    // Authenticate the request
-    if (!authenticateRequest(request)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-
-    const sheets = createSheetsClient()
-    const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID || ""
-
-    if (!spreadsheetId) {
-      return NextResponse.json({ error: "Spreadsheet ID not configured" }, { status: 500 })
-    }
-
-    // Get query parameters for filtering
     const { searchParams } = new URL(request.url)
-    const building = searchParams.get("building")
-    const roomNumber = searchParams.get("roomNumber")
-    const floor = searchParams.get("floor")
+    const location = searchParams.get("location")
 
-    console.log(`Fetching room status data from Beach Room Status sheet`)
+    console.log("Fetching room status for location:", location)
 
-    // Fetch data from the Beach Room Status sheet
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: "Beach Room Status!A2:F", // Adjust range as needed
-    })
+    // Beach Room Status 시트에서 데이터 가져오기
+    const data = await getGoogleSheetsData("Beach Room Status!A:M")
 
-    const rows = response.data.values
-
-    if (!rows || rows.length === 0) {
-      console.log("No data found in Beach Room Status sheet")
+    if (!data || data.length < 2) {
       return NextResponse.json({
+        success: false,
+        error: "No data found in Beach Room Status sheet",
         rooms: [],
-        message: "No room data found",
       })
     }
 
-    // Map the rows to room objects
-    const roomsData = rows.map((row) => {
-      return {
-        building: row[0] || "",
-        roomNumber: row[1] || "",
-        roomType: row[2] || "",
-        status: row[3] || "",
-        price: row[4] || "",
-        floor: row[5] || "",
-      }
+    const headers = data[0]
+    const rows = data.slice(1)
+
+    console.log("Headers:", headers)
+    console.log("Total rows:", rows.length)
+
+    // 헤더 인덱스 찾기
+    const roomNumberIndex = headers.findIndex((h) => h === "RoomNumber")
+    const buildingTypeIndex = headers.findIndex((h) => h === "BuildingType")
+    const roomTypeIndex = headers.findIndex((h) => h === "RoomType")
+    const priceIndex = headers.findIndex((h) => h === "Price")
+    const roomStatusIndex = headers.findIndex((h) => h === "객실상태") // E열
+    const salesAvailableIndex = headers.findIndex((h) => h === "판매 가능 유무") // H열
+    const vendingAvailableIndex = headers.findIndex((h) => h === "자판기 판매상태") // I열
+    const roomCodeIndex = headers.findIndex((h) => h === "RoomCode")
+
+    console.log("Column indices:", {
+      roomNumber: roomNumberIndex,
+      buildingType: buildingTypeIndex,
+      roomType: roomTypeIndex,
+      price: priceIndex,
+      roomStatus: roomStatusIndex,
+      salesAvailable: salesAvailableIndex,
+      vendingAvailable: vendingAvailableIndex,
+      roomCode: roomCodeIndex,
     })
 
-    // Filter by parameters if provided
-    let filteredRooms = [...roomsData]
+    // 데이터 필터링 및 변환
+    const availableRooms = rows
+      .filter((row) => {
+        // 필수 데이터가 있는지 확인
+        const hasRequiredData =
+          row[roomNumberIndex] && row[buildingTypeIndex] && row[roomTypeIndex] && row[priceIndex] && row[roomCodeIndex]
 
-    if (building) {
-      filteredRooms = filteredRooms.filter((room) => room.building === building)
-    }
+        if (!hasRequiredData) return false
 
-    if (roomNumber) {
-      filteredRooms = filteredRooms.filter((room) => room.roomNumber.includes(roomNumber))
-    }
+        // 객실 상태가 "공실"인지 확인
+        const isVacant = row[roomStatusIndex] === "공실"
 
-    if (floor) {
-      filteredRooms = filteredRooms.filter((room) => room.floor === floor)
-    }
+        // 판매 가능 유무가 "O"인지 확인 (H열)
+        const isSalesAvailable = row[salesAvailableIndex] === "O"
 
-    console.log(`Found ${filteredRooms.length} room records`)
+        // 자판기 판매상태가 "O"인지 확인 (I열) - 새로 추가된 조건
+        const isVendingAvailable = row[vendingAvailableIndex] === "O"
+
+        // 위치별 필터링
+        let matchesLocation = true
+        if (location && location !== "ALL") {
+          const buildingType = row[buildingTypeIndex]
+          if (location === "A" && !buildingType.includes("Beach A")) matchesLocation = false
+          else if (location === "B" && !buildingType.includes("Beach B")) matchesLocation = false
+          else if (location === "D" && !buildingType.includes("Beach D")) matchesLocation = false
+          else if (location === "CAMP" && !buildingType.includes("Camp")) matchesLocation = false
+        }
+
+        const result = hasRequiredData && isVacant && isSalesAvailable && isVendingAvailable && matchesLocation
+
+        if (result) {
+          console.log("Available room:", {
+            roomNumber: row[roomNumberIndex],
+            roomCode: row[roomCodeIndex],
+            buildingType: row[buildingTypeIndex],
+            roomType: row[roomTypeIndex],
+            price: row[priceIndex],
+            roomStatus: row[roomStatusIndex],
+            salesAvailable: row[salesAvailableIndex],
+            vendingAvailable: row[vendingAvailableIndex],
+          })
+        }
+
+        return result
+      })
+      .map((row) => ({
+        roomNumber: row[roomNumberIndex],
+        roomCode: row[roomCodeIndex],
+        buildingType: row[buildingTypeIndex],
+        roomType: row[roomTypeIndex],
+        price: Number.parseInt(row[priceIndex].toString().replace(/[^0-9]/g, "")) || 0,
+        roomStatus: row[roomStatusIndex],
+        salesAvailable: row[salesAvailableIndex],
+        vendingAvailable: row[vendingAvailableIndex],
+      }))
+
+    console.log("Filtered available rooms:", availableRooms.length)
 
     return NextResponse.json({
-      rooms: filteredRooms,
-      total: filteredRooms.length,
+      success: true,
+      rooms: availableRooms,
+      total: availableRooms.length,
+      debug: {
+        totalRows: rows.length,
+        filteredRooms: availableRooms.length,
+        location: location,
+        headers: headers,
+      },
     })
   } catch (error) {
-    console.error("Error fetching room status data:", error)
+    console.error("Error fetching room status:", error)
     return NextResponse.json(
-      { error: "Failed to fetch room status data", details: error instanceof Error ? error.message : String(error) },
+      {
+        success: false,
+        error: "Failed to fetch room status",
+        rooms: [],
+      },
       { status: 500 },
     )
   }
