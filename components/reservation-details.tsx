@@ -6,7 +6,8 @@ import { Card, CardContent } from "@/components/ui/card"
 import Image from "next/image"
 import { Loader2, Eye, EyeOff } from "lucide-react"
 import { formatDateKorean } from "@/lib/date-utils"
-import { getReservationRoomImage, checkImageExists } from "@/lib/room-utils"
+import { getRoomImagePath, checkImageExists } from "@/lib/room-utils"
+// 상단에 음성 유틸리티 import 추가
 import { playAudio } from "@/lib/audio-utils"
 
 interface Reservation {
@@ -42,7 +43,7 @@ export default function ReservationDetails({
   revealedInfo = {},
 }: ReservationDetailsProps) {
   const [checkInComplete, setCheckInComplete] = useState(false)
-  const [roomImagePath, setRoomImagePath] = useState("/placeholder.svg")
+  const [roomImagePath, setRoomImagePath] = useState("/hotel-floor-plan.png")
   const [imageExists, setImageExists] = useState(true)
   const [showPassword, setShowPassword] = useState(false)
 
@@ -51,7 +52,7 @@ export default function ReservationDetails({
     setCheckInComplete(false)
 
     // Reset image state
-    setRoomImagePath("/placeholder.svg")
+    setRoomImagePath("/hotel-floor-plan.png")
     setImageExists(true)
 
     // 예약이 확인되었을 때 음성 재생
@@ -60,43 +61,37 @@ export default function ReservationDetails({
     // Update room image when reservation or revealed info changes
     const updateRoomImage = async () => {
       try {
-        // 예약 정보에서 객실 번호와 타입 가져오기
+        // Check-in complete after object number has been revealed
         const roomNumber = revealedInfo?.roomNumber || reservation?.roomNumber || ""
-        const roomType = reservation?.roomType || ""
 
-        if (roomNumber && roomType) {
-          console.log("예약 정보 기반 객실 이미지 설정:", { roomNumber, roomType })
+        if (roomNumber && reservation?.roomType) {
+          console.log("Room info:", { roomNumber, roomType: reservation.roomType })
 
-          // 예약 정보 기반 이미지 경로 생성 (객실 코드의 앞 영문자 기준)
-          const imagePath = getReservationRoomImage(roomNumber, roomType)
-          console.log("생성된 이미지 경로:", imagePath)
+          const imagePath = getRoomImagePath(reservation.roomType, roomNumber)
+          console.log("Generated image path:", imagePath)
 
-          // 이미지 존재 여부 확인
+          // Check if image exists
           const exists = await checkImageExists(imagePath)
-          console.log("이미지 존재 여부:", exists)
+          console.log("Image exists:", exists)
 
           if (exists) {
             setRoomImagePath(imagePath)
             setImageExists(true)
           } else {
-            console.warn(`객실 이미지를 찾을 수 없음: ${imagePath}`)
-            setRoomImagePath("/placeholder.svg")
-            setImageExists(false)
+            console.warn(`Room image not found: ${imagePath}`)
+            setRoomImagePath("/hotel-floor-plan.png") // Default image
           }
         } else {
-          console.log("객실 번호 또는 타입 정보 부족:", { roomNumber, roomType })
-          setRoomImagePath("/placeholder.svg")
-          setImageExists(false)
+          console.log("Missing room number or type:", { roomNumber, roomType: reservation?.roomType })
         }
       } catch (error) {
-        console.error("객실 이미지 로딩 오류:", error)
-        setRoomImagePath("/placeholder.svg")
-        setImageExists(false)
+        console.error("Error loading room image:", error)
+        setRoomImagePath("/hotel-floor-plan.png")
       }
     }
 
     updateRoomImage()
-  }, [revealedInfo, reservation?.reservationId, reservation?.roomNumber, reservation?.roomType])
+  }, [revealedInfo, reservation?.reservationId])
 
   if (!reservation) return null
 
@@ -200,23 +195,13 @@ export default function ReservationDetails({
               <div className="pt-4">
                 <p className="text-sm text-gray-500 mb-2">객실 이미지</p>
                 <div className="bg-gray-100 rounded-lg p-2">
-                  <div className="relative w-full h-[400px]">
+                  <div className="relative w-full h-[768px]">
                     <Image
                       src={roomImagePath || "/placeholder.svg"}
                       alt={`${reservation.roomType} 객실 이미지`}
                       fill
                       className="rounded-lg object-cover"
-                      onError={(e) => {
-                        console.log(`이미지 로드 실패: ${e.currentTarget.src}`)
-                        e.currentTarget.src = "/placeholder.svg"
-                        setImageExists(false)
-                      }}
                     />
-                    {!imageExists && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-gray-200 rounded-lg">
-                        <p className="text-gray-500">이미지를 불러올 수 없습니다</p>
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
@@ -246,7 +231,7 @@ export default function ReservationDetails({
           <Button
             variant="outline"
             size="lg"
-            className="h-12 text-lg bg-transparent"
+            className="h-12 text-lg"
             onClick={() => onNavigate("standby")}
             disabled={loading}
           >

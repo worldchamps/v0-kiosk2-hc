@@ -448,14 +448,389 @@ export async function printText(text: string): Promise<boolean> {
  */
 export async function initializePrinter(): Promise<boolean> {
   try {
-    console.log("Initializing printer...")
+    if (!printerWriter) {
+      logDebug("프린터가 연결되어 있지 않습니다.")
+      return false
+    }
 
-    // 프린터 초기화 명령 전송
-    const initCommand = "\x1B\x40" // ESC @ (프린터 초기화)
+    // ESC @ - 프린터 초기화 (모든 프린터 공통)
+    const initCommand = new Uint8Array([ESC, 0x40])
+    logCommand("ESC @ (Initialize)", initCommand)
+    await printerWriter.write(initCommand)
 
-    return await sendToPrinter(initCommand)
+    // 영어 코드페이지 설정 (PC437 - 기본 영어)
+    const codePageCommand = new Uint8Array([ESC, 0x74, 0]) // ESC t 0 - PC437 (영어)
+    logCommand("ESC t (Codepage)", codePageCommand)
+    await printerWriter.write(codePageCommand)
+
+    // 프린터 모델별 추가 초기화
+    if (detectedPrinterModel === "BK3-3") {
+      // BK3-3 프린터 특화 초기화 명령
+      // 예: 라인 간격 설정
+      const lineSpacingCommand = new Uint8Array([ESC, 0x33, 30]) // 30-dot line spacing
+      logCommand("ESC 3 (Line Spacing)", lineSpacingCommand)
+      await printerWriter.write(lineSpacingCommand)
+    } else if (detectedPrinterModel === "SAM4S") {
+      // SAM4S 프린터 특화 초기화 명령
+      // 예: 문자 간격 설정
+      const charSpacingCommand = new Uint8Array([ESC, 0x20, 0]) // 0-dot character spacing
+      logCommand("ESC SP (Char Spacing)", charSpacingCommand)
+      await printerWriter.write(charSpacingCommand)
+    }
+
+    return true
   } catch (error) {
-    console.error("Printer initialization error:", error)
+    logDebug("프린터 초기화 중 오류 발생: " + error)
+    return false
+  }
+}
+
+/**
+ * 객실 타입을 영어로 변환하는 함수
+ */
+function translateRoomType(roomType: string): string {
+  if (!roomType) return "Standard Room"
+
+  const lowerType = roomType.toLowerCase()
+
+  if (lowerType.includes("스탠다드") && lowerType.includes("더블")) {
+    return "Standard Double"
+  } else if (lowerType.includes("스탠다드") && lowerType.includes("트윈")) {
+    return "Standard Twin"
+  } else if (
+    lowerType.includes("디럭스") &&
+    lowerType.includes("더블") &&
+    (lowerType.includes("오션") || lowerType.includes("오션뷰"))
+  ) {
+    return "Deluxe Double Ocean"
+  } else if (lowerType.includes("디럭스") && lowerType.includes("더블")) {
+    return "Deluxe Double"
+  } else if (
+    lowerType.includes("스위트") &&
+    lowerType.includes("트윈") &&
+    (lowerType.includes("오션") || lowerType.includes("오션뷰"))
+  ) {
+    return "Suite Twin Ocean"
+  } else if (lowerType.includes("스위트") && lowerType.includes("트윈")) {
+    return "Suite Twin"
+  } else if (lowerType.includes("스위트")) {
+    return "Suite Room"
+  } else if (lowerType.includes("디럭스")) {
+    return "Deluxe Room"
+  } else if (lowerType.includes("스탠다드")) {
+    return "Standard Room"
+  }
+
+  return "Standard Room"
+}
+
+/**
+ * 날짜 형식 변환 함수 (YYYY-MM-DD -> YYYY.MM.DD)
+ */
+function formatDateForReceipt(dateString: string): string {
+  if (!dateString) return "N/A"
+
+  // 이미 YYYY.MM.DD 형식이면 그대로 반환
+  if (dateString.includes(".")) return dateString
+
+  // YYYY-MM-DD 형식을 YYYY.MM.DD로 변환
+  return dateString.replace(/-/g, ".")
+}
+
+/**
+ * 영수증 인쇄 함수 - 모드에 따라 다른 형식 사용
+ */
+export async function printReceipt(receiptData: any): Promise<boolean> {
+  try {
+    if (!printerWriter) {
+      logDebug("프린터가 연결되어 있지 않습니다.")
+      return false
+    }
+
+    // Check if simple mode is enabled - 프린터 모델 고려
+    const useSimpleMode = getSimplePrintMode()
+    logDebug(`영수증 인쇄 모드: ${useSimpleMode ? "Simple Mode" : "Rich Mode"}, 프린터 모델: ${detectedPrinterModel}`)
+
+    if (useSimpleMode) {
+      return printSimpleReceipt(receiptData)
+    } else {
+      // BK3-3 프린터가 Rich Mode를 제대로 처리하지 못하는 경우를 위한 안전장치
+      if (detectedPrinterModel === "BK3-3" && process.env.FORCE_SIMPLE_FOR_BK3 === "true") {
+        logDebug("BK3-3 프린터에 대해 강제로 Simple Mode 사용")
+        return printSimpleReceipt(receiptData)
+      }
+      return printFormattedReceipt(receiptData)
+    }
+  } catch (error) {
+    logDebug("영수증 인쇄 중 오류 발생: " + error)
+    return false
+  }
+}
+
+/**
+ * 기존 형식의 영수증 인쇄 함수 - 명령어 로깅 추가
+ */
+async function printFormattedReceipt(receiptData: any): Promise<boolean> {
+  try {
+    if (!printerWriter) {
+      logDebug("프린터가 연결되어 있지 않습니다.")
+      return false
+    }
+
+    logDebug("Rich Mode로 영수증 인쇄 시작")
+
+    // 프린터 초기화
+    await initializePrinter()
+
+    // 중간 크기 글씨로 설정 (The Beach Stay)
+    const midSizeCommand = new Uint8Array([ESC, 0x21, 0x10]) // 중간 크기 글씨
+    logCommand("ESC ! (Mid Size Font)", midSizeCommand)
+    await printerWriter.write(midSizeCommand)
+
+    await printText("The Beach Stay\n")
+
+    // 구분선
+    await printText("-------------------------------------\n")
+
+    // 건물 이름 - 큰 글씨로 표시
+    const largeSizeCommand = new Uint8Array([ESC, 0x21, 0x30]) // 큰 글씨
+    logCommand("ESC ! (Large Size Font)", largeSizeCommand)
+    await printerWriter.write(largeSizeCommand)
+
+    const buildingChar =
+      receiptData.roomNumber && receiptData.roomNumber.length > 0 ? receiptData.roomNumber.charAt(0) : "A"
+    await printText(`${buildingChar} BUILDING\n\n`)
+
+    // 층수와 객실 번호 - 더 큰 글씨로 표시
+    const extraLargeSizeCommand = new Uint8Array([ESC, 0x21, 0x31]) // 더 큰 글씨
+    logCommand("ESC ! (Extra Large Size Font)", extraLargeSizeCommand)
+    await printerWriter.write(extraLargeSizeCommand)
+
+    const floor = receiptData.floor ? `${receiptData.floor}F` : "2F"
+    const roomNumber = receiptData.roomNumber || "0000"
+    await printText(`${floor} ${roomNumber}\n\n`)
+
+    // 비밀번호 - 큰 글씨로 표시
+    const largeSizeCommand2 = new Uint8Array([ESC, 0x21, 0x30]) // 다시 큰 글씨로
+    logCommand("ESC ! (Large Size Font)", largeSizeCommand2)
+    await printerWriter.write(largeSizeCommand2)
+
+    await printText(`Door PW: ${receiptData.password || "0000"}\n\n`)
+
+    // 구분선
+    const normalSizeCommand = new Uint8Array([ESC, 0x21, 0x00]) // 기본 글씨 크기로 돌아감
+    logCommand("ESC ! (Normal Size Font)", normalSizeCommand)
+    await printerWriter.write(normalSizeCommand)
+
+    await printText("------------------------------------\n\n")
+
+    // 체크인/체크아웃 정보 - 작은 글씨로 표시
+    const smallSizeCommand = new Uint8Array([ESC, 0x21, 0x01]) // 작은 글씨
+    logCommand("ESC ! (Small Size Font)", smallSizeCommand)
+    await printerWriter.write(smallSizeCommand)
+
+    await printText(`Check-in: ${formatDateForReceipt(receiptData.checkInDate)}\n`)
+    await printText(`Check-out: ${formatDateForReceipt(receiptData.checkOutDate)}\n\n\n`)
+
+    // 용지 절단 (Partial cut)
+    const cutCommand = new Uint8Array([GS, 0x56, 0x01])
+    logCommand("GS V (Cut Paper)", cutCommand)
+    await printerWriter.write(cutCommand)
+
+    logDebug("Rich Mode 영수증 인쇄 완료")
+    return true
+  } catch (error) {
+    logDebug("영수증 인쇄 중 오류 발생: " + error)
+    return false
+  }
+}
+
+/**
+ * 단순 모드 영수증 인쇄 함수 - 최소한의 명령어만 사용
+ */
+async function printSimpleReceipt(receiptData: any): Promise<boolean> {
+  try {
+    if (!printerWriter) {
+      logDebug("프린터가 연결되어 있지 않습니다.")
+      return false
+    }
+
+    logDebug("Simple Mode로 영수증 인쇄 시작")
+
+    // ESC @ - Initialize printer (supported by SAM4S ELLIX/GIANT)
+    const initCommand = new Uint8Array([ESC, 0x40])
+    logCommand("ESC @ (Initialize)", initCommand)
+    await printerWriter.write(initCommand)
+
+    // Use only basic text with minimal formatting
+    await printText("THE BEACH STAY\r\n\r\n")
+    await printText("-------------------------------------\r\n\r\n")
+
+    const buildingChar =
+      receiptData.roomNumber && receiptData.roomNumber.length > 0 ? receiptData.roomNumber.charAt(0) : "A"
+    await printText(`${buildingChar} BUILDING\r\n\r\n`)
+
+    const floor = receiptData.floor ? `${receiptData.floor}F` : "2F"
+    const roomNumber = receiptData.roomNumber || "0000"
+    await printText(`ROOM: ${floor} ${roomNumber}\r\n\r\n`)
+    await printText(`DOOR PASSWORD: ${receiptData.password || "0000"}\r\n\r\n`)
+    await printText("-------------------------------------\r\n\r\n")
+    await printText(`Check-in: ${formatDateForReceipt(receiptData.checkInDate)}\r\n`)
+    await printText(`Check-out: ${formatDateForReceipt(receiptData.checkOutDate)}\r\n\r\n\r\n`)
+
+    // Use GS V 1 for partial cut - confirmed supported by SAM4S ELLIX/GIANT
+    const cutCommand = new Uint8Array([GS, 0x56, 0x01])
+    logCommand("GS V (Cut Paper)", cutCommand)
+    await printerWriter.write(cutCommand)
+
+    logDebug("Simple Mode 영수증 인쇄 완료")
+    return true
+  } catch (error) {
+    logDebug("단순 모드 영수증 인쇄 중 오류 발생: " + error)
+    return false
+  }
+}
+
+/**
+ * 객실 정보 영수증 인쇄 함수 - 객실 호수와 비밀번호만 출력
+ */
+export async function printRoomInfoReceipt(roomData: any): Promise<boolean> {
+  try {
+    if (!printerWriter) {
+      logDebug("프린터가 연결되어 있지 않습니다.")
+      return false
+    }
+
+    // Check if simple mode is enabled - 프린터 모델 고려
+    const useSimpleMode = getSimplePrintMode()
+    logDebug(
+      `객실 정보 영수증 인쇄 모드: ${useSimpleMode ? "Simple Mode" : "Rich Mode"}, 프린터 모델: ${detectedPrinterModel}`,
+    )
+
+    if (useSimpleMode) {
+      return printSimpleRoomInfoReceipt(roomData)
+    } else {
+      // BK3-3 프린터가 Rich Mode를 제대로 처리하지 못하는 경우를 위한 안전장치
+      if (detectedPrinterModel === "BK3-3" && process.env.FORCE_SIMPLE_FOR_BK3 === "true") {
+        logDebug("BK3-3 프린터에 대해 강제로 Simple Mode 사용")
+        return printSimpleRoomInfoReceipt(roomData)
+      }
+      return printFormattedRoomInfoReceipt(roomData)
+    }
+  } catch (error) {
+    logDebug("객실 정보 영수증 인쇄 중 오류 발생: " + error)
+    return false
+  }
+}
+
+/**
+ * 기존 형식의 객실 정보 영수증 인쇄 함수
+ */
+async function printFormattedRoomInfoReceipt(roomData: any): Promise<boolean> {
+  try {
+    if (!printerWriter) {
+      logDebug("프린터가 연결되어 있지 않습니다.")
+      return false
+    }
+
+    logDebug("Rich Mode로 객실 정보 영수증 인쇄 시작")
+
+    // 프린터 초기화
+    await initializePrinter()
+
+    // 중간 크기 글씨로 설정 (The Beach Stay)
+    const midSizeCommand = new Uint8Array([ESC, 0x21, 0x10]) // 중간 크기 글씨
+    logCommand("ESC ! (Mid Size Font)", midSizeCommand)
+    await printerWriter.write(midSizeCommand)
+
+    await printText("The Beach Stay\n")
+
+    // 구분선
+    await printText("-------------------------------------\n")
+
+    // 건물 이름 - 큰 글씨로 표시
+    const largeSizeCommand = new Uint8Array([ESC, 0x21, 0x30]) // 큰 글씨
+    logCommand("ESC ! (Large Size Font)", largeSizeCommand)
+    await printerWriter.write(largeSizeCommand)
+
+    const buildingChar = roomData.roomNumber && roomData.roomNumber.length > 0 ? roomData.roomNumber.charAt(0) : "A"
+    await printText(`${buildingChar} BUILDING\n\n`)
+
+    // 층수와 객실 번호 - 더 큰 글씨로 표시
+    const extraLargeSizeCommand = new Uint8Array([ESC, 0x21, 0x30]) // 더 큰 글씨
+    logCommand("ESC ! (Large Size Font)", extraLargeSizeCommand)
+    await printerWriter.write(extraLargeSizeCommand)
+
+    const floor = roomData.floor ? `${roomData.floor}F` : "2F"
+    const roomNumber = roomData.roomNumber || "000"
+    await printText(`${roomNumber} ${floor}`)
+    await printText("\n\n")
+
+    // 비밀번호 - 큰 글씨로 표시
+    const largeSizeCommand2 = new Uint8Array([ESC, 0x21, 0x30]) // 다시 큰 글씨로
+    logCommand("ESC ! (Large Size Font)", largeSizeCommand2)
+    await printerWriter.write(largeSizeCommand2)
+
+    await printText(`Door PW: ${roomData.password || "0000"}\n\n`)
+
+    // 구분선
+    const normalSizeCommand = new Uint8Array([ESC, 0x21, 0x10]) // 기본 글씨 크기로 돌아감
+    logCommand("ESC ! (Mid Size Font)", normalSizeCommand)
+    await printerWriter.write(normalSizeCommand)
+
+    await printText("------------------------------------\n\n\n")
+
+    // 용지 절단 (Partial cut)
+    const cutCommand = new Uint8Array([GS, 0x56, 0x01])
+    logCommand("GS V (Cut Paper)", cutCommand)
+    await printerWriter.write(cutCommand)
+
+    logDebug("Rich Mode 객실 정보 영수증 인쇄 완료")
+    return true
+  } catch (error) {
+    logDebug("객실 정보 영수증 인쇄 중 오류 발생: " + error)
+    return false
+  }
+}
+
+/**
+ * 단순 모드 객실 정보 영수증 인쇄 함수
+ */
+async function printSimpleRoomInfoReceipt(roomData: any): Promise<boolean> {
+  try {
+    if (!printerWriter) {
+      logDebug("프린터가 연결되어 있지 않습니다.")
+      return false
+    }
+
+    logDebug("Simple Mode로 객실 정보 영수증 인쇄 시작")
+
+    // ESC @ - Initialize printer
+    const initCommand = new Uint8Array([ESC, 0x40])
+    logCommand("ESC @ (Initialize)", initCommand)
+    await printerWriter.write(initCommand)
+
+    // Basic text only
+    await printText("THE BEACH STAY\r\n\r\n")
+    await printText("-------------------------------------\r\n\r\n")
+
+    const buildingChar = roomData.roomNumber && roomData.roomNumber.length > 0 ? roomData.roomNumber.charAt(0) : "A"
+    await printText(`${buildingChar} BUILDING\r\n\r\n`)
+
+    const floor = roomData.floor ? `${roomData.floor}F` : "2F"
+    const roomNumber = roomData.roomNumber || "000"
+    await printText(`ROOM: ${roomNumber} ${floor}\r\n\r\n`)
+    await printText(`DOOR PASSWORD: ${roomData.password || "0000"}\r\n\r\n\r\n`)
+
+    // GS V 1 for partial cut
+    const cutCommand = new Uint8Array([GS, 0x56, 0x01])
+    logCommand("GS V (Cut Paper)", cutCommand)
+    await printerWriter.write(cutCommand)
+
+    logDebug("Simple Mode 객실 정보 영수증 인쇄 완료")
+    return true
+  } catch (error) {
+    logDebug("단순 모드 객실 정보 영수증 인쇄 중 오류 발생: " + error)
     return false
   }
 }
@@ -464,13 +839,170 @@ export async function initializePrinter(): Promise<boolean> {
  * 프린터 상태 확인 함수
  */
 export function isPrinterConnected(): boolean {
+  return printerPort !== null && printerWriter !== null
+}
+
+/**
+ * 프린터 테스트 페이지 인쇄
+ */
+export async function printTestPage(): Promise<boolean> {
   try {
-    // 실제 환경에서는 프린터 연결 상태를 확인하는 로직
-    // 현재는 개발 환경을 위해 항상 true 반환
+    if (!printerWriter) {
+      logDebug("프린터가 연결되어 있지 않습니다.")
+      return false
+    }
+
+    // Check if simple mode is enabled - 프린터 모델 고려
+    const useSimpleMode = getSimplePrintMode()
+    logDebug(
+      `테스트 페이지 인쇄 모드: ${useSimpleMode ? "Simple Mode" : "Rich Mode"}, 프린터 모델: ${detectedPrinterModel}`,
+    )
+
+    if (useSimpleMode) {
+      return printSimpleTestPage()
+    } else {
+      // BK3-3 프린터가 Rich Mode를 제대로 처리하지 못하는 경우를 위한 안전장치
+      if (detectedPrinterModel === "BK3-3" && process.env.FORCE_SIMPLE_FOR_BK3 === "true") {
+        logDebug("BK3-3 프린터에 대해 강제로 Simple Mode 사용")
+        return printSimpleTestPage()
+      }
+      return printFormattedTestPage()
+    }
+  } catch (error) {
+    logDebug("테스트 페이지 인쇄 중 오류 발생: " + error)
+    return false
+  }
+}
+
+/**
+ * 기존 형식의 테스트 페이지 인쇄
+ */
+async function printFormattedTestPage(): Promise<boolean> {
+  try {
+    if (!printerWriter) {
+      logDebug("프린터가 연결되어 있지 않습니다.")
+      return false
+    }
+
+    logDebug("Rich Mode로 테스트 페이지 인쇄 시작")
+
+    // 프린터 초기화
+    await initializePrinter()
+
+    // 중간 크기 글씨로 설정 (The Beach Stay)
+    const midSizeCommand = new Uint8Array([ESC, 0x21, 0x10]) // 중간 크기 글씨
+    logCommand("ESC ! (Mid Size Font)", midSizeCommand)
+    await printerWriter.write(midSizeCommand)
+
+    await printText("The Beach Stay\n")
+
+    // 구분선
+    await printText("-------------------------------------\n")
+
+    // 건물 이름 - 큰 글씨로 표시
+    const largeSizeCommand = new Uint8Array([ESC, 0x21, 0x30]) // 큰 글씨
+    logCommand("ESC ! (Large Size Font)", largeSizeCommand)
+    await printerWriter.write(largeSizeCommand)
+
+    await printText("D BUILDING\n\n")
+
+    // 층수와 객실 번호 - 더 큰 글씨로 표시
+    const extraLargeSizeCommand = new Uint8Array([ESC, 0x21, 0x31]) // 더 큰 글씨
+    logCommand("ESC ! (Extra Large Size Font)", extraLargeSizeCommand)
+    await printerWriter.write(extraLargeSizeCommand)
+
+    await printText("2F D213\n\n")
+
+    // 비밀번호 - 큰 글씨로 표시
+    const largeSizeCommand2 = new Uint8Array([ESC, 0x21, 0x30]) // 다시 큰 글씨로
+    logCommand("ESC ! (Large Size Font)", largeSizeCommand2)
+    await printerWriter.write(largeSizeCommand2)
+
+    await printText("Door PW: 2133\n\n")
+
+    // 구분선
+    const normalSizeCommand = new Uint8Array([ESC, 0x21, 0x00]) // 기본 글씨 크기로 돌아감
+    logCommand("ESC ! (Normal Size Font)", normalSizeCommand)
+    await printerWriter.write(normalSizeCommand)
+
+    await printText("------------------------------------\n\n")
+
+    // 체크인/체크아웃 정보 - 작은 글씨로 표시
+    const smallSizeCommand = new Uint8Array([ESC, 0x21, 0x01]) // 작은 글씨
+    logCommand("ESC ! (Small Size Font)", smallSizeCommand)
+    await printerWriter.write(smallSizeCommand)
+
+    await printText("Check-in: 2025.04.05\n")
+    await printText("Check-out: 2025.04.06\n\n\n")
+
+    // 용지 절단
+    const cutCommand = new Uint8Array([GS, 0x56, 0x01])
+    logCommand("GS V (Cut Paper)", cutCommand)
+    await printerWriter.write(cutCommand)
+
+    logDebug("Rich Mode 테스트 페이지 인쇄 완료")
     return true
   } catch (error) {
-    console.error("프린터 연결 확인 오류:", error)
+    logDebug("테스트 페이지 인쇄 중 오류 발생: " + error)
     return false
+  }
+}
+
+/**
+ * 단순 모드 테스트 페이지 인쇄
+ */
+async function printSimpleTestPage(): Promise<boolean> {
+  try {
+    if (!printerWriter) {
+      logDebug("프린터가 연결되어 있지 않습니다.")
+      return false
+    }
+
+    logDebug("Simple Mode로 테스트 페이지 인쇄 시작")
+
+    // ESC @ - Initialize printer
+    const initCommand = new Uint8Array([ESC, 0x40])
+    logCommand("ESC @ (Initialize)", initCommand)
+    await printerWriter.write(initCommand)
+
+    // Basic text only
+    await printText("THE BEACH STAY\r\n\r\n")
+    await printText("-------------------------------------\r\n\r\n")
+    await printText("PRINTER TEST - SIMPLE MODE\r\n\r\n")
+    await printText("D BUILDING\r\n\r\n")
+    await printText("ROOM: D213 2F\r\n\r\n")
+    await printText("DOOR PASSWORD: 2133\r\n\r\n")
+    await printText("-------------------------------------\r\n\r\n")
+    await printText("Check-in: 2025.04.05\r\n")
+    await printText("Check-out: 2025.04.06\r\n\r\n\r\n")
+
+    // GS V 1 for partial cut
+    const cutCommand = new Uint8Array([GS, 0x56, 0x01])
+    logCommand("GS V (Cut Paper)", cutCommand)
+    await printerWriter.write(cutCommand)
+
+    logDebug("Simple Mode 테스트 페이지 인쇄 완료")
+    return true
+  } catch (error) {
+    logDebug("단순 모드 테스트 페이지 인쇄 중 오류 발생: " + error)
+    return false
+  }
+}
+
+/**
+ * 프린터 상태 정보 가져오기
+ */
+export function getPrinterStatus(): {
+  connected: boolean
+  model: string
+  simpleMode: boolean
+  lastCommand?: { command: string; bytes: number[]; timestamp: string }
+} {
+  return {
+    connected: isPrinterConnected(),
+    model: detectedPrinterModel,
+    simpleMode: getSimplePrintMode(),
+    lastCommand: commandLog.length > 0 ? commandLog[commandLog.length - 1] : undefined,
   }
 }
 
@@ -488,145 +1020,5 @@ export function getPrinterDiagnostics(): any {
     },
     connectionInfo: lastConnectedPortInfo,
     commandLog: commandLog.slice(-10), // 최근 10개 명령만 반환
-  }
-}
-
-interface ReceiptItem {
-  label: string
-  value: string
-}
-
-interface ReceiptData {
-  guestName: string
-  roomCode: string // roomNumber 대신 roomCode 사용
-  roomType: string
-  checkInDate: string
-  checkOutDate: string
-  password: string
-  reservationId: string
-  totalAmount: number
-  printTime: string
-}
-
-interface PrintResult {
-  success: boolean
-  error?: string
-}
-
-/**
- * 영수증 인쇄 함수 - 모드에 따라 다른 형식 사용
- */
-export async function printReceipt(data: ReceiptData): Promise<boolean> {
-  try {
-    console.log("Printing receipt with data:", data)
-
-    // 개발 환경에서는 콘솔에 출력
-    if (process.env.NODE_ENV === "development") {
-      console.log("=== 영수증 출력 (개발 모드) ===")
-      console.log(`예약자명: ${data.guestName}`)
-      console.log(`객실번호: ${data.roomCode}`) // roomCode 사용
-      console.log(`객실타입: ${data.roomType}`)
-      console.log(`체크인: ${data.checkInDate}`)
-      console.log(`체크아웃: ${data.checkOutDate}`)
-      console.log(`출입번호: ${data.password}`)
-      console.log(`예약번호: ${data.reservationId}`)
-      console.log(`결제금액: ${data.totalAmount.toLocaleString()}원`)
-      console.log(`출력시간: ${data.printTime}`)
-      console.log("================================")
-      return true
-    }
-
-    // 실제 프린터 연결 시도
-    const printCommand = createPrintCommand(data)
-
-    // 프린터 포트 연결 시도 (예: COM3, /dev/ttyUSB0 등)
-    const success = await sendToPrinter(printCommand)
-
-    return success
-  } catch (error) {
-    console.error("Print error:", error)
-    return false
-  }
-}
-
-/**
- * 프린터 명령어 생성
- */
-function createPrintCommand(data: ReceiptData): string {
-  const lines = [
-    "더 비치스테이",
-    "체크인 영수증",
-    data.printTime,
-    "--------------------------------",
-    `예약자명: ${data.guestName}`,
-    `객실번호: ${data.roomCode}`, // roomCode 사용
-    `객실타입: ${data.roomType}`,
-    `체크인: ${data.checkInDate}`,
-    `체크아웃: ${data.checkOutDate}`,
-    `출입번호: ${data.password}`,
-    `예약번호: ${data.reservationId}`,
-    `결제금액: ${data.totalAmount.toLocaleString()}원`,
-    "--------------------------------",
-    "감사합니다",
-    "즐거운 여행 되세요!",
-    "",
-    "",
-    "", // 여백을 위한 빈 줄들
-  ]
-
-  return lines.join("\n")
-}
-
-/**
- * 실제 프린터로 데이터 전송
- */
-async function sendToPrinter(command: string): Promise<boolean> {
-  try {
-    // 실제 환경에서는 시리얼 포트나 USB 프린터로 전송
-    // 여기서는 시뮬레이션
-
-    console.log("Sending to printer:", command)
-
-    // 프린터 연결 시뮬레이션
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-
-    return true
-  } catch (error) {
-    console.error("Printer communication error:", error)
-    return false
-  }
-}
-
-/**
- * 프린터 상태 확인
- */
-export async function checkPrinterStatus(): Promise<{
-  connected: boolean
-  paperStatus: "ok" | "low" | "empty"
-  error?: string
-}> {
-  try {
-    // 실제 환경에서는 프린터 상태를 확인
-    // 개발 환경에서는 시뮬레이션
-
-    if (process.env.NODE_ENV === "development") {
-      return {
-        connected: true,
-        paperStatus: "ok",
-      }
-    }
-
-    // 실제 프린터 상태 확인 로직
-    return {
-      connected: false,
-      paperStatus: "ok",
-      error: "Printer not connected",
-    }
-  } catch (error) {
-    return {
-      connected: false,
-      paperStatus: "ok",
-      error: error instanceof Error ? error.message : "Unknown error",
-    }
   }
 }

@@ -49,7 +49,7 @@ export function playAudio(audioKey: keyof typeof AUDIO_FILES): void {
     // 볼륨 설정 (0.0 ~ 1.0)
     audio.volume = 0.8
 
-    // ���생 시작
+    // 재생 시작
     audio.play().catch((error) => {
       console.error(`오디오 재생 오류 (${audioKey}):`, error)
     })

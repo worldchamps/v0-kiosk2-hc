@@ -8,8 +8,6 @@ import MonthlySalesCalendar from "@/components/monthly-sales-calendar"
 import RoomInfo from "@/components/room-info"
 import PrinterTest from "@/components/printer-test"
 import DirectLinks from "@/components/direct-links"
-import BillAcceptorTest from "@/components/bill-acceptor-test"
-import BillDispenserTest from "@/components/bill-dispenser-test"
 
 // 샘플 예약 데이터 생성 함수
 const getSampleReservations = () => {
@@ -109,8 +107,6 @@ export default function WebLayout({ onChangeMode }: { onChangeMode: () => void }
             <TabsTrigger value="roomInfo">객실 정보</TabsTrigger>
             <TabsTrigger value="sales">매출 현황</TabsTrigger>
             <TabsTrigger value="printer">프린터 테스트</TabsTrigger>
-            <TabsTrigger value="billAcceptor">지폐 인식기</TabsTrigger>
-            <TabsTrigger value="billDispenser">지폐 방출기</TabsTrigger>
             <TabsTrigger value="links">바로 가기 링크</TabsTrigger>
           </TabsList>
           <TabsContent value="reservations" className="mt-4">
@@ -165,12 +161,6 @@ export default function WebLayout({ onChangeMode }: { onChangeMode: () => void }
           </TabsContent>
           <TabsContent value="printer">
             <PrinterTest />
-          </TabsContent>
-          <TabsContent value="billAcceptor">
-            <BillAcceptorTest />
-          </TabsContent>
-          <TabsContent value="billDispenser">
-            <BillDispenserTest />
           </TabsContent>
           <TabsContent value="links">
             <DirectLinks />

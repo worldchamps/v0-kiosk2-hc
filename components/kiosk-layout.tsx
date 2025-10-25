@@ -102,46 +102,27 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   }
 
   const handleModeChangeClick = () => {
-    console.log("관리자 버튼 클릭됨!")
     setShowAdminKeypad(true)
-    console.log("showAdminKeypad 상태:", true)
   }
 
   const handlePasswordConfirm = (password: string) => {
-    console.log("비밀번호 확인됨:", password)
     setShowAdminKeypad(false)
     onChangeMode()
   }
 
-  const handleAdminKeypadClose = () => {
-    console.log("관리자 키패드 닫기")
-    setShowAdminKeypad(false)
-  }
-
-  // 예약 확인 함수 수정 - 이름 또는 예약 ID로 검색
-  const handleCheckReservation = async (searchTerm) => {
-    if (!searchTerm.trim()) return
+  // 클라이언트 코드에서 API 키 참조 제거
+  const handleCheckReservation = async (name) => {
+    if (!name.trim()) return
 
     setLoading(true)
     setError("")
     setDebugInfo(null)
 
     try {
-      console.log(`Checking reservation for: ${searchTerm}, today: ${getCurrentDateKST()}`)
+      console.log(`Checking reservation for: ${name}, today: ${getCurrentDateKST()}`)
 
-      // 검색어가 숫자/영문자 조합이고 6자리인지 확인 (예약 ID 뒷자리)
-      const isReservationId = /^[A-Za-z0-9]{6}$/.test(searchTerm.trim())
-
-      let apiUrl = ""
-      if (isReservationId) {
-        // 예약 ID 뒷자리로 검색
-        apiUrl = `/api/reservations?reservationIdSuffix=${encodeURIComponent(searchTerm)}&todayOnly=true`
-      } else {
-        // 이름으로 검색
-        apiUrl = `/api/reservations?name=${encodeURIComponent(searchTerm)}&todayOnly=true`
-      }
-
-      const response = await fetch(apiUrl, {
+      // API 엔드포인트 변경 - admin/reservations 대신 reservations 사용
+      const response = await fetch(`/api/reservations?name=${encodeURIComponent(name)}&todayOnly=true`, {
         method: "GET",
       })
 
@@ -155,13 +136,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       console.log("API Response:", data)
 
       if (data.reservations && data.reservations.length > 0) {
-        // 여러 예약이 있는 경우 처리
-        if (data.reservations.length > 1) {
-          console.log(`Multiple reservations found for ${searchTerm}:`, data.reservations)
-          // 첫 번째 예약을 선택하거나, 별도 선택 화면으로 이동할 수 있음
-          // 현재는 첫 번째 예약을 선택
-        }
-
+        // 예약 데이터 저장
         const reservation = data.reservations[0]
         console.log("Found reservation:", reservation)
 
@@ -170,7 +145,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       } else {
         // 오늘 날짜에 예약이 없는 경우
         const today = getCurrentDateKST()
-        console.log(`No reservation found for ${searchTerm} on ${today}`)
+        console.log(`No reservation found for ${name} on ${today}`)
         setCurrentScreen("reservationNotFound")
       }
     } catch (err) {
@@ -234,13 +209,8 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     }
   }
 
-  // 디버깅을 위한 상태 로그
-  useEffect(() => {
-    console.log("showAdminKeypad 상태 변경:", showAdminKeypad)
-  }, [showAdminKeypad])
-
   return (
-    <div className="w-full h-full bg-[#fefef7] overflow-hidden kiosk-mode relative">
+    <div className="w-full h-full bg-[#fefef7] overflow-hidden kiosk-mode">
       <div className="h-full w-full">
         {error && <div className="m-4 p-3 bg-red-100 text-red-700 rounded-md">{error}</div>}
 
@@ -294,33 +264,20 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         )}
       </div>
 
-      {/* 관리자 모드 접근 버튼 - 더 명확하게 표시 */}
-      <div className="absolute bottom-4 right-4">
-        <button
-          className="px-4 py-2 bg-gray-800 text-white rounded-lg opacity-70 hover:opacity-100 transition-opacity text-sm font-medium shadow-lg"
-          onClick={handleModeChangeClick}
-          aria-label="관리자 모드"
-        >
+      {/* 관리자 모드 접근 버튼 (화면 하단에 숨겨진 버튼) */}
+      <div className="absolute bottom-0 right-0 p-2 opacity-30">
+        <button className="p-2 bg-transparent" onClick={handleModeChangeClick} aria-label="관리자 모드">
           관리자
         </button>
       </div>
 
-      {/* 관리자 키패드 - z-index 추가 */}
+      {/* 관리자 키패드 */}
       {showAdminKeypad && (
-        <div className="fixed inset-0 z-50">
-          <AdminKeypad
-            onClose={handleAdminKeypadClose}
-            onConfirm={handlePasswordConfirm}
-            adminPassword={adminPassword}
-          />
-        </div>
-      )}
-
-      {/* 디버깅용 상태 표시 (개발 중에만 사용) */}
-      {process.env.NODE_ENV === "development" && (
-        <div className="fixed top-4 left-4 bg-black text-white p-2 rounded text-xs z-40">
-          Admin Keypad: {showAdminKeypad ? "OPEN" : "CLOSED"}
-        </div>
+        <AdminKeypad
+          onClose={() => setShowAdminKeypad(false)}
+          onConfirm={handlePasswordConfirm}
+          adminPassword={adminPassword}
+        />
       )}
     </div>
   )
