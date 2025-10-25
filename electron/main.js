@@ -160,7 +160,6 @@ async function detectPrinterPort() {
 
     // Fallback to configured COM port with manual model setting
     if (isDev) {
-      console.log("[PRINTER] BK3-3 not found by VID/PID (likely RS232 connection)")
       console.log("[PRINTER] Using configured port:", PRINTER_CONFIG.path)
       console.log("[PRINTER] Using configured model:", PRINTER_CONFIG.model)
     }
