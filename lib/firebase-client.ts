@@ -12,13 +12,39 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 }
 
-// Initialize Firebase (client-side)
+let app: any = null
+let database: any = null
+
+// Initialize Firebase (client-side only, not during build)
 function initFirebase() {
-  if (getApps().length === 0) {
-    return initializeApp(firebaseConfig)
+  if (typeof window === "undefined") {
+    // Skip during SSR/build
+    return null
   }
-  return getApps()[0]
+
+  if (!firebaseConfig.databaseURL || !firebaseConfig.projectId) {
+    console.warn("[Firebase Client] Missing required configuration")
+    return null
+  }
+
+  if (getApps().length === 0) {
+    app = initializeApp(firebaseConfig)
+  } else {
+    app = getApps()[0]
+  }
+
+  return app
 }
 
-const app = initFirebase()
-export const database = getDatabase(app)
+export function getFirebaseDatabase() {
+  if (!database) {
+    const firebaseApp = initFirebase()
+    if (firebaseApp) {
+      database = getDatabase(firebaseApp)
+    }
+  }
+  return database
+}
+
+// Export for backward compatibility
+export { database }
