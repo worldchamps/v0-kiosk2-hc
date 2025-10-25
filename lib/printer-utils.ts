@@ -1,9 +1,25 @@
 // This file has been temporarily simplified to resolve syntax errors
 // Full functionality will be restored in the next update
 
+let printerConnected = false
+let printerPort = ""
+
+if (typeof window !== "undefined" && (window as any).electronAPI) {
+  const electronAPI = (window as any).electronAPI
+  if (electronAPI.onPrinterStatus) {
+    electronAPI.onPrinterStatus((status: { connected: boolean; port?: string; error?: string }) => {
+      console.log("[PRINTER] Status update:", status)
+      printerConnected = status.connected
+      if (status.port) {
+        printerPort = status.port
+      }
+    })
+  }
+}
+
 export function isPrinterConnected(): boolean {
   if (typeof window !== "undefined" && (window as any).electronAPI) {
-    return true
+    return printerConnected
   }
   return false
 }
@@ -65,6 +81,7 @@ export async function printReceipt(receiptData: any): Promise<boolean> {
 }
 
 export async function printTestPage(): Promise<boolean> {
+  console.log("[PRINTER] Test print requested, connected:", printerConnected)
   return printReceipt({
     roomNumber: "D213",
     floor: "2",
@@ -74,20 +91,30 @@ export async function printTestPage(): Promise<boolean> {
   })
 }
 
-export function getPrinterStatus() {
+export async function getPrinterStatus() {
+  if (typeof window !== "undefined" && (window as any).electronAPI) {
+    const electronAPI = (window as any).electronAPI
+    if (electronAPI.getPrinterStatus) {
+      const status = await electronAPI.getPrinterStatus()
+      console.log("[PRINTER] Current status from Electron:", status)
+      return {
+        connected: status.connected,
+        port: status.port || "UNKNOWN",
+        model: "Serial Printer",
+        simpleMode: true,
+      }
+    }
+  }
   return {
-    connected: isPrinterConnected(),
+    connected: printerConnected,
+    port: printerPort || "UNKNOWN",
     model: "UNKNOWN",
     simpleMode: true,
   }
 }
 
-export function getPrinterDiagnostics() {
-  return {
-    connected: isPrinterConnected(),
-    model: "UNKNOWN",
-    simpleMode: true,
-  }
+export async function getPrinterDiagnostics() {
+  return getPrinterStatus()
 }
 
 export async function connectPrinter(): Promise<boolean> {
