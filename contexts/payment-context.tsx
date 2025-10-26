@@ -116,7 +116,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
 
   // 결제 완료
   const completePayment = useCallback(() => {
-    console.log("[v0] Payment completed")
+    console.log("[v0] Payment session reset")
     setPaymentSession(initialSession)
   }, [])
 

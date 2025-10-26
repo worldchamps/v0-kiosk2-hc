@@ -39,13 +39,18 @@ export default function PaymentScreen({
   const paymentCompleteRef = useRef(false)
 
   useEffect(() => {
-    if (isPaymentComplete() && paymentCompleteRef.current) {
-      console.log("[v0] Payment complete detected, transitioning to complete screen")
+    if (
+      paymentSession.isActive &&
+      paymentSession.acceptedAmount >= paymentSession.requiredAmount &&
+      !paymentCompleteRef.current
+    ) {
+      console.log("[v0] Payment complete detected, will transition to complete screen")
+      paymentCompleteRef.current = true
       setTimeout(() => {
         onPaymentComplete()
       }, 1000)
     }
-  }, [isPaymentComplete, onPaymentComplete])
+  }, [paymentSession.acceptedAmount, paymentSession.requiredAmount, paymentSession.isActive, onPaymentComplete])
 
   const handleBillRecognitionEvent = useCallback(
     async (eventData: number) => {
@@ -110,10 +115,10 @@ export default function PaymentScreen({
           addBill(amount)
           setStatusMessage(`${amount.toLocaleString()}원 수취 완료`)
 
-          if (isPaymentComplete()) {
+          const newTotal = paymentSession.acceptedAmount + amount
+          if (newTotal >= requiredAmount) {
             console.log("[v0] Payment complete! Processing...")
             setIsProcessing(false)
-            paymentCompleteRef.current = true
 
             setEventCallback(null)
 
@@ -161,7 +166,7 @@ export default function PaymentScreen({
         }
       }
     },
-    [addBill, isPaymentComplete],
+    [addBill, paymentSession.acceptedAmount, requiredAmount],
   )
 
   useEffect(() => {

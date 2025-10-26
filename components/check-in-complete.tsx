@@ -12,8 +12,8 @@ import type { KioskLocation } from "@/lib/location-utils"
 import { playBuildingGuide, stopAllAudio } from "@/lib/audio-utils"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { getKioskPropertyId, propertyUsesElectron } from "@/lib/property-utils"
-import { usePayment } from "@/contexts/payment-context"
 import { connectBillDispenser, dispenseBills, isBillDispenserConnected } from "@/lib/bill-dispenser-utils"
+import { usePayment } from "@/contexts/payment-context"
 
 interface CheckInCompleteProps {
   reservation?: any
@@ -42,7 +42,7 @@ export default function CheckInComplete({
   const [simpleMode, setSimpleMode] = useState(false)
   const [printerModel, setPrinterModel] = useState<string>("UNKNOWN")
   const [audioPlayed, setAudioPlayed] = useState(false)
-  const { paymentSession } = usePayment()
+  const { paymentSession, completePayment } = usePayment() // Declare usePayment hook
   const [isRefundingChange, setIsRefundingChange] = useState(false)
   const [refundStatus, setRefundStatus] = useState<"idle" | "connecting" | "dispensing" | "success" | "error">("idle")
   const [changeAmount, setChangeAmount] = useState(0)
@@ -289,7 +289,7 @@ export default function CheckInComplete({
 
   useEffect(() => {
     const handleChangeRefund = async () => {
-      if (paymentSession.overpaymentAmount > 0 && !changeRefundedRef.current) {
+      if (paymentSession.isActive && paymentSession.overpaymentAmount > 0 && !changeRefundedRef.current) {
         changeRefundedRef.current = true
         setChangeAmount(paymentSession.overpaymentAmount)
         setIsRefundingChange(true)
@@ -304,6 +304,7 @@ export default function CheckInComplete({
               logDebug("Failed to connect to bill dispenser")
               setRefundStatus("error")
               setIsRefundingChange(false)
+              completePayment()
               return
             }
           }
@@ -329,12 +330,16 @@ export default function CheckInComplete({
           setRefundStatus("error")
         } finally {
           setIsRefundingChange(false)
+          completePayment()
         }
+      } else if (paymentSession.isActive && paymentSession.overpaymentAmount === 0) {
+        logDebug("No overpayment, completing payment session")
+        completePayment()
       }
     }
 
     handleChangeRefund()
-  }, [paymentSession.overpaymentAmount])
+  }, [paymentSession.isActive, paymentSession.overpaymentAmount, completePayment])
 
   return (
     <div className="flex items-start justify-start w-full h-full">
