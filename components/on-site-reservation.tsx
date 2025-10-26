@@ -9,7 +9,7 @@ import { Phone, Loader2, CheckCircle2, Printer, Home, Bed } from "lucide-react"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { getRoomImagePath } from "@/lib/room-utils"
 import { sortRoomTypes } from "@/lib/room-type-order"
-import { connectPrinter, printOnSiteReservationReceipt } from "@/lib/printer-utils"
+import { printOnSiteReservationReceipt } from "@/lib/printer-utils"
 import { usePayment } from "@/contexts/payment-context"
 import PaymentScreen from "@/components/payment-screen"
 
@@ -71,7 +71,9 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
     try {
       setLoading(true)
       const url = location ? `/api/available-rooms?location=${location}` : "/api/available-rooms"
-      const response = await fetch(url)
+      const response = await fetch(`${url}&t=${Date.now()}`, {
+        cache: "no-store",
+      })
       const data = await response.json()
 
       if (data.roomsByType) {
@@ -143,6 +145,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
       if (data.success) {
         setReservationData(data.data)
         completePayment()
+        await fetchAvailableRooms()
         setStep("complete")
       } else {
         alert("예약 중 오류가 발생했습니다: " + data.error)
@@ -169,7 +172,6 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
 
     setIsPrinting(true)
     try {
-      await connectPrinter()
       const success = await printOnSiteReservationReceipt({
         reservationId: reservationData.reservationId,
         guestName,

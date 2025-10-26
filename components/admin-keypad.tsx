@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { X, ArrowLeft, Check, Printer, Banknote, DollarSign } from "lucide-react"
-import { openPrinterPort } from "@/lib/printer-utils"
+import { autoConnectPrinter, isPrinterConnected } from "@/lib/printer-utils-unified"
 import { connectBillAcceptor, isBillAcceptorConnected } from "@/lib/bill-acceptor-utils"
 import { connectBillDispenser, isBillDispenserConnected } from "@/lib/bill-dispenser-utils"
 
@@ -17,11 +17,11 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
   const [input, setInput] = useState("")
   const [error, setError] = useState("")
 
+  const [printerConnected, setPrinterConnected] = useState(false)
   const [acceptorConnected, setAcceptorConnected] = useState(false)
   const [dispenserConnected, setDispenserConnected] = useState(false)
   const [connectingDevice, setConnectingDevice] = useState<string | null>(null)
 
-  // 키패드 레이아웃 - 특수 기호 추가
   const keypadLayout = [
     ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
     ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
@@ -32,6 +32,7 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
 
   useEffect(() => {
     const checkDeviceStatus = async () => {
+      setPrinterConnected(isPrinterConnected())
       setAcceptorConnected(isBillAcceptorConnected())
       setDispenserConnected(isBillDispenserConnected())
     }
@@ -45,10 +46,15 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
     setConnectingDevice("printer")
     setError("")
     try {
-      await openPrinterPort()
-      setError("프린터 포트 선택 완료")
+      const success = await autoConnectPrinter()
+      if (success) {
+        setPrinterConnected(true)
+        setError("프린터 연결 완료")
+      } else {
+        setError("프린터 연결 실패")
+      }
     } catch (err) {
-      setError(`프린터 포트 선택 취소`)
+      setError(`프린터 연결 오류: ${err}`)
     } finally {
       setConnectingDevice(null)
     }
@@ -90,19 +96,16 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
     }
   }
 
-  // 키 입력 처리
   const handleKeyPress = (key: string) => {
     setInput((prev) => prev + key)
     setError("")
   }
 
-  // 백스페이스 처리
   const handleBackspace = () => {
     setInput((prev) => prev.slice(0, -1))
     setError("")
   }
 
-  // 확인 처리
   const handleConfirm = () => {
     if (input === adminPassword) {
       onConfirm(input)
@@ -112,7 +115,6 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
     }
   }
 
-  // ESC 키 누르면 닫기
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose()
@@ -136,13 +138,17 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
           <h3 className="text-lg font-semibold mb-3">디바이스 연결</h3>
           <div className="grid grid-cols-3 gap-3">
             <Button
-              variant="outline"
-              className="h-20 flex flex-col items-center justify-center gap-2 bg-transparent"
+              variant={printerConnected ? "default" : "outline"}
+              className={`h-20 flex flex-col items-center justify-center gap-2 ${
+                printerConnected ? "bg-green-600 hover:bg-green-700" : ""
+              }`}
               onClick={handleConnectPrinter}
               disabled={connectingDevice !== null}
             >
               <Printer className="h-6 w-6" />
-              <span className="text-sm">{connectingDevice === "printer" ? "포트 선택 중..." : "프린터 포트 선택"}</span>
+              <span className="text-sm">
+                {connectingDevice === "printer" ? "연결 중..." : printerConnected ? "프린터 연결됨" : "프린터 연결"}
+              </span>
             </Button>
 
             <Button

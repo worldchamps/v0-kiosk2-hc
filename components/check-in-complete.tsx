@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Check, Printer, Eye, EyeOff } from "lucide-react"
 import { useEffect, useState, useRef } from "react"
 import DirectPrinter from "./direct-printer"
-import { printReceipt, getSimplePrintMode, autoConnectPrinter, getPrinterModel } from "@/lib/printer-utils-unified"
+import { printReceipt, getSimplePrintMode, getPrinterModel } from "@/lib/printer-utils-unified"
 import Image from "next/image"
 import { getBuildingZoomImagePath } from "@/lib/location-utils"
 import type { KioskLocation } from "@/lib/location-utils"
@@ -36,7 +36,7 @@ export default function CheckInComplete({
   const [countdown, setCountdown] = useState<number | null>(null)
   const [showPrinter, setShowPrinter] = useState(false)
   const [autoPrintAttempted, setAutoPrintAttempted] = useState(false)
-  const [printStatus, setPrintStatus] = useState<"idle" | "connecting" | "printing" | "success" | "error">("idle")
+  const [printStatus, setPrintStatus] = useState<"idle" | "printing" | "success" | "error">("idle")
   const [showPassword, setShowPassword] = useState(false)
   const [simpleMode, setSimpleMode] = useState(false)
   const [printerModel, setPrinterModel] = useState<string>("UNKNOWN")
@@ -181,37 +181,22 @@ export default function CheckInComplete({
 
   const autoPrintReceipt = async () => {
     setAutoPrintAttempted(true)
-    setPrintStatus("connecting")
-    logDebug("Print status: connecting")
+    setPrintStatus("printing")
+    logDebug("Print status: printing")
     logDebug(`Print mode: ${simpleMode ? "simple mode" : "normal mode"}`)
     logDebug(`Printer model: ${printerModel}`)
 
     try {
-      const connected = await autoConnectPrinter()
+      const success = await printReceipt(receiptData)
 
-      if (connected) {
-        setPrinterModel(getPrinterModel())
-        logDebug(`Connected printer model: ${getPrinterModel()}`)
+      if (success) {
+        setPrintStatus("success")
+        logDebug(`Print status: success (${simpleMode ? "simple mode" : "normal mode"})`)
 
-        setPrintStatus("printing")
-        logDebug("Print status: printing")
-
-        const success = await printReceipt(receiptData)
-
-        if (success) {
-          setPrintStatus("success")
-          logDebug(`Print status: success (${simpleMode ? "simple mode" : "normal mode"})`)
-
-          startRedirectCountdown()
-        } else {
-          setPrintStatus("error")
-          logDebug("Print status: error (print failed)")
-        }
-
-        // await disconnectPrinter()
+        startRedirectCountdown()
       } else {
         setPrintStatus("error")
-        logDebug("Print status: error (connection failed)")
+        logDebug("Print status: error (print failed)")
       }
     } catch (error) {
       console.error("Auto print receipt error:", error)
@@ -342,9 +327,6 @@ export default function CheckInComplete({
               </div>
 
               <div className="w-full">
-                {printStatus === "connecting" && (
-                  <div className="bg-blue-50 p-4 rounded-lg text-blue-700">COM2 프린터에 연결 중입니다...</div>
-                )}
                 {printStatus === "printing" && (
                   <div className="bg-blue-50 p-4 rounded-lg text-blue-700">영수증을 인쇄하고 있습니다...</div>
                 )}
