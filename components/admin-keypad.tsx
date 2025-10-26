@@ -58,7 +58,7 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
         setPrinterConnected(true)
         setError("")
       } else {
-        setError("프린터 연결 실패")
+        setError("프린터 포트 선택 취소")
       }
     } catch (err) {
       setError(`프린터 연결 오류: ${err}`)

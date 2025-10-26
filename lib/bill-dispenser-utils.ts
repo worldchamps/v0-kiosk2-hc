@@ -609,24 +609,19 @@ export async function disconnectBillDispenser(): Promise<void> {
  */
 export async function checkConnection(): Promise<boolean> {
   try {
-    // 프로토콜 버전 확인 (DIP SW3 설정에 따라 다름)
-    const cmd1 = isOldProtocol ? 0x48 : 0x68 // 'H' or 'h'
-    const cmd2 = isOldProtocol ? 0x49 : 0x69 // 'I' or 'i'
-    const data = 0x3f // '?'
+    // TX: 0x24, 0x48, 0x49, 0x3F, 0xF0
+    // RX: 0x24, 0x6D, 0x65, 0x21, 0xF3
+    const packet = new Uint8Array([0x24, 0x48, 0x49, 0x3f, 0xf0])
 
-    const packet = createPacket(cmd1, cmd2, data)
-
-    // 응답 예상 값 (DIP SW3 설정에 따라 다름)
-    const expectedCmd1 = isOldProtocol ? 0x6d : 0x4d // 'm' or 'M'
-    const expectedCmd2 = isOldProtocol ? 0x65 : 0x45 // 'e' or 'E'
+    // Expected response: 'm' 'e' '!'
+    const expectedCmd1 = 0x6d // 'm'
+    const expectedCmd2 = 0x65 // 'e'
 
     const response = await sendCommandAndWaitResponse(packet, expectedCmd1, expectedCmd2, 2000)
 
     if (response && response.length === 5) {
-      if (
-        (response[1] === 0x6d && response[2] === 0x65 && response[3] === 0x21) || // 'm' 'e' '!'
-        (response[1] === 0x4d && response[2] === 0x45 && response[3] === 0x21) // 'M' 'E' '!'
-      ) {
+      if (response[1] === 0x6d && response[2] === 0x65 && response[3] === 0x21) {
+        // 'm' 'e' '!'
         logCommand("Check Connection", packet, response)
         return true
       }
@@ -693,23 +688,24 @@ export async function dispenseBills(count: number): Promise<boolean> {
   }
 
   try {
-    const cmd1 = isOldProtocol ? 0x44 : 0x64 // 'D' or 'd'
-    const cmd2 = count // 방출할 지폐 수
-    const data = isOldProtocol ? 0x53 : 0x73 // 'S' or 's'
+    // TX: 0x24, 0x44, 0x53, [count], [checksum]
+    // RX: 0x24, 0x64, 0x61, [count], [checksum]
+    // Example for 1 bill: TX: 0x24, 0x44, 0x53, 0x01, 0x98 -> RX: 0x24, 0x64, 0x61, 0x01, 0xE8
+    const cmd1 = 0x44 // 'D'
+    const cmd2 = 0x53 // 'S'
+    const data = count
 
     const packet = createPacket(cmd1, cmd2, data)
 
-    // 응답 예상 값
-    const expectedCmd1 = isOldProtocol ? 0x64 : 0x44 // 'd' or 'D'
-    const expectedCmd2 = count
+    // Expected response: 'd' 'a' [count]
+    const expectedCmd1 = 0x64 // 'd'
+    const expectedCmd2 = 0x61 // 'a'
 
-    const response = await sendCommandAndWaitResponse(packet, expectedCmd1, expectedCmd2)
+    const response = await sendCommandAndWaitResponse(packet, expectedCmd1, expectedCmd2, 5000)
 
     if (response && response.length === 5) {
-      if (
-        (isOldProtocol && response[1] === 0x64 && response[2] === count && response[3] === 0x61) || // 'd' + count + 'a'
-        (!isOldProtocol && response[1] === 0x44 && response[2] === count && response[3] === 0x41) // 'D' + count + 'A'
-      ) {
+      if (response[1] === 0x64 && response[2] === 0x61 && response[3] === count) {
+        // 'd' 'a' [count]
         logCommand("Dispense Bills", packet, response)
         return true
       }
