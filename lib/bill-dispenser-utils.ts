@@ -699,23 +699,23 @@ export async function dispenseBills(count: number): Promise<boolean> {
 
   try {
     // TX: 0x24, 0x44, 0x53, [count], [checksum]
-    // RX: 0x24, 0x64, 0x61, [count], [checksum]
-    // Example for 1 bill: TX: 0x24, 0x44, 0x53, 0x01, 0x98 -> RX: 0x24, 0x64, 0x61, 0x01, 0xE8
+    // RX: 0x24, 0x61, 0x64, [count], [checksum]
+    // Example for 1 bill: TX: 0x24, 0x44, 0x53, 0x01, 0x98 -> RX: 0x24, 0x61, 0x64, 0x01, 0xE8
     const cmd1 = 0x44 // 'D'
     const cmd2 = 0x53 // 'S'
     const data = count
 
     const packet = createPacket(cmd1, cmd2, data)
 
-    // Expected response: 'd' 'a' [count]
-    const expectedCmd1 = 0x64 // 'd'
-    const expectedCmd2 = 0x61 // 'a'
+    // Expected response: 'a' 'd' [count] (swapped order)
+    const expectedCmd1 = 0x61 // 'a'
+    const expectedCmd2 = 0x64 // 'd'
 
     const response = await sendCommandAndWaitResponse(packet, expectedCmd1, expectedCmd2, 5000)
 
     if (response && response.length === 5) {
-      if (response[1] === 0x64 && response[2] === 0x61 && response[3] === count) {
-        // 'd' 'a' [count]
+      if (response[1] === 0x61 && response[2] === 0x64 && response[3] === count) {
+        // 'a' 'd' [count]
         logCommand("Dispense Bills", packet, response)
         return true
       }
