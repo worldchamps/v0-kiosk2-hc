@@ -24,6 +24,9 @@ let currentStatus = 0x01 // WAIT
 let eventProcessingEnabled = false
 let lastEventMessage: { command: string; data: number; timestamp: string } | null = null
 
+// 이벤트 콜백
+let eventCallback: ((eventData: number) => void) | null = null
+
 // Debug logging
 const ENABLE_DEBUG_LOGGING = true
 const commandLog: Array<{ command: string; bytes: number[]; response?: number[]; timestamp: string; error?: string }> =
@@ -326,6 +329,10 @@ async function handleEventMessage(packet: Uint8Array): Promise<void> {
     command: "Event Status",
     data: eventData,
     timestamp: new Date().toISOString(),
+  }
+
+  if (eventCallback) {
+    eventCallback(eventData)
   }
 
   // 이벤트 확인 응답 전송 (항상 전송)
@@ -1198,4 +1205,12 @@ export function getErrorString(errorCode: number): string {
     default:
       return `Unknown error (${errorCode})`
   }
+}
+
+/**
+ * 이벤트 콜백 등록
+ */
+export function setEventCallback(callback: ((eventData: number) => void) | null): void {
+  eventCallback = callback
+  logDebug(`이벤트 콜백 ${callback ? "등록됨" : "해제됨"}`)
 }

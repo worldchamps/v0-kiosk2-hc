@@ -9,11 +9,10 @@ import {
   connectBillAcceptor,
   enableAcceptance,
   disableAcceptance,
-  getStatus,
+  setConfig,
   getBillData,
-  stackBill,
-  returnBill,
   isBillAcceptorConnected,
+  setEventCallback,
 } from "@/lib/bill-acceptor-utils"
 
 interface PaymentScreenProps {
@@ -37,144 +36,109 @@ export default function PaymentScreen({
   const [error, setError] = useState<string>("")
   const [statusMessage, setStatusMessage] = useState<string>("지폐인식기 연결 중...")
 
-  // 지폐 인식 프로세스
-  const processBillAcceptance = useCallback(async () => {
-    if (isProcessing) return
+  const handleBillRecognitionEvent = useCallback(
+    async (eventData: number) => {
+      console.log("[v0] Event received:", eventData.toString(16))
 
-    setIsProcessing(true)
-    setError("")
+      // 0x05 = RECOGNITION_END (지폐 인식 완료)
+      if (eventData === 0x05) {
+        console.log("[v0] Bill recognition complete event received")
+        setStatusMessage("지폐 인식 완료, 처리 중...")
 
-    try {
-      // 1. 지폐 수취 활성화
-      const enabled = await enableAcceptance()
-      if (!enabled) {
-        setError("지폐 수취 활성화 실패")
-        setIsProcessing(false)
-        return
-      }
+        try {
+          // 1초 대기
+          await new Promise((resolve) => setTimeout(resolve, 1000))
 
-      setStatusMessage("지폐를 투입해주세요...")
+          // Event TX 자동 송신 모드 OFF
+          console.log("[v0] Disabling Event TX auto send mode")
+          const configOff = await setConfig(0x1c) // 0x1C = Event TX OFF
+          if (!configOff) {
+            console.error("[v0] Failed to disable Event TX mode")
+            setError("설정 변경 실패")
+            return
+          }
 
-      let attempts = 0
-      const maxAttempts = 30 // 60초 타임아웃 (2초 간격)
+          // 1초 대기
+          await new Promise((resolve) => setTimeout(resolve, 1000))
 
-      while (attempts < maxAttempts && !isPaymentComplete()) {
-        const status = await getStatus()
-
-        if (status === null) {
-          setError("상태 확인 실패")
-          await disableAcceptance()
-          setIsProcessing(false)
-          return
-        }
-
-        // 지폐 인식 완료 (에스크로 상태)
-        if (status === 0x05) {
-          setStatusMessage("지폐 확인 중...")
-
+          // 지폐 데이터 확인
+          console.log("[v0] Getting bill data")
           const billData = await getBillData()
           if (billData === null) {
+            console.error("[v0] Failed to get bill data")
             setError("지폐 데이터 확인 실패")
-            await returnBill()
-            await disableAcceptance()
-            setIsProcessing(false)
             return
           }
 
           // 지폐 금액 변환
           let amount = 0
           switch (billData) {
-            case 1:
-              amount = 1000
-              break
-            case 5:
-              amount = 5000
-              break
-            case 10:
+            case 0x0a: // 1만원
               amount = 10000
               break
-            case 50:
+            case 0x32: // 5만원
               amount = 50000
               break
+            case 0x01: // 1천원
+              amount = 1000
+              break
+            case 0x05: // 5천원
+              amount = 5000
+              break
             default:
-              setError(`알 수 없는 지폐 종류: ${billData}`)
-              await returnBill()
-              await disableAcceptance()
-              setIsProcessing(false)
+              console.error("[v0] Unknown bill type:", billData.toString(16))
+              setError(`알 수 없는 지폐 종류: 0x${billData.toString(16)}`)
               return
           }
 
-          // 3. 지폐 적재
-          setStatusMessage(`${amount.toLocaleString()}원 처리 중...`)
-          const stacked = await stackBill()
-
-          if (!stacked) {
-            setError("지폐 적재 실패")
-            await returnBill()
-            await disableAcceptance()
-            setIsProcessing(false)
-            return
-          }
-
-          // 4. 적재 완료 대기
-          let stackAttempts = 0
-          while (stackAttempts < 20) {
-            const stackStatus = await getStatus()
-            if (stackStatus === 0x0b) {
-              // STACK_END
-              addBill(amount)
-              setStatusMessage(`${amount.toLocaleString()}원 수취 완료`)
-              break
-            }
-            await new Promise((resolve) => setTimeout(resolve, 2000))
-            stackAttempts++
-          }
+          console.log("[v0] Bill amount:", amount)
+          addBill(amount)
+          setStatusMessage(`${amount.toLocaleString()}원 수취 완료`)
 
           // 충족 금액 달성 확인
           if (isPaymentComplete()) {
-            await disableAcceptance()
+            console.log("[v0] Payment complete!")
             setStatusMessage("결제 완료!")
-            setIsProcessing(false)
             return
           }
 
-          // 다음 지폐 대기
+          // 다음 지폐를 위해 다시 Event TX 모드 ON 및 입수가능 활성화
+          console.log("[v0] Preparing for next bill")
+          await new Promise((resolve) => setTimeout(resolve, 500))
+
+          // 입수가능 명령
+          const enabled = await enableAcceptance()
+          if (!enabled) {
+            console.error("[v0] Failed to enable acceptance")
+            setError("지폐 수취 활성화 실패")
+            return
+          }
+
+          // Event TX 자동 송신 모드 ON
+          const configOn = await setConfig(0x3c) // 0x3C = Event TX ON
+          if (!configOn) {
+            console.error("[v0] Failed to enable Event TX mode")
+            setError("설정 변경 실패")
+            return
+          }
+
           setStatusMessage("추가 지폐를 투입해주세요...")
+        } catch (error) {
+          console.error("[v0] Error processing bill:", error)
+          setError(`처리 오류: ${error}`)
         }
-
-        // 에러 확인
-        if (status === 0x0c) {
-          setError("지폐인식기 오류 발생")
-          await disableAcceptance()
-          setIsProcessing(false)
-          return
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 2000))
-        attempts++
       }
+    },
+    [addBill, isPaymentComplete],
+  )
 
-      // 타임아웃
-      if (!isPaymentComplete()) {
-        await disableAcceptance()
-        setIsProcessing(false)
-      }
-    } catch (error) {
-      console.error("[v0] Bill acceptance error:", error)
-      setError(`처리 오류: ${error}`)
-      await disableAcceptance()
-      setIsProcessing(false)
-    }
-  }, [isProcessing, addBill, isPaymentComplete])
-
-  // 초기 연결 및 결제 프로세스 시작
   useEffect(() => {
     const initializePayment = async () => {
       setIsConnecting(true)
       setError("")
 
       try {
-        // 지폐인식기 연결 확인
+        // 1. 지폐인식기 연결 확인
         if (!isBillAcceptorConnected()) {
           setStatusMessage("지폐인식기 연결 중...")
           const connected = await connectBillAcceptor()
@@ -185,11 +149,37 @@ export default function PaymentScreen({
           }
         }
 
-        setStatusMessage("결제 준비 완료")
-        setIsConnecting(false)
+        console.log("[v0] Bill acceptor connected")
 
-        // 지폐 인식 프로세스 시작
-        processBillAcceptance()
+        // 2. 이벤트 콜백 등록
+        setEventCallback(handleBillRecognitionEvent)
+        console.log("[v0] Event callback registered")
+
+        // 3. 입수가능 명령
+        setStatusMessage("지폐 수취 준비 중...")
+        const enabled = await enableAcceptance()
+        if (!enabled) {
+          setError("지폐 수취 활성화 실패")
+          setIsConnecting(false)
+          return
+        }
+
+        console.log("[v0] Bill acceptance enabled")
+
+        // 4. Event TX 자동 송신 모드 ON
+        setStatusMessage("이벤트 모드 설정 중...")
+        const configSet = await setConfig(0x3c) // 0x3C = Event TX ON
+        if (!configSet) {
+          setError("설정 변경 실패")
+          setIsConnecting(false)
+          return
+        }
+
+        console.log("[v0] Event TX mode enabled")
+
+        setStatusMessage("지폐를 투입해주세요...")
+        setIsConnecting(false)
+        setIsProcessing(true)
       } catch (error) {
         console.error("[v0] Payment initialization error:", error)
         setError(`초기화 오류: ${error}`)
@@ -199,16 +189,19 @@ export default function PaymentScreen({
 
     initializePayment()
 
-    // 컴포넌트 언마운트 시 지폐 수취 비활성화
     return () => {
+      console.log("[v0] Cleaning up payment screen")
+      setEventCallback(null)
       disableAcceptance()
+      setConfig(0x1c) // Event TX OFF
     }
-  }, [processBillAcceptance])
+  }, [handleBillRecognitionEvent])
 
   // 결제 완료 감지
   useEffect(() => {
     if (isPaymentComplete()) {
       console.log("[v0] Payment complete detected")
+      setIsProcessing(false)
       onPaymentComplete()
     }
   }, [isPaymentComplete, onPaymentComplete])
