@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Loader2, Banknote, CheckCircle2, XCircle, AlertCircle, ArrowLeftRight } from "lucide-react"
@@ -8,7 +8,6 @@ import { usePayment } from "@/contexts/payment-context"
 import {
   connectBillAcceptor,
   enableAcceptance,
-  disableAcceptance,
   setConfig,
   getBillData,
   isBillAcceptorConnected,
@@ -37,6 +36,7 @@ export default function PaymentScreen({
   const [error, setError] = useState<string>("")
   const [statusMessage, setStatusMessage] = useState<string>("지폐인식기 연결 중...")
   const [isRefundingChange, setIsRefundingChange] = useState(false)
+  const paymentCompleteRef = useRef(false)
 
   const handleBillRecognitionEvent = useCallback(
     async (eventData: number) => {
@@ -104,16 +104,9 @@ export default function PaymentScreen({
           if (isPaymentComplete()) {
             console.log("[v0] Payment complete! Processing...")
             setIsProcessing(false)
+            paymentCompleteRef.current = true
 
             setEventCallback(null)
-
-            // 입수금지 설정
-            try {
-              await disableAcceptance()
-              console.log("[v0] Acceptance disabled")
-            } catch (error) {
-              console.error("[v0] Failed to disable acceptance:", error)
-            }
 
             try {
               setStatusMessage("디바이스 초기화 중...")
@@ -136,7 +129,6 @@ export default function PaymentScreen({
             }
 
             setStatusMessage("결제 완료!")
-            // 결제 완료 콜백 호출은 useEffect에서 처리
             return
           }
 
@@ -213,8 +205,6 @@ export default function PaymentScreen({
           return
         }
 
-        console.log("[v0] Event TX mode enabled")
-
         setStatusMessage("지폐를 투입해주세요...")
         setIsConnecting(false)
         setIsProcessing(true)
@@ -230,19 +220,9 @@ export default function PaymentScreen({
     return () => {
       console.log("[v0] Cleaning up payment screen")
       setEventCallback(null)
-      disableAcceptance()
       setConfig(0x1c) // Event TX OFF
     }
   }, [handleBillRecognitionEvent])
-
-  // 결제 완료 감지
-  useEffect(() => {
-    if (isPaymentComplete() && !isRefundingChange) {
-      console.log("[v0] Payment complete detected")
-      setIsProcessing(false)
-      onPaymentComplete()
-    }
-  }, [isPaymentComplete, isRefundingChange, onPaymentComplete])
 
   const remainingAmount = requiredAmount - paymentSession.acceptedAmount
 
