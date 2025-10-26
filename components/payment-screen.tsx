@@ -13,6 +13,7 @@ import {
   getBillData,
   isBillAcceptorConnected,
   setEventCallback,
+  initializeDevice, // 초기화 함수 import 추가
 } from "@/lib/bill-acceptor-utils"
 
 interface PaymentScreenProps {
@@ -114,13 +115,22 @@ export default function PaymentScreen({
               console.error("[v0] Failed to disable acceptance:", error)
             }
 
+            try {
+              setStatusMessage("디바이스 초기화 중...")
+              console.log("[v0] Initializing device...")
+              const initialized = await initializeDevice()
+              if (initialized) {
+                console.log("[v0] Device initialized successfully")
+              } else {
+                console.error("[v0] Device initialization failed")
+              }
+            } catch (error) {
+              console.error("[v0] Failed to initialize device:", error)
+            }
+
             if (paymentSession.overpaymentAmount > 0) {
               setStatusMessage(`초과 금액: ${paymentSession.overpaymentAmount.toLocaleString()}원`)
               setError(`초과 금액이 발생했습니다. 관리자에게 문의하세요.`)
-
-              // 실제 환경에서는 관리자 호출 또는 다른 처리 필요
-              // 지폐 방출기는 한 종류의 지폐만 방출 가능하므로
-              // 정확한 거스름돈을 만들 수 없을 수 있습니다
 
               await new Promise((resolve) => setTimeout(resolve, 3000))
             }

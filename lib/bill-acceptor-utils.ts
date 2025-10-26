@@ -990,6 +990,37 @@ export async function resetDevice(): Promise<boolean> {
 }
 
 /**
+ * 디바이스 초기화 함수
+ * 응답 수신 후 2500ms 대기하여 완전 초기화
+ */
+export async function initializeDevice(): Promise<boolean> {
+  try {
+    const packet = createPacket(0x52, 0x53, 0x54) // 'R' 'S' 'T'
+    const response = await sendCommandAndWaitResponse(packet, 0x4f, 0x4b, 3000) // 'O' 'K', 3초 타임아웃
+
+    if (response && response.length === 5) {
+      if (response[1] === 0x4f && response[2] === 0x4b) {
+        // 'O' 'K'
+        logCommand("Initialize Device", packet, response)
+
+        // 응답 수신 후 2500ms 대기 (완전 초기화 대기)
+        logDebug("디바이스 완전 초기화 대기 중 (2500ms)...")
+        await new Promise((resolve) => setTimeout(resolve, 2500))
+        logDebug("디바이스 초기화 완료")
+
+        return true
+      }
+    }
+
+    logCommand("Initialize Device", packet, response || [], "예상되지 않은 응답")
+    return false
+  } catch (error) {
+    logCommand("Initialize Device", [], undefined, `오류: ${error}`)
+    return false
+  }
+}
+
+/**
  * 지폐 수취 프로세스 함수 (방어적 프로그래밍 적용)
  */
 export async function processBillAcceptance(): Promise<{ success: boolean; amount: number; error?: string }> {
