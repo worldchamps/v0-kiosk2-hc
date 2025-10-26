@@ -220,7 +220,7 @@ async function processReceivedPacket(packet: Uint8Array): Promise<void> {
     return
   }
 
-  // 명령 응답 매칭
+  // 명령 응답 매칭 - $OKx 또는 $NGx 응답 모두 처리
   const responseKey = getResponseKey(cmd1, cmd2)
   const pendingCommand = pendingCommands.get(responseKey)
 
@@ -230,6 +230,19 @@ async function processReceivedPacket(packet: Uint8Array): Promise<void> {
     pendingCommand.resolve(packet)
     logDebug(`명령 응답 매칭 성공: ${responseKey}`)
   } else {
+    if (cmd1 === 0x4e && cmd2 === 0x47) {
+      // 'N' 'G'
+      const okKey = getResponseKey(0x4f, 0x4b) // 'O' 'K'
+      const okCommand = pendingCommands.get(okKey)
+      if (okCommand) {
+        clearTimeout(okCommand.timeout)
+        pendingCommands.delete(okKey)
+        okCommand.resolve(packet)
+        logDebug(`$NG 응답을 $OK 명령에 매칭: ${okKey}`)
+        return
+      }
+    }
+
     logDebug(
       `매칭되지 않은 응답: ${Array.from(packet)
         .map((b) => b.toString(16).padStart(2, "0"))
@@ -849,6 +862,7 @@ export async function enableAcceptance(): Promise<boolean> {
 
 /**
  * 지폐 수취 비활성화 함수 (방어적 프로그래밍 적용)
+ * $NGa 응답을 정상 거절로 처리
  */
 export async function disableAcceptance(): Promise<boolean> {
   try {
@@ -861,6 +875,13 @@ export async function disableAcceptance(): Promise<boolean> {
         isAcceptingBills = false
         logCommand("Disable Acceptance", packet, response)
         return true
+      }
+
+      if (response[1] === 0x4e && response[2] === 0x47 && response[3] === 0x61) {
+        // 'N' 'G' 'a'
+        isAcceptingBills = false
+        logCommand("Disable Acceptance", packet, response, "이미 입수금지 상태 (정상)")
+        return true // 정상 거절도 성공으로 처리
       }
     }
 
