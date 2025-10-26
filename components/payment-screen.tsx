@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Loader2, Banknote, CheckCircle2, XCircle, AlertCircle, ArrowLeftRight } from "lucide-react"
+import { Loader2, Banknote, CheckCircle2, XCircle, AlertCircle } from "lucide-react"
 import { usePayment } from "@/contexts/payment-context"
 import {
   connectBillAcceptor,
@@ -12,9 +12,9 @@ import {
   getBillData,
   isBillAcceptorConnected,
   setEventCallback,
-  initializeDevice, // 초기화 함수 import 추가
+  initializeDevice,
 } from "@/lib/bill-acceptor-utils"
-import { connectBillDispenser, dispenseBills } from "@/lib/bill-dispenser-utils"
+import { dispenseBills } from "@/lib/bill-dispenser-utils"
 
 interface PaymentScreenProps {
   requiredAmount: number
@@ -36,22 +36,7 @@ export default function PaymentScreen({
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string>("")
   const [statusMessage, setStatusMessage] = useState<string>("지폐인식기 연결 중...")
-  const [isRefundingChange, setIsRefundingChange] = useState(false)
   const paymentCompleteRef = useRef(false)
-
-  useEffect(() => {
-    if (
-      paymentSession.isActive &&
-      paymentSession.acceptedAmount >= paymentSession.requiredAmount &&
-      !paymentCompleteRef.current
-    ) {
-      console.log("[v0] Payment complete detected, will transition to complete screen")
-      paymentCompleteRef.current = true
-      setTimeout(() => {
-        onPaymentComplete()
-      }, 1000)
-    }
-  }, [paymentSession.acceptedAmount, paymentSession.requiredAmount, paymentSession.isActive, onPaymentComplete])
 
   const handleBillRecognitionEvent = useCallback(
     async (eventData: number) => {
@@ -67,22 +52,18 @@ export default function PaymentScreen({
         setStatusMessage("지폐 처리 중...")
 
         try {
-          // 1초 대기
           await new Promise((resolve) => setTimeout(resolve, 1000))
 
-          // Event TX 자동 송신 모드 OFF
           console.log("[v0] Disabling Event TX auto send mode")
-          const configOff = await setConfig(0x1c) // 0x1C = Event TX OFF
+          const configOff = await setConfig(0x1c)
           if (!configOff) {
             console.error("[v0] Failed to disable Event TX mode")
             setError("설정 변경 실패")
             return
           }
 
-          // 1초 대기
           await new Promise((resolve) => setTimeout(resolve, 1000))
 
-          // 지폐 데이터 확인
           console.log("[v0] Getting bill data")
           const billData = await getBillData()
           if (billData === null) {
@@ -91,19 +72,18 @@ export default function PaymentScreen({
             return
           }
 
-          // 지폐 금액 변환
           let amount = 0
           switch (billData) {
-            case 0x0a: // 1만원
+            case 0x0a:
               amount = 10000
               break
-            case 0x32: // 5만원
+            case 0x32:
               amount = 50000
               break
-            case 0x01: // 1천원
+            case 0x01:
               amount = 1000
               break
-            case 0x05: // 5천원
+            case 0x05:
               amount = 5000
               break
             default:
@@ -120,6 +100,7 @@ export default function PaymentScreen({
           if (newTotal >= requiredAmount) {
             console.log("[v0] Payment complete! Processing...")
             setIsProcessing(false)
+            paymentCompleteRef.current = true
 
             setEventCallback(null)
 
@@ -139,55 +120,40 @@ export default function PaymentScreen({
             const overpayment = newTotal - requiredAmount
             if (overpayment > 0) {
               console.log(`[v0] Overpayment detected: ${overpayment}원`)
-              setIsRefundingChange(true)
               setStatusMessage(`거스름돈 ${overpayment.toLocaleString()}원 반환 중...`)
 
               try {
-                // Connect to bill dispenser
-                console.log("[v0] Connecting to bill dispenser...")
-                const connected = await connectBillDispenser()
-                if (!connected) {
-                  console.error("[v0] Failed to connect to bill dispenser")
-                  setError("거스름돈 반환 실패: 지폐 방출기 연결 불가")
-                  await new Promise((resolve) => setTimeout(resolve, 3000))
-                } else {
-                  // Calculate number of 10,000 won bills to dispense
-                  const billCount = Math.floor(overpayment / 10000)
-                  console.log(`[v0] Dispensing ${billCount} bills of 10,000 won`)
+                const billCount = Math.floor(overpayment / 10000)
+                console.log(`[v0] Dispensing ${billCount} bills of 10,000 won`)
 
-                  // Dispense change
-                  const dispensed = await dispenseBills(billCount)
-                  if (dispensed) {
-                    console.log("[v0] Change dispensed successfully")
-                    setStatusMessage(`거스름돈 ${overpayment.toLocaleString()}원 반환 완료!`)
-                    await new Promise((resolve) => setTimeout(resolve, 2000))
-                  } else {
-                    console.error("[v0] Failed to dispense change")
-                    setError(`거스름돈 반환 실패. 관리자에게 문의하세요. (${overpayment.toLocaleString()}원)`)
-                    await new Promise((resolve) => setTimeout(resolve, 3000))
-                  }
+                const dispensed = await dispenseBills(billCount)
+
+                if (dispensed) {
+                  console.log("[v0] Change dispensed successfully")
+                  setStatusMessage(`거스름돈 ${overpayment.toLocaleString()}원 반환 완료!`)
+                  await new Promise((resolve) => setTimeout(resolve, 2000))
+                } else {
+                  console.error("[v0] Failed to dispense change")
+                  setError(`거스름돈 반환 실패. 관리자에게 문의하세요. (${overpayment.toLocaleString()}원)`)
+                  await new Promise((resolve) => setTimeout(resolve, 3000))
                 }
               } catch (error) {
                 console.error("[v0] Change refund error:", error)
                 setError(`거스름돈 반환 오류: ${error}`)
                 await new Promise((resolve) => setTimeout(resolve, 3000))
-              } finally {
-                setIsRefundingChange(false)
               }
+            } else {
+              setStatusMessage("결제 완료!")
+              await new Promise((resolve) => setTimeout(resolve, 1000))
             }
 
-            setStatusMessage("결제 완료!")
-            paymentCompleteRef.current = true
-            await new Promise((resolve) => setTimeout(resolve, 1000))
             onPaymentComplete()
             return
           }
 
-          // 다음 지폐를 위해 다시 Event TX 모드 ON 및 입수가능 활성화
           console.log("[v0] Preparing for next bill")
           await new Promise((resolve) => setTimeout(resolve, 500))
 
-          // 입수가능 명령
           const enabled = await enableAcceptance()
           if (!enabled) {
             console.error("[v0] Failed to enable acceptance")
@@ -195,8 +161,7 @@ export default function PaymentScreen({
             return
           }
 
-          // Event TX 자동 송신 모드 ON
-          const configOn = await setConfig(0x3c) // 0x3C = Event TX ON
+          const configOn = await setConfig(0x3c)
           if (!configOn) {
             console.error("[v0] Failed to enable Event TX mode")
             setError("설정 변경 실패")
@@ -219,7 +184,6 @@ export default function PaymentScreen({
       setError("")
 
       try {
-        // 1. 지폐인식기 연결 확인
         if (!isBillAcceptorConnected()) {
           setStatusMessage("지폐인식기 연결 중...")
           const connected = await connectBillAcceptor()
@@ -232,11 +196,9 @@ export default function PaymentScreen({
 
         console.log("[v0] Bill acceptor connected")
 
-        // 2. 이벤트 콜백 등록
         setEventCallback(handleBillRecognitionEvent)
         console.log("[v0] Event callback registered")
 
-        // 3. 입수가능 명령
         setStatusMessage("지폐 수취 준비 중...")
         const enabled = await enableAcceptance()
         if (!enabled) {
@@ -247,9 +209,8 @@ export default function PaymentScreen({
 
         console.log("[v0] Bill acceptance enabled")
 
-        // 4. Event TX 자동 송신 모드 ON
         setStatusMessage("이벤트 모드 설정 중...")
-        const configSet = await setConfig(0x3c) // 0x3C = Event TX ON
+        const configSet = await setConfig(0x3c)
         if (!configSet) {
           setError("설정 변경 실패")
           setIsConnecting(false)
@@ -271,7 +232,7 @@ export default function PaymentScreen({
     return () => {
       console.log("[v0] Cleaning up payment screen")
       setEventCallback(null)
-      setConfig(0x1c) // Event TX OFF
+      setConfig(0x1c)
     }
   }, [handleBillRecognitionEvent])
 
@@ -286,7 +247,6 @@ export default function PaymentScreen({
         </div>
 
         <div className="w-full space-y-6 mt-8">
-          {/* 결제 정보 카드 */}
           <Card className="shadow-lg">
             <CardContent className="p-8">
               <div className="space-y-6">
@@ -305,7 +265,6 @@ export default function PaymentScreen({
                 {paymentSession.overpaymentAmount > 0 && (
                   <div className="flex justify-between items-center bg-blue-50 p-4 rounded-lg">
                     <div className="flex items-center gap-2">
-                      <ArrowLeftRight className="h-6 w-6 text-blue-600" />
                       <span className="text-2xl font-semibold text-blue-700">거스름돈</span>
                     </div>
                     <span className="text-3xl font-bold text-blue-600">
@@ -326,7 +285,6 @@ export default function PaymentScreen({
             </CardContent>
           </Card>
 
-          {/* 투입된 지폐 목록 */}
           {paymentSession.acceptedBills.length > 0 && (
             <Card className="shadow-md">
               <CardContent className="p-6">
@@ -343,11 +301,10 @@ export default function PaymentScreen({
             </Card>
           )}
 
-          {/* 상태 메시지 */}
           <Card className="shadow-md">
             <CardContent className="p-6">
               <div className="flex items-center gap-4">
-                {isConnecting || isProcessing || isRefundingChange ? (
+                {isConnecting || isProcessing ? (
                   <>
                     <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
                     <span className="text-xl">{statusMessage}</span>
@@ -372,11 +329,10 @@ export default function PaymentScreen({
             </CardContent>
           </Card>
 
-          {/* 취소 버튼 */}
           <Button
             variant="outline"
             onClick={onCancel}
-            disabled={isConnecting || isProcessing || isRefundingChange}
+            disabled={isConnecting || isProcessing}
             className="h-20 text-2xl w-full border-3 border-gray-300 font-bold bg-transparent"
           >
             취소
