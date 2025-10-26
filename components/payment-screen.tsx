@@ -14,6 +14,7 @@ import {
   setEventCallback,
   initializeDevice, // 초기화 함수 import 추가
 } from "@/lib/bill-acceptor-utils"
+import { connectBillDispenser, dispenseBills } from "@/lib/bill-dispenser-utils"
 
 interface PaymentScreenProps {
   requiredAmount: number
@@ -135,7 +136,50 @@ export default function PaymentScreen({
               console.error("[v0] Failed to initialize device:", error)
             }
 
+            const overpayment = newTotal - requiredAmount
+            if (overpayment > 0) {
+              console.log(`[v0] Overpayment detected: ${overpayment}원`)
+              setIsRefundingChange(true)
+              setStatusMessage(`거스름돈 ${overpayment.toLocaleString()}원 반환 중...`)
+
+              try {
+                // Connect to bill dispenser
+                console.log("[v0] Connecting to bill dispenser...")
+                const connected = await connectBillDispenser()
+                if (!connected) {
+                  console.error("[v0] Failed to connect to bill dispenser")
+                  setError("거스름돈 반환 실패: 지폐 방출기 연결 불가")
+                  await new Promise((resolve) => setTimeout(resolve, 3000))
+                } else {
+                  // Calculate number of 10,000 won bills to dispense
+                  const billCount = Math.floor(overpayment / 10000)
+                  console.log(`[v0] Dispensing ${billCount} bills of 10,000 won`)
+
+                  // Dispense change
+                  const dispensed = await dispenseBills(billCount)
+                  if (dispensed) {
+                    console.log("[v0] Change dispensed successfully")
+                    setStatusMessage(`거스름돈 ${overpayment.toLocaleString()}원 반환 완료!`)
+                    await new Promise((resolve) => setTimeout(resolve, 2000))
+                  } else {
+                    console.error("[v0] Failed to dispense change")
+                    setError(`거스름돈 반환 실패. 관리자에게 문의하세요. (${overpayment.toLocaleString()}원)`)
+                    await new Promise((resolve) => setTimeout(resolve, 3000))
+                  }
+                }
+              } catch (error) {
+                console.error("[v0] Change refund error:", error)
+                setError(`거스름돈 반환 오류: ${error}`)
+                await new Promise((resolve) => setTimeout(resolve, 3000))
+              } finally {
+                setIsRefundingChange(false)
+              }
+            }
+
             setStatusMessage("결제 완료!")
+            paymentCompleteRef.current = true
+            await new Promise((resolve) => setTimeout(resolve, 1000))
+            onPaymentComplete()
             return
           }
 
@@ -166,7 +210,7 @@ export default function PaymentScreen({
         }
       }
     },
-    [addBill, paymentSession.acceptedAmount, requiredAmount],
+    [addBill, paymentSession.acceptedAmount, requiredAmount, onPaymentComplete],
   )
 
   useEffect(() => {
