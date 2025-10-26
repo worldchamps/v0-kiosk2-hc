@@ -247,8 +247,8 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
             <div className="kiosk-highlight">현장 예약 - 객실 타입 선택 (1/3)</div>
           </div>
 
-          <div className="w-full overflow-auto py-6 mt-8">
-            <div className="grid grid-cols-1 gap-6 w-full mb-10">
+          <div className="flex-1 w-full py-6 mt-8 flex flex-col">
+            <div className="grid grid-cols-1 gap-6 w-full">
               {availableRoomTypes.map((roomType) => {
                 const rooms = roomsByType[roomType]
                 const availableCount = rooms.length
@@ -298,7 +298,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
           <Button
             variant="outline"
             onClick={() => onNavigate("standby")}
-            className="h-20 text-2xl w-full border-3 border-gray-300 mt-auto font-bold"
+            className="h-20 text-2xl w-full border-3 border-gray-300 mt-6 font-bold"
           >
             돌아가기
           </Button>
@@ -319,8 +319,8 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
             <div className="kiosk-highlight">{selectedRoomType} - 객실 선택 (2/3)</div>
           </div>
 
-          <div className="w-full overflow-auto py-6 mt-8">
-            <div className="grid grid-cols-2 gap-6 w-full mb-10">
+          <div className="flex-1 w-full py-6 mt-8 flex flex-col">
+            <div className="grid grid-cols-2 gap-6 w-full">
               {rooms.map((room) => {
                 const imagePath = getRoomImagePath(room.roomType, room.roomCode)
 
@@ -358,7 +358,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
           <Button
             variant="outline"
             onClick={() => setStep("roomType")}
-            className="h-20 text-2xl w-full border-3 border-gray-300 mt-auto font-bold"
+            className="h-20 text-2xl w-full border-3 border-gray-300 mt-6 font-bold"
           >
             돌아가기
           </Button>
