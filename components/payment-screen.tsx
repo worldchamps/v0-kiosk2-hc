@@ -30,13 +30,22 @@ export default function PaymentScreen({
   title = "결제",
   description = "지폐를 투입해주세요",
 }: PaymentScreenProps) {
-  const { paymentSession, addBill, isPaymentComplete, refundChange } = usePayment()
+  const { paymentSession, addBill, isPaymentComplete } = usePayment()
   const [isConnecting, setIsConnecting] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string>("")
   const [statusMessage, setStatusMessage] = useState<string>("지폐인식기 연결 중...")
   const [isRefundingChange, setIsRefundingChange] = useState(false)
   const paymentCompleteRef = useRef(false)
+
+  useEffect(() => {
+    if (isPaymentComplete() && paymentCompleteRef.current) {
+      console.log("[v0] Payment complete detected, transitioning to complete screen")
+      setTimeout(() => {
+        onPaymentComplete()
+      }, 1000)
+    }
+  }, [isPaymentComplete, onPaymentComplete])
 
   const handleBillRecognitionEvent = useCallback(
     async (eventData: number) => {
@@ -121,13 +130,6 @@ export default function PaymentScreen({
               console.error("[v0] Failed to initialize device:", error)
             }
 
-            if (paymentSession.overpaymentAmount > 0) {
-              setStatusMessage(`초과 금액: ${paymentSession.overpaymentAmount.toLocaleString()}원`)
-              setError(`초과 금액이 발생했습니다. 관리자에게 문의하세요.`)
-
-              await new Promise((resolve) => setTimeout(resolve, 3000))
-            }
-
             setStatusMessage("결제 완료!")
             return
           }
@@ -159,7 +161,7 @@ export default function PaymentScreen({
         }
       }
     },
-    [addBill, isPaymentComplete, paymentSession.overpaymentAmount],
+    [addBill, isPaymentComplete],
   )
 
   useEffect(() => {

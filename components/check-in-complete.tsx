@@ -2,7 +2,7 @@
 
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Check, Printer, Eye, EyeOff } from "lucide-react"
+import { Check, Printer, Eye, EyeOff, Banknote, Loader2 } from "lucide-react"
 import { useEffect, useState, useRef } from "react"
 import DirectPrinter from "./direct-printer"
 import { printReceipt, getSimplePrintMode, autoConnectPrinter, getPrinterModel } from "@/lib/printer-utils-unified"
@@ -12,6 +12,8 @@ import type { KioskLocation } from "@/lib/location-utils"
 import { playBuildingGuide, stopAllAudio } from "@/lib/audio-utils"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { getKioskPropertyId, propertyUsesElectron } from "@/lib/property-utils"
+import { usePayment } from "@/contexts/payment-context"
+import { connectBillDispenser, dispenseBills, isBillDispenserConnected } from "@/lib/bill-dispenser-utils"
 
 interface CheckInCompleteProps {
   reservation?: any
@@ -40,27 +42,27 @@ export default function CheckInComplete({
   const [simpleMode, setSimpleMode] = useState(false)
   const [printerModel, setPrinterModel] = useState<string>("UNKNOWN")
   const [audioPlayed, setAudioPlayed] = useState(false)
+  const { paymentSession } = usePayment()
+  const [isRefundingChange, setIsRefundingChange] = useState(false)
+  const [refundStatus, setRefundStatus] = useState<"idle" | "connecting" | "dispensing" | "success" | "error">("idle")
+  const [changeAmount, setChangeAmount] = useState(0)
+  const changeRefundedRef = useRef(false)
 
-  // Timers refs to properly clean up
   const printTimerRef = useRef<NodeJS.Timeout | null>(null)
   const countdownTimerRef = useRef<NodeJS.Timeout | null>(null)
   const redirectTimerRef = useRef<NodeJS.Timeout | null>(null)
   const audioTimerRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Debug info
   const [debugInfo, setDebugInfo] = useState<string[]>([])
 
-  // Debug log function
   const logDebug = (message: string) => {
     console.log(`[CheckInComplete] ${message}`)
     setDebugInfo((prev) => [...prev, `${new Date().toISOString().substr(11, 8)}: ${message}`])
   }
 
-  // Room number based on building zoom image path
   const roomNumber = revealedInfo?.roomNumber || reservation?.roomNumber || ""
   const buildingZoomImagePath = getBuildingZoomImagePath(roomNumber)
 
-  // 건물 타입 추출 (A, B, C, D, CAMP)
   const getBuildingType = (): string => {
     if (!roomNumber || roomNumber.length === 0) return ""
 
@@ -70,7 +72,6 @@ export default function CheckInComplete({
     return roomNumber.charAt(0).toUpperCase()
   }
 
-  // Receipt data preparation
   const receiptData = reservation
     ? {
         guestName: reservation.guestName || "",
@@ -95,7 +96,6 @@ export default function CheckInComplete({
         floor: revealedInfo?.floor || "",
       }
 
-  // Component mount - clean up all timers
   useEffect(() => {
     logDebug("Component mounted with new reservation data")
     logDebug(`Popup mode: ${isPopupMode}`)
@@ -127,7 +127,6 @@ export default function CheckInComplete({
     }
   }, [reservation?.reservationId, revealedInfo?.roomNumber, isPopupMode])
 
-  // Clear all timers function
   const clearAllTimers = () => {
     if (printTimerRef.current) {
       logDebug(`Clearing print timer: ${printTimerRef.current}`)
@@ -154,7 +153,6 @@ export default function CheckInComplete({
     }
   }
 
-  // Auto print receipt attempt
   useEffect(() => {
     if (isPopupMode) {
       logDebug("Popup mode: skipping auto print")
@@ -186,7 +184,6 @@ export default function CheckInComplete({
     }
   }, [autoPrintAttempted, isPopupMode])
 
-  // Auto print function
   const autoPrintReceipt = async () => {
     setAutoPrintAttempted(true)
     setPrintStatus("connecting")
@@ -228,7 +225,6 @@ export default function CheckInComplete({
     }
   }
 
-  // Start redirect countdown
   const startRedirectCountdown = () => {
     clearAllTimers()
 
@@ -251,7 +247,6 @@ export default function CheckInComplete({
 
   const handleRedirect = () => {
     if (isPopupMode) {
-      // Popup mode: notify Electron to close popup and restore PMS focus
       const property = getKioskPropertyId()
       if (propertyUsesElectron(property)) {
         logDebug("Popup mode: notifying Electron to close popup")
@@ -263,7 +258,6 @@ export default function CheckInComplete({
         window.close()
       }
     } else {
-      // Normal mode: navigate to standby
       if (onNavigate) {
         onNavigate("standby")
       } else {
@@ -290,8 +284,57 @@ export default function CheckInComplete({
       }
     },
     idleTime: 60000,
-    enabled: !isPopupMode, // Disable idle timer in popup mode
+    enabled: !isPopupMode,
   })
+
+  useEffect(() => {
+    const handleChangeRefund = async () => {
+      if (paymentSession.overpaymentAmount > 0 && !changeRefundedRef.current) {
+        changeRefundedRef.current = true
+        setChangeAmount(paymentSession.overpaymentAmount)
+        setIsRefundingChange(true)
+        setRefundStatus("connecting")
+        logDebug(`Overpayment detected: ${paymentSession.overpaymentAmount}원`)
+
+        try {
+          if (!isBillDispenserConnected()) {
+            logDebug("Connecting to bill dispenser...")
+            const connected = await connectBillDispenser()
+            if (!connected) {
+              logDebug("Failed to connect to bill dispenser")
+              setRefundStatus("error")
+              setIsRefundingChange(false)
+              return
+            }
+          }
+
+          logDebug("Bill dispenser connected")
+          setRefundStatus("dispensing")
+
+          const billCount = Math.floor(paymentSession.overpaymentAmount / 10000)
+          logDebug(`Dispensing ${billCount} bills of 10,000 won`)
+
+          const success = await dispenseBills(billCount)
+
+          if (success) {
+            logDebug("Change refunded successfully")
+            setRefundStatus("success")
+          } else {
+            logDebug("Failed to dispense change")
+            setRefundStatus("error")
+          }
+        } catch (error) {
+          console.error("Change refund error:", error)
+          logDebug(`Change refund error: ${error}`)
+          setRefundStatus("error")
+        } finally {
+          setIsRefundingChange(false)
+        }
+      }
+    }
+
+    handleChangeRefund()
+  }, [paymentSession.overpaymentAmount])
 
   return (
     <div className="flex items-start justify-start w-full h-full">
@@ -368,6 +411,43 @@ export default function CheckInComplete({
                   </div>
                 )}
               </div>
+
+              {changeAmount > 0 && (
+                <div className="w-full">
+                  {refundStatus === "connecting" && (
+                    <div className="bg-blue-50 p-4 rounded-lg flex items-center gap-3">
+                      <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+                      <span className="text-blue-700 font-semibold">
+                        거스름돈 반환을 위해 지폐 방출기에 연결 중입니다...
+                      </span>
+                    </div>
+                  )}
+                  {refundStatus === "dispensing" && (
+                    <div className="bg-blue-50 p-4 rounded-lg flex items-center gap-3">
+                      <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+                      <span className="text-blue-700 font-semibold">
+                        거스름돈 {changeAmount.toLocaleString()}원을 반환하고 있습니다...
+                      </span>
+                    </div>
+                  )}
+                  {refundStatus === "success" && (
+                    <div className="bg-green-50 p-4 rounded-lg flex items-center gap-3">
+                      <Banknote className="h-6 w-6 text-green-600" />
+                      <span className="text-green-700 font-semibold">
+                        거스름돈 {changeAmount.toLocaleString()}원이 반환되었습니다.
+                      </span>
+                    </div>
+                  )}
+                  {refundStatus === "error" && (
+                    <div className="bg-red-50 p-4 rounded-lg">
+                      <span className="text-red-700 font-semibold">
+                        거스름돈 반환에 실패했습니다. 관리자에게 문의해주세요. (거스름돈:{" "}
+                        {changeAmount.toLocaleString()}원)
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="w-full flex justify-between mt-6">
                 {!isPopupMode && (
