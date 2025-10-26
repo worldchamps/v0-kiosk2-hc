@@ -41,6 +41,11 @@ export default function PaymentScreen({
     async (eventData: number) => {
       console.log("[v0] Event received:", eventData.toString(16))
 
+      if (eventData === 0x01) {
+        console.log("[v0] WAIT event received, ignoring")
+        return
+      }
+
       if (eventData === 0x0b) {
         console.log("[v0] STACK_END event received")
         setStatusMessage("지폐 처리 중...")
@@ -96,8 +101,10 @@ export default function PaymentScreen({
           setStatusMessage(`${amount.toLocaleString()}원 수취 완료`)
 
           if (isPaymentComplete()) {
-            console.log("[v0] Payment complete! Processing change...")
+            console.log("[v0] Payment complete! Processing...")
             setIsProcessing(false)
+
+            setEventCallback(null)
 
             // 입수금지 설정
             try {
@@ -108,20 +115,14 @@ export default function PaymentScreen({
             }
 
             if (paymentSession.overpaymentAmount > 0) {
-              setStatusMessage(`거스름돈 ${paymentSession.overpaymentAmount.toLocaleString()}원 반환 중...`)
-              setIsRefundingChange(true)
+              setStatusMessage(`초과 금액: ${paymentSession.overpaymentAmount.toLocaleString()}원`)
+              setError(`초과 금액이 발생했습니다. 관리자에게 문의하세요.`)
 
-              const refundSuccess = await refundChange()
+              // 실제 환경에서는 관리자 호출 또는 다른 처리 필요
+              // 지폐 방출기는 한 종류의 지폐만 방출 가능하므로
+              // 정확한 거스름돈을 만들 수 없을 수 있습니다
 
-              setIsRefundingChange(false)
-
-              if (!refundSuccess) {
-                setError("거스름돈 반환 실패")
-                return
-              }
-
-              setStatusMessage("거스름돈 반환 완료!")
-              await new Promise((resolve) => setTimeout(resolve, 2000))
+              await new Promise((resolve) => setTimeout(resolve, 3000))
             }
 
             setStatusMessage("결제 완료!")
@@ -156,7 +157,7 @@ export default function PaymentScreen({
         }
       }
     },
-    [addBill, isPaymentComplete, paymentSession.overpaymentAmount, refundChange],
+    [addBill, isPaymentComplete, paymentSession.overpaymentAmount],
   )
 
   useEffect(() => {

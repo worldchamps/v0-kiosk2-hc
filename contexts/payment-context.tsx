@@ -88,46 +88,25 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
       return true
     }
 
-    console.log("[v0] Starting change refund:", overpayment)
+    // 1만원 단위로 나누어떨어지지 않으면 오류
+    if (overpayment % 10000 !== 0) {
+      console.error("[v0] Overpayment is not a multiple of 10,000 won:", overpayment)
+      return false
+    }
+
+    const billCount = overpayment / 10000
+    console.log(`[v0] Refunding ${overpayment}원 (${billCount}장의 1만원권)`)
 
     try {
-      // 거스름돈을 지폐 단위로 계산 (큰 단위부터)
-      const bills = [50000, 10000, 5000, 1000]
-      let remaining = overpayment
-      const changeToDispense: { amount: number; count: number }[] = []
+      // 1만원권 방출
+      const success = await dispenseBills(billCount)
 
-      for (const bill of bills) {
-        if (remaining >= bill) {
-          const count = Math.floor(remaining / bill)
-          changeToDispense.push({ amount: bill, count })
-          remaining -= count * bill
-        }
+      if (!success) {
+        console.error("[v0] Failed to dispense change")
+        return false
       }
 
-      if (remaining > 0) {
-        console.error("[v0] Cannot make exact change, remaining:", remaining)
-        // 정확한 거스름돈을 만들 수 없는 경우
-        // 실제 환경에서는 UI에 알림을 표시하거나 다른 처리 필요
-      }
-
-      console.log("[v0] Change breakdown:", changeToDispense)
-
-      // 각 지폐 단위별로 방출
-      for (const { amount, count } of changeToDispense) {
-        console.log(`[v0] Dispensing ${count}x ${amount}원 bills for change`)
-
-        const success = await dispenseBills(count)
-
-        if (!success) {
-          console.error(`[v0] Failed to dispense ${count}x ${amount}원 bills`)
-          return false
-        }
-
-        // 각 방출 사이에 약간의 지연
-        await new Promise((resolve) => setTimeout(resolve, 500))
-      }
-
-      console.log("[v0] Change refund completed successfully")
+      console.log("[v0] Change refunded successfully")
       return true
     } catch (error) {
       console.error("[v0] Error during change refund:", error)
