@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Loader2, Banknote, CheckCircle2, XCircle, AlertCircle } from "lucide-react"
+import { Loader2, Banknote, CheckCircle2, XCircle, AlertCircle, ArrowLeftRight } from "lucide-react"
 import { usePayment } from "@/contexts/payment-context"
 import {
   connectBillAcceptor,
@@ -30,11 +30,12 @@ export default function PaymentScreen({
   title = "결제",
   description = "지폐를 투입해주세요",
 }: PaymentScreenProps) {
-  const { paymentSession, addBill, isPaymentComplete } = usePayment()
+  const { paymentSession, addBill, isPaymentComplete, refundChange } = usePayment()
   const [isConnecting, setIsConnecting] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string>("")
   const [statusMessage, setStatusMessage] = useState<string>("지폐인식기 연결 중...")
+  const [isRefundingChange, setIsRefundingChange] = useState(false)
 
   const handleBillRecognitionEvent = useCallback(
     async (eventData: number) => {
@@ -94,10 +95,37 @@ export default function PaymentScreen({
           addBill(amount)
           setStatusMessage(`${amount.toLocaleString()}원 수취 완료`)
 
-          // 충족 금액 달성 확인
           if (isPaymentComplete()) {
-            console.log("[v0] Payment complete!")
+            console.log("[v0] Payment complete! Processing change...")
+            setIsProcessing(false)
+
+            // 입수금지 설정
+            try {
+              await disableAcceptance()
+              console.log("[v0] Acceptance disabled")
+            } catch (error) {
+              console.error("[v0] Failed to disable acceptance:", error)
+            }
+
+            if (paymentSession.overpaymentAmount > 0) {
+              setStatusMessage(`거스름돈 ${paymentSession.overpaymentAmount.toLocaleString()}원 반환 중...`)
+              setIsRefundingChange(true)
+
+              const refundSuccess = await refundChange()
+
+              setIsRefundingChange(false)
+
+              if (!refundSuccess) {
+                setError("거스름돈 반환 실패")
+                return
+              }
+
+              setStatusMessage("거스름돈 반환 완료!")
+              await new Promise((resolve) => setTimeout(resolve, 2000))
+            }
+
             setStatusMessage("결제 완료!")
+            // 결제 완료 콜백 호출은 useEffect에서 처리
             return
           }
 
@@ -128,7 +156,7 @@ export default function PaymentScreen({
         }
       }
     },
-    [addBill, isPaymentComplete],
+    [addBill, isPaymentComplete, paymentSession.overpaymentAmount, refundChange],
   )
 
   useEffect(() => {
@@ -198,12 +226,12 @@ export default function PaymentScreen({
 
   // 결제 완료 감지
   useEffect(() => {
-    if (isPaymentComplete()) {
+    if (isPaymentComplete() && !isRefundingChange) {
       console.log("[v0] Payment complete detected")
       setIsProcessing(false)
       onPaymentComplete()
     }
-  }, [isPaymentComplete, onPaymentComplete])
+  }, [isPaymentComplete, isRefundingChange, onPaymentComplete])
 
   const remainingAmount = requiredAmount - paymentSession.acceptedAmount
 
@@ -232,10 +260,24 @@ export default function PaymentScreen({
                   </span>
                 </div>
 
+                {paymentSession.overpaymentAmount > 0 && (
+                  <div className="flex justify-between items-center bg-blue-50 p-4 rounded-lg">
+                    <div className="flex items-center gap-2">
+                      <ArrowLeftRight className="h-6 w-6 text-blue-600" />
+                      <span className="text-2xl font-semibold text-blue-700">거스름돈</span>
+                    </div>
+                    <span className="text-3xl font-bold text-blue-600">
+                      {paymentSession.overpaymentAmount.toLocaleString()}원
+                    </span>
+                  </div>
+                )}
+
                 <div className="border-t pt-4">
                   <div className="flex justify-between items-center">
                     <span className="text-2xl font-semibold">남은 금액</span>
-                    <span className="text-4xl font-bold text-blue-600">{remainingAmount.toLocaleString()}원</span>
+                    <span className="text-4xl font-bold text-blue-600">
+                      {Math.max(0, remainingAmount).toLocaleString()}원
+                    </span>
                   </div>
                 </div>
               </div>
@@ -263,7 +305,7 @@ export default function PaymentScreen({
           <Card className="shadow-md">
             <CardContent className="p-6">
               <div className="flex items-center gap-4">
-                {isConnecting || isProcessing ? (
+                {isConnecting || isProcessing || isRefundingChange ? (
                   <>
                     <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
                     <span className="text-xl">{statusMessage}</span>
@@ -292,7 +334,7 @@ export default function PaymentScreen({
           <Button
             variant="outline"
             onClick={onCancel}
-            disabled={isConnecting || isProcessing}
+            disabled={isConnecting || isProcessing || isRefundingChange}
             className="h-20 text-2xl w-full border-3 border-gray-300 font-bold bg-transparent"
           >
             취소

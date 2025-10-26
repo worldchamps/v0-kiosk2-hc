@@ -12,6 +12,7 @@ export interface PaymentSession {
   acceptedBills: number[] // 받은 지폐 목록 (1000, 5000, 10000, 50000)
   sessionStartTime: number // 세션 시작 시간
   reservationData?: any // 예약 정보 (현장예약용)
+  overpaymentAmount: number // 초과 지불 금액
 }
 
 interface PaymentContextType {
@@ -21,6 +22,7 @@ interface PaymentContextType {
   completePayment: () => void
   cancelPayment: () => Promise<void>
   isPaymentComplete: () => boolean
+  refundChange: () => Promise<boolean>
 }
 
 const PaymentContext = createContext<PaymentContextType | undefined>(undefined)
@@ -31,6 +33,7 @@ const initialSession: PaymentSession = {
   requiredAmount: 0,
   acceptedBills: [],
   sessionStartTime: 0,
+  overpaymentAmount: 0,
 }
 
 export function PaymentProvider({ children }: { children: React.ReactNode }) {
@@ -47,6 +50,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
       acceptedBills: [],
       sessionStartTime: Date.now(),
       reservationData,
+      overpaymentAmount: 0,
     })
   }, [])
 
@@ -58,15 +62,78 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
       const newAcceptedAmount = prev.acceptedAmount + amount
       const newAcceptedBills = [...prev.acceptedBills, amount]
 
-      console.log("[v0] Bill added:", { amount, newAcceptedAmount, requiredAmount: prev.requiredAmount })
+      const overpayment = Math.max(0, newAcceptedAmount - prev.requiredAmount)
+
+      console.log("[v0] Bill added:", {
+        amount,
+        newAcceptedAmount,
+        requiredAmount: prev.requiredAmount,
+        overpayment,
+      })
 
       return {
         ...prev,
         acceptedAmount: newAcceptedAmount,
         acceptedBills: newAcceptedBills,
+        overpaymentAmount: overpayment,
       }
     })
   }, [])
+
+  const refundChange = useCallback(async (): Promise<boolean> => {
+    const overpayment = paymentSession.overpaymentAmount
+
+    if (overpayment === 0) {
+      console.log("[v0] No overpayment to refund")
+      return true
+    }
+
+    console.log("[v0] Starting change refund:", overpayment)
+
+    try {
+      // 거스름돈을 지폐 단위로 계산 (큰 단위부터)
+      const bills = [50000, 10000, 5000, 1000]
+      let remaining = overpayment
+      const changeToDispense: { amount: number; count: number }[] = []
+
+      for (const bill of bills) {
+        if (remaining >= bill) {
+          const count = Math.floor(remaining / bill)
+          changeToDispense.push({ amount: bill, count })
+          remaining -= count * bill
+        }
+      }
+
+      if (remaining > 0) {
+        console.error("[v0] Cannot make exact change, remaining:", remaining)
+        // 정확한 거스름돈을 만들 수 없는 경우
+        // 실제 환경에서는 UI에 알림을 표시하거나 다른 처리 필요
+      }
+
+      console.log("[v0] Change breakdown:", changeToDispense)
+
+      // 각 지폐 단위별로 방출
+      for (const { amount, count } of changeToDispense) {
+        console.log(`[v0] Dispensing ${count}x ${amount}원 bills for change`)
+
+        const success = await dispenseBills(count)
+
+        if (!success) {
+          console.error(`[v0] Failed to dispense ${count}x ${amount}원 bills`)
+          return false
+        }
+
+        // 각 방출 사이에 약간의 지연
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+
+      console.log("[v0] Change refund completed successfully")
+      return true
+    } catch (error) {
+      console.error("[v0] Error during change refund:", error)
+      return false
+    }
+  }, [paymentSession.overpaymentAmount])
 
   // 결제 완료
   const completePayment = useCallback(() => {
@@ -146,6 +213,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
         completePayment,
         cancelPayment,
         isPaymentComplete,
+        refundChange,
       }}
     >
       {children}
