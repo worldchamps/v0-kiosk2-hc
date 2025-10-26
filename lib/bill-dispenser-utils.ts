@@ -545,9 +545,19 @@ export async function connectBillDispenser(): Promise<boolean> {
       )
     }
 
-    // Step 10: 초기 상태 확인
-    logConnection("STATUS_CHECK", "초기 상태 확인")
-    await getStatus()
+    // Step 10: Release prohibition command
+    logConnection("RELEASE_PROHIBITION", "동작 금지 해제 명령 전송 (h c ?)")
+    try {
+      const releaseCommand = new Uint8Array([0x68, 0x63, 0x3f]) // 'h', 'c', '?'
+      await billDispenserWriter.write(releaseCommand)
+      logDebug(
+        `동작 금지 해제 명령 전송: ${Array.from(releaseCommand)
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join(" ")}`,
+      )
+    } catch (err) {
+      logConnection("RELEASE_PROHIBITION", `동작 금지 해제 명령 전송 실패: ${err}`)
+    }
 
     logConnection("CONNECT_SUCCESS", "지폐방출기 연결 성공")
     return true
