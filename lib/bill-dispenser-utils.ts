@@ -698,24 +698,24 @@ export async function dispenseBills(count: number): Promise<boolean> {
   }
 
   try {
-    // TX: 0x24, 0x44, 0x53, [count], [checksum]
-    // RX: 0x24, 0x61, 0x64, [count], [checksum]
-    // Example for 1 bill: TX: 0x24, 0x44, 0x53, 0x01, 0x98 -> RX: 0x24, 0x61, 0x64, 0x01, 0xE8
+    // TX: 0x24, 0x44, [count], 0x53, [checksum]
+    // RX: 0x24, 0x64, [count], 0x61, [checksum]
+    // Example for 1 bill: TX: 0x24, 0x44, 0x01, 0x53, 0x98 -> RX: 0x24, 0x64, 0x01, 0x61, 0xC6
     const cmd1 = 0x44 // 'D'
-    const cmd2 = 0x53 // 'S'
-    const data = count
+    const cmd2 = count // count comes in the middle
+    const data = 0x53 // 'S'
 
     const packet = createPacket(cmd1, cmd2, data)
 
-    // Expected response: 'a' 'd' [count] (swapped order)
-    const expectedCmd1 = 0x61 // 'a'
-    const expectedCmd2 = 0x64 // 'd'
+    // Expected response: 'd' [count] 'a'
+    const expectedCmd1 = 0x64 // 'd'
+    const expectedCmd2 = count // count in the middle
 
     const response = await sendCommandAndWaitResponse(packet, expectedCmd1, expectedCmd2, 5000)
 
     if (response && response.length === 5) {
-      if (response[1] === 0x61 && response[2] === 0x64 && response[3] === count) {
-        // 'a' 'd' [count]
+      if (response[1] === 0x64 && response[2] === count && response[3] === 0x61) {
+        // 'd' [count] 'a'
         logCommand("Dispense Bills", packet, response)
         return true
       }
@@ -812,7 +812,7 @@ export async function clearDispensedCount(): Promise<boolean> {
 
     // 응답 예상 값
     const expectedCmd1 = isOldProtocol ? 0x72 : 0x52 // 'r' or 'R'
-    const expectedCmd2 = isOldProtocol ? 0x00 : 0x00
+    const expectedCmd2 = 0x00
 
     const response = await sendCommandAndWaitResponse(packet, expectedCmd1, expectedCmd2)
 
