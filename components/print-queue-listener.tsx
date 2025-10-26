@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { ref, onValue, update, off } from "firebase/database"
-import { database } from "@/lib/firebase-client"
+import { getFirebaseDatabase } from "@/lib/firebase-client"
 import { printRoomInfoReceipt, isPrinterConnected, autoConnectPrinter } from "@/lib/printer-utils"
 
 interface PrintJob {
@@ -30,6 +30,12 @@ export function PrintQueueListener() {
         console.log("[PrintQueue] Popup mode detected, skipping print queue listener")
         return
       }
+    }
+
+    const database = getFirebaseDatabase()
+    if (!database) {
+      console.warn("[PrintQueue] Firebase database not available, skipping print queue listener")
+      return
     }
 
     console.log("[PrintQueue] Initializing print queue listener...")

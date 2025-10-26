@@ -47,7 +47,6 @@ GOOGLE_SHEETS_SPREADSHEET_ID=your-spreadsheet-id
 
 \`\`\`env
 API_KEY=your-api-key
-NEXT_PUBLIC_API_KEY=your-public-api-key
 ADMIN_API_KEY=your-admin-key
 \`\`\`
 

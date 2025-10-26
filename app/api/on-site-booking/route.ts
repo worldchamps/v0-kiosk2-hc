@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { createSheetsClient } from "@/lib/google-sheets"
 import { addToPMSQueue } from "@/lib/firebase-admin"
+import { sendAligoSMS, formatBookingMessage } from "@/lib/aligo-sms"
 
 export async function POST(request: NextRequest) {
   try {
@@ -85,6 +86,33 @@ export async function POST(request: NextRequest) {
       },
     })
     console.log("[v0] Reservation added to Google Sheets")
+
+    if (phoneNumber) {
+      console.log("[v0] 📱 Sending SMS notification to:", phoneNumber)
+      try {
+        const smsMessage = formatBookingMessage({
+          guestName,
+          roomNumber: roomCode,
+          checkInDate,
+          checkOutDate,
+          password: password || "",
+        })
+
+        const smsResult = await sendAligoSMS({
+          phoneNumber,
+          message: smsMessage,
+        })
+
+        if (smsResult.success) {
+          console.log("[v0] ✅ SMS sent successfully")
+        } else {
+          console.error("[v0] ❌ SMS failed:", smsResult.message)
+        }
+      } catch (smsError) {
+        console.error("[v0] ❌ SMS error:", smsError)
+        // Continue even if SMS fails - booking is already complete
+      }
+    }
 
     console.log("[v0] Updating room status to '사용 중'...")
     if (roomRowIndex >= 0) {

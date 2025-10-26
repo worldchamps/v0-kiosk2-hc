@@ -79,6 +79,8 @@ export default function BillAcceptorTest() {
   const [selectedPort, setSelectedPort] = useState("COM4")
   const [lastEvent, setLastEvent] = useState<any>(null)
 
+  const isElectron = typeof window !== "undefined" && window.electronAPI
+
   // Update connection status and device info
   useEffect(() => {
     const interval = setInterval(async () => {
@@ -129,37 +131,49 @@ export default function BillAcceptorTest() {
     setError("")
 
     try {
-      const connected = await connectBillAcceptor()
-      if (connected) {
-        setIsConnected(true)
-        setStatus("연결 완료")
-
-        // Get initial device info
-        const version = await getVersion()
-        const config = await getConfig()
-        const currentStatus = await getStatus()
-
-        setDeviceStatus({
-          ...getBillAcceptorStatus(),
-          version,
-          config,
-          currentStatus,
-        })
-
-        // Parse config to update checkboxes
-        if (config !== null) {
-          setBillConfig({
-            bill1000: (config & 0x01) !== 0,
-            bill5000: (config & 0x02) !== 0,
-            bill10000: (config & 0x04) !== 0,
-            bill50000: (config & 0x08) !== 0,
-            autoStack: (config & 0x10) !== 0,
-            eventTx: (config & 0x20) !== 0,
-          })
+      if (isElectron) {
+        // Electron 환경: 이미 연결되어 있는지 확인
+        const status = await window.electronAPI.getBillAcceptorStatus()
+        if (status && status.connected) {
+          setIsConnected(true)
+          setStatus("지폐인식기가 이미 연결되어 있습니다 (COM4)")
+        } else {
+          setError("지폐인식기가 연결되어 있지 않습니다. Electron 앱을 재시작하세요.")
         }
       } else {
-        setStatus("연결 실패")
-        setError("지폐인식기와 연결할 수 없습니다.")
+        // 웹 환경: Web Serial API 사용
+        const connected = await connectBillAcceptor()
+        if (connected) {
+          setIsConnected(true)
+          setStatus("연결 완료")
+
+          // Get initial device info
+          const version = await getVersion()
+          const config = await getConfig()
+          const currentStatus = await getStatus()
+
+          setDeviceStatus({
+            ...getBillAcceptorStatus(),
+            version,
+            config,
+            currentStatus,
+          })
+
+          // Parse config to update checkboxes
+          if (config !== null) {
+            setBillConfig({
+              bill1000: (config & 0x01) !== 0,
+              bill5000: (config & 0x02) !== 0,
+              bill10000: (config & 0x04) !== 0,
+              bill50000: (config & 0x08) !== 0,
+              autoStack: (config & 0x10) !== 0,
+              eventTx: (config & 0x20) !== 0,
+            })
+          }
+        } else {
+          setStatus("연결 실패")
+          setError("지폐인식기와 연결할 수 없습니다.")
+        }
       }
     } catch (error: any) {
       setStatus("연결 실패")

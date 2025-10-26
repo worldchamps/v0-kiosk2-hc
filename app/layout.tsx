@@ -1,5 +1,6 @@
 import type React from "react"
 import "./globals.css"
+import { PaymentProvider } from "@/contexts/payment-context"
 
 export default function RootLayout({
   children,
@@ -8,7 +9,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko" className="light" suppressHydrationWarning>
-      <body suppressHydrationWarning>{children}</body>
+      <body suppressHydrationWarning>
+        <PaymentProvider>{children}</PaymentProvider>
+      </body>
     </html>
   )
 }

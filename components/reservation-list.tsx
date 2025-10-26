@@ -6,6 +6,7 @@ import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
 import { playAudio } from "@/lib/audio-utils"
 import { useEffect } from "react"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
+import { getKioskPropertyId, propertyUsesElectron } from "@/lib/property-utils"
 
 interface Reservation {
   place: string
@@ -57,11 +58,16 @@ export default function ReservationList({
   }, [])
 
   const handleBackClick = () => {
-    if (isPopupMode && typeof window !== "undefined" && window.electronAPI) {
-      // Popup mode: Close the Electron window
-      window.electronAPI.send("checkin-complete")
+    if (isPopupMode) {
+      const property = getKioskPropertyId()
+      if (propertyUsesElectron(property)) {
+        if (typeof window !== "undefined" && window.electronAPI) {
+          window.electronAPI.send("checkin-complete")
+        }
+      } else {
+        window.close()
+      }
     } else {
-      // Normal mode: Navigate back to reservation confirm
       onNavigate("reservationConfirm")
     }
   }

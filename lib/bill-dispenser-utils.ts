@@ -259,8 +259,8 @@ async function sendCommandAndWaitResponse(
   packet: Uint8Array,
   expectedCmd1: number,
   expectedCmd2: number,
-  timeoutMs = 1000,
-  retries = 3,
+  timeoutMs = 500,
+  retries = 5,
 ): Promise<Uint8Array | null> {
   if (!billDispenserWriter) {
     logCommand("SEND_COMMAND", packet, undefined, "지폐방출기가 연결되지 않음")
@@ -840,40 +840,49 @@ export async function getTotalDispensedCount(): Promise<number | null> {
 
     const packet = createPacket(cmd1, cmd2, data)
 
-    // 응답 예상 값 (2개의 패킷으로 나눠서 전송됨)
-    const expectedCmd1 = isOldProtocol ? 0x74 : 0x54 // 't' or 'T'
-    const expectedCmd2 = 0x00 // 첫 번째 패킷의 데이터는 가변적
+    const expectedCmd1_1 = isOldProtocol ? 0x74 : 0x54 // 't' or 'T'
+    const expectedCmd2_1 = 0x00
 
-    const response = await sendCommandAndWaitResponse(packet, expectedCmd1, expectedCmd2, 2000)
+    const response1 = await sendCommandAndWaitResponse(packet, expectedCmd1_1, expectedCmd2_1, 2000)
 
-    if (response && response.length === 5) {
-      // 첫 번째 패킷 처리
-      const highBytes = response[2] * 16777216 + response[3] * 65536
-
-      // 두 번째 패킷 기다리기
-      const expectedCmd1_2 = isOldProtocol ? 0x67 : 0x47 // 'g' or 'G'
-      const expectedCmd2_2 = 0x00 // 두 번째 패킷의 데이터는 가변적
-
-      const response2 = await sendCommandAndWaitResponse(
-        createPacket(0x00, 0x00, 0x00),
-        expectedCmd1_2,
-        expectedCmd2_2,
-        2000,
-      )
-
-      if (response2 && response2.length === 5) {
-        const lowBytes = response2[2] * 256 + response2[3]
-        const total = highBytes + lowBytes
-
-        logCommand("Get Total Dispensed Count", packet, [...Array.from(response), ...Array.from(response2)])
-
-        totalDispensedCount = total
-        return total
-      }
+    if (!response1 || response1.length !== 5) {
+      logCommand("Get Total Dispensed Count", packet, response1 || [], "첫 번째 응답 실패")
+      return null
     }
 
-    logCommand("Get Total Dispensed Count", packet, response || [], "예상되지 않은 응답")
-    return null
+    // 첫 번째 패킷 처리 (상위 16비트)
+    const highBytes = response1[2] * 16777216 + response1[3] * 65536
+
+    const expectedCmd1_2 = isOldProtocol ? 0x67 : 0x47 // 'g' or 'G'
+    const expectedCmd2_2 = 0x00
+
+    // 두 번째 응답을 위한 Promise 설정
+    const responseKey2 = getResponseKey(expectedCmd1_2, expectedCmd2_2)
+    const response2Promise = new Promise<Uint8Array>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        pendingCommands.delete(responseKey2)
+        reject(new Error(`두 번째 응답 타임아웃: ${responseKey2}`))
+      }, 2000)
+
+      pendingCommands.set(responseKey2, { resolve, reject, timeout })
+    })
+
+    // 두 번째 응답 대기 (명령 전송 없이)
+    const response2 = await response2Promise
+
+    if (!response2 || response2.length !== 5) {
+      logCommand("Get Total Dispensed Count", packet, response2 || [], "두 번째 응답 실패")
+      return null
+    }
+
+    // 두 번째 패킷 처리 (하위 16비트)
+    const lowBytes = response2[2] * 256 + response2[3]
+    const total = highBytes + lowBytes
+
+    logCommand("Get Total Dispensed Count", packet, [...Array.from(response1), ...Array.from(response2)])
+
+    totalDispensedCount = total
+    return total
   } catch (error) {
     logCommand("Get Total Dispensed Count", [], undefined, `오류: ${error}`)
     return null

@@ -7,6 +7,7 @@ import { getCurrentDateKST, formatDateKorean } from "@/lib/date-utils"
 import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
 import { playAudio } from "@/lib/audio-utils"
 import { useEffect, useState, useRef } from "react"
+import { getKioskPropertyId, propertyUsesElectron } from "@/lib/property-utils"
 
 interface ReservationNotFoundProps {
   onRecheck: () => void
@@ -68,11 +69,16 @@ export default function ReservationNotFound({
       clearTimeout(redirectTimeoutRef.current)
     }
 
-    if (isPopupMode && typeof window !== "undefined" && window.electronAPI) {
-      // Popup mode: Close the Electron window
-      window.electronAPI.send("checkin-complete")
+    if (isPopupMode) {
+      const property = getKioskPropertyId()
+      if (propertyUsesElectron(property)) {
+        if (typeof window !== "undefined" && window.electronAPI) {
+          window.electronAPI.send("checkin-complete")
+        }
+      } else {
+        window.close()
+      }
     } else {
-      // Normal mode: Navigate to standby
       onNavigate("standby")
     }
   }

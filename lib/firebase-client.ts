@@ -1,5 +1,5 @@
 import { initializeApp, getApps } from "firebase/app"
-import { getDatabase } from "firebase/database"
+import { getDatabase, type Database } from "firebase/database"
 
 // Firebase client configuration
 const firebaseConfig = {
@@ -12,13 +12,48 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 }
 
-// Initialize Firebase (client-side)
+let app: any = null
+let database: Database | null = null
+
+// Initialize Firebase (client-side only, not during build)
 function initFirebase() {
-  if (getApps().length === 0) {
-    return initializeApp(firebaseConfig)
+  if (typeof window === "undefined") {
+    // Skip during SSR/build
+    return null
   }
-  return getApps()[0]
+
+  if (!firebaseConfig.databaseURL || !firebaseConfig.projectId) {
+    console.warn("[Firebase Client] Missing required configuration (databaseURL or projectId)")
+    return null
+  }
+
+  try {
+    if (getApps().length === 0) {
+      app = initializeApp(firebaseConfig)
+    } else {
+      app = getApps()[0]
+    }
+    return app
+  } catch (error) {
+    console.error("[Firebase Client] Initialization error:", error)
+    return null
+  }
 }
 
-const app = initFirebase()
-export const database = getDatabase(app)
+export function getFirebaseDatabase(): Database | null {
+  if (!database) {
+    const firebaseApp = initFirebase()
+    if (firebaseApp) {
+      try {
+        database = getDatabase(firebaseApp)
+      } catch (error) {
+        console.error("[Firebase Client] Failed to get database:", error)
+        return null
+      }
+    }
+  }
+  return database
+}
+
+// Export initialized database (will be null if not initialized)
+export { database }

@@ -5,18 +5,13 @@ import { Button } from "@/components/ui/button"
 import { Check, Printer, Eye, EyeOff } from "lucide-react"
 import { useEffect, useState, useRef } from "react"
 import DirectPrinter from "./direct-printer"
-import {
-  printReceipt,
-  disconnectPrinter,
-  getSimplePrintMode,
-  autoConnectPrinter,
-  getPrinterModel,
-} from "@/lib/printer-utils"
+import { printReceipt, getSimplePrintMode, autoConnectPrinter, getPrinterModel } from "@/lib/printer-utils-unified"
 import Image from "next/image"
 import { getBuildingZoomImagePath } from "@/lib/location-utils"
 import type { KioskLocation } from "@/lib/location-utils"
 import { playBuildingGuide, stopAllAudio } from "@/lib/audio-utils"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
+import { getKioskPropertyId, propertyUsesElectron } from "@/lib/property-utils"
 
 interface CheckInCompleteProps {
   reservation?: any
@@ -221,7 +216,7 @@ export default function CheckInComplete({
           logDebug("Print status: error (print failed)")
         }
 
-        await disconnectPrinter()
+        // await disconnectPrinter()
       } else {
         setPrintStatus("error")
         logDebug("Print status: error (connection failed)")
@@ -257,9 +252,15 @@ export default function CheckInComplete({
   const handleRedirect = () => {
     if (isPopupMode) {
       // Popup mode: notify Electron to close popup and restore PMS focus
-      logDebug("Popup mode: notifying Electron to close popup")
-      if (typeof window !== "undefined" && (window as any).electronAPI) {
-        ;(window as any).electronAPI.send("checkin-complete")
+      const property = getKioskPropertyId()
+      if (propertyUsesElectron(property)) {
+        logDebug("Popup mode: notifying Electron to close popup")
+        if (typeof window !== "undefined" && (window as any).electronAPI) {
+          ;(window as any).electronAPI.send("checkin-complete")
+        }
+      } else {
+        logDebug("Property3,4: closing window directly")
+        window.close()
       }
     } else {
       // Normal mode: navigate to standby

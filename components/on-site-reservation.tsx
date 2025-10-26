@@ -10,6 +10,8 @@ import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { getRoomImagePath } from "@/lib/room-utils"
 import { sortRoomTypes } from "@/lib/room-type-order"
 import { connectPrinter, printOnSiteReservationReceipt } from "@/lib/printer-utils"
+import { usePayment } from "@/contexts/payment-context"
+import PaymentScreen from "@/components/payment-screen"
 
 interface OnSiteReservationProps {
   onNavigate: (screen: string) => void
@@ -26,7 +28,7 @@ interface AvailableRoom {
   roomCode: string
 }
 
-type BookingStep = "roomType" | "roomSelect" | "guestInfo" | "complete"
+type BookingStep = "roomType" | "roomSelect" | "guestInfo" | "complete" | "payment"
 
 export default function OnSiteReservation({ onNavigate, location }: OnSiteReservationProps) {
   const [step, setStep] = useState<BookingStep>("roomType")
@@ -41,6 +43,8 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   const [checkOutDate, setCheckOutDate] = useState("")
   const [reservationData, setReservationData] = useState<any>(null)
   const [isPrinting, setIsPrinting] = useState(false)
+  const { startPayment, completePayment, cancelPayment } = usePayment()
+  const bookingPrice = 50000
 
   const locationName = location === "CAMP" ? "캠프" : location ? `${location}동` : ""
 
@@ -96,6 +100,23 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
       return
     }
 
+    const reservationInfo = {
+      guestName,
+      phoneNumber,
+      roomNumber: selectedRoom.roomCode,
+      roomCode: selectedRoom.roomCode,
+      roomType: selectedRoom.roomType,
+      building: selectedRoom.building,
+      checkInDate,
+      checkOutDate,
+      password: selectedRoom.password,
+    }
+
+    startPayment(bookingPrice, reservationInfo)
+    setStep("payment")
+  }
+
+  const handlePaymentComplete = async () => {
     try {
       setSubmitting(true)
       const response = await fetch("/api/on-site-booking", {
@@ -106,14 +127,14 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
         body: JSON.stringify({
           guestName,
           phoneNumber,
-          roomNumber: selectedRoom.roomCode,
-          roomCode: selectedRoom.roomCode,
-          roomType: selectedRoom.roomType,
-          building: selectedRoom.building,
-          price: "가격 미정",
+          roomNumber: selectedRoom?.roomCode,
+          roomCode: selectedRoom?.roomCode,
+          roomType: selectedRoom?.roomType,
+          building: selectedRoom?.building,
+          price: bookingPrice,
           checkInDate,
           checkOutDate,
-          password: selectedRoom.password,
+          password: selectedRoom?.password,
         }),
       })
 
@@ -121,16 +142,26 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
 
       if (data.success) {
         setReservationData(data.data)
+        completePayment()
         setStep("complete")
       } else {
         alert("예약 중 오류가 발생했습니다: " + data.error)
+        await cancelPayment()
+        setStep("guestInfo")
       }
     } catch (error) {
       console.error("Error submitting booking:", error)
       alert("예약 중 오류가 발생했습니다: " + (error instanceof Error ? error.message : String(error)))
+      await cancelPayment()
+      setStep("guestInfo")
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const handlePaymentCancel = async () => {
+    await cancelPayment()
+    setStep("guestInfo")
   }
 
   const handlePrintReceipt = async () => {
@@ -462,7 +493,20 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
     )
   }
 
-  // Step 4: Completion
+  // Step 4: Payment
+  if (step === "payment" && selectedRoom) {
+    return (
+      <PaymentScreen
+        requiredAmount={bookingPrice}
+        onPaymentComplete={handlePaymentComplete}
+        onCancel={handlePaymentCancel}
+        title={`더 비치스테이 ${locationName}`}
+        description="현장 예약 - 결제"
+      />
+    )
+  }
+
+  // Step 5: Completion
   if (step === "complete" && reservationData) {
     return (
       <div className="flex items-start justify-start w-full h-full">

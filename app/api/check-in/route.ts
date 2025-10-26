@@ -5,6 +5,7 @@ import { createSheetsClient, SHEET_COLUMNS } from "@/lib/google-sheets"
 import { addToPMSQueue } from "@/lib/firebase-admin"
 import { getPropertyFromReservation, canCheckInAtKiosk } from "@/lib/property-utils"
 import type { PropertyId } from "@/lib/property-utils"
+import { sendAligoSMS, formatCheckInMessage } from "@/lib/aligo-sms"
 
 // API Key for authentication
 const API_KEY = process.env.API_KEY || ""
@@ -77,6 +78,7 @@ export async function POST(request: NextRequest) {
     const checkInDate = reservationData[SHEET_COLUMNS.CHECK_IN_DATE] || ""
     const password = reservationData[SHEET_COLUMNS.PASSWORD] || ""
     const floor = reservationData[SHEET_COLUMNS.FLOOR] || ""
+    const phoneNumber = reservationData[SHEET_COLUMNS.PHONE_NUMBER] || ""
 
     console.log("[v0] 📋 Reservation Data:")
     console.log("[v0]   Room Number:", roomNumber)
@@ -150,6 +152,34 @@ export async function POST(request: NextRequest) {
     }
 
     console.log("[v0] ✅ Check-in completed successfully!")
+
+    if (phoneNumber) {
+      console.log("[v0] 📱 Sending SMS notification to:", phoneNumber)
+      try {
+        const smsMessage = formatCheckInMessage({
+          guestName,
+          roomNumber,
+          password,
+          floor,
+        })
+
+        const smsResult = await sendAligoSMS({
+          phoneNumber,
+          message: smsMessage,
+        })
+
+        if (smsResult.success) {
+          console.log("[v0] ✅ SMS sent successfully")
+        } else {
+          console.error("[v0] ❌ SMS failed:", smsResult.message)
+        }
+      } catch (smsError) {
+        console.error("[v0] ❌ SMS error:", smsError)
+      }
+    } else {
+      console.log("[v0] ⚠️ No phone number provided, skipping SMS")
+    }
+
     console.log("[v0] ========================================")
 
     return NextResponse.json({

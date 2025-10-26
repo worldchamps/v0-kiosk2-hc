@@ -21,9 +21,11 @@ import {
   getPropertyDisplayName,
   getPropertyFromRoomNumber,
   getPropertyFromPlace,
+  propertyUsesElectron,
 } from "@/lib/property-utils"
 import PropertyMismatchDialog from "@/components/property-mismatch-dialog"
 import PropertyRedirectDialog from "@/components/property-redirect-dialog"
+import { usePayment } from "@/contexts/payment-context"
 
 interface KioskLayoutProps {
   onChangeMode: () => void
@@ -65,6 +67,8 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
 
   const adminPassword = "KIM1334**"
 
+  const { paymentSession, cancelPayment } = usePayment()
+
   useEffect(() => {
     const savedLocation = getKioskLocation()
     setKioskLocation(savedLocation)
@@ -76,7 +80,8 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       if (typeof window !== "undefined") {
         const urlParams = new URLSearchParams(window.location.search)
         const isPopup = urlParams.get("popup") === "true"
-        const isElectronPopup = !!(window as any).electronAPI && window.opener
+        const property = getKioskPropertyId()
+        const isElectronPopup = propertyUsesElectron(property) && !!(window as any).electronAPI && window.opener
         return isPopup || isElectronPopup
       }
       return false
@@ -129,8 +134,13 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       }
 
       inactivityTimerRef.current = setTimeout(() => {
-        if (typeof window !== "undefined" && (window as any).electronAPI) {
-          ;(window as any).electronAPI.send("close-popup")
+        const property = getKioskPropertyId()
+        if (propertyUsesElectron(property)) {
+          if (typeof window !== "undefined" && (window as any).electronAPI) {
+            ;(window as any).electronAPI.send("close-popup")
+          }
+        } else {
+          window.close()
         }
       }, INACTIVITY_TIMEOUT)
     }
@@ -157,7 +167,13 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
     }
   }, [isPopupMode])
 
-  const handleNavigate = (screen) => {
+  const handleNavigate = async (screen: string) => {
+    // 결제 진행 중이면 자동 환불
+    if (paymentSession.isActive && paymentSession.acceptedAmount > 0) {
+      console.log("[v0] Active payment detected during navigation, initiating refund")
+      await cancelPayment()
+    }
+
     stopAllAudio(false)
 
     setCurrentScreen(screen)

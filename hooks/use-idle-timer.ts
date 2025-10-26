@@ -10,6 +10,7 @@ interface UseIdleTimerOptions {
 
 export function useIdleTimer({ onIdle, idleTime = 60000, enabled = true }: UseIdleTimerOptions) {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const isCallingRef = useRef(false)
 
   const resetTimer = () => {
     // Clear existing timer
@@ -20,8 +21,18 @@ export function useIdleTimer({ onIdle, idleTime = 60000, enabled = true }: UseId
     // Set new timer only if enabled
     if (enabled) {
       timeoutRef.current = setTimeout(() => {
+        if (isCallingRef.current) {
+          console.log("[v0] Idle callback already in progress, skipping")
+          return
+        }
+
+        isCallingRef.current = true
         console.log("[v0] Idle timeout reached, triggering onIdle callback")
         onIdle()
+        // Reset after a delay to allow navigation to complete
+        setTimeout(() => {
+          isCallingRef.current = false
+        }, 1000)
       }, idleTime)
     }
   }
