@@ -31,12 +31,13 @@ export default function PaymentScreen({
   title = "결제",
   description = "지폐를 투입해주세요",
 }: PaymentScreenProps) {
-  const { paymentSession, addBill, isPaymentComplete } = usePayment()
+  const { paymentSession, addBill, isPaymentComplete, cancelPayment } = usePayment()
   const [isConnecting, setIsConnecting] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string>("")
   const [statusMessage, setStatusMessage] = useState<string>("지폐인식기 연결 중...")
   const paymentCompleteRef = useRef(false)
+  const [isCancelling, setIsCancelling] = useState(false)
 
   const handleBillRecognitionEvent = useCallback(
     async (eventData: number) => {
@@ -238,6 +239,54 @@ export default function PaymentScreen({
 
   const remainingAmount = requiredAmount - paymentSession.acceptedAmount
 
+  const handleCancel = async () => {
+    if (isCancelling) return
+
+    setIsCancelling(true)
+    setStatusMessage("결제 취소 중...")
+
+    try {
+      // Clear event callback to stop accepting more bills
+      setEventCallback(null)
+
+      // Initialize bill acceptor device
+      console.log("[v0] Initializing bill acceptor for cancellation...")
+      await initializeDevice()
+
+      // Refund all inserted money
+      if (paymentSession.acceptedAmount > 0) {
+        setStatusMessage(`${paymentSession.acceptedAmount.toLocaleString()}원 반환 중...`)
+
+        const billCount = Math.floor(paymentSession.acceptedAmount / 10000)
+        console.log(`[v0] Refunding ${billCount} bills of 10,000 won`)
+
+        const refunded = await dispenseBills(billCount)
+
+        if (refunded) {
+          console.log("[v0] Refund successful")
+          setStatusMessage("환불 완료!")
+          await new Promise((resolve) => setTimeout(resolve, 2000))
+        } else {
+          console.error("[v0] Refund failed")
+          setError("환불 실패. 관리자에게 문의하세요.")
+          await new Promise((resolve) => setTimeout(resolve, 3000))
+        }
+      }
+
+      // Cancel payment session
+      await cancelPayment()
+
+      // Return to previous screen
+      onCancel()
+    } catch (error) {
+      console.error("[v0] Cancel error:", error)
+      setError(`취소 오류: ${error}`)
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+    } finally {
+      setIsCancelling(false)
+    }
+  }
+
   return (
     <div className="flex items-start justify-start w-full h-full">
       <div className="kiosk-content-container">
@@ -331,11 +380,18 @@ export default function PaymentScreen({
 
           <Button
             variant="outline"
-            onClick={onCancel}
-            disabled={isConnecting || isProcessing}
+            onClick={handleCancel}
+            disabled={isConnecting || isCancelling || paymentCompleteRef.current}
             className="h-20 text-2xl w-full border-3 border-gray-300 font-bold bg-transparent"
           >
-            취소
+            {isCancelling ? (
+              <>
+                <Loader2 className="mr-2 h-6 w-6 animate-spin" />
+                취소 중...
+              </>
+            ) : (
+              "취소"
+            )}
           </Button>
         </div>
       </div>

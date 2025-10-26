@@ -129,49 +129,24 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
 
     const currentSession = paymentSession
 
-    if (!currentSession.isActive || currentSession.acceptedAmount === 0) {
-      console.log("[v0] No active payment or no bills to refund")
+    if (!currentSession.isActive) {
+      console.log("[v0] No active payment session")
       setPaymentSession(initialSession)
       return
     }
 
     refundInProgressRef.current = true
-    console.log("[v0] Starting refund process:", {
+    console.log("[v0] Cancelling payment session:", {
       acceptedAmount: currentSession.acceptedAmount,
       acceptedBills: currentSession.acceptedBills,
     })
 
     try {
-      // 받은 지폐를 종류별로 그룹화
-      const billCounts: { [key: number]: number } = {}
-      for (const bill of currentSession.acceptedBills) {
-        billCounts[bill] = (billCounts[bill] || 0) + 1
-      }
-
-      console.log("[v0] Bill counts for refund:", billCounts)
-
-      // 각 지폐 종류별로 방출
-      for (const [billAmount, count] of Object.entries(billCounts)) {
-        const amount = Number.parseInt(billAmount)
-        console.log(`[v0] Dispensing ${count}x ${amount}원 bills`)
-
-        // 지폐 방출기로 환불 명령
-        const success = await dispenseBills(count)
-
-        if (!success) {
-          console.error(`[v0] Failed to dispense ${count}x ${amount}원 bills`)
-          // 환불 실패 시에도 계속 진행 (다른 지폐라도 환불 시도)
-        } else {
-          console.log(`[v0] Successfully dispensed ${count}x ${amount}원 bills`)
-        }
-
-        // 각 방출 사이에 약간의 지연
-        await new Promise((resolve) => setTimeout(resolve, 500))
-      }
-
-      console.log("[v0] Refund process completed")
+      // Note: The actual refund (dispensing bills) is handled by the payment screen
+      // This function just resets the payment session
+      console.log("[v0] Payment session cancelled")
     } catch (error) {
-      console.error("[v0] Error during refund:", error)
+      console.error("[v0] Error during cancellation:", error)
     } finally {
       refundInProgressRef.current = false
       setPaymentSession(initialSession)
