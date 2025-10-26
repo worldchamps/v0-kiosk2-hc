@@ -249,8 +249,8 @@ async function sendCommandAndWaitResponse(
   packet: Uint8Array,
   expectedCmd1: number,
   expectedCmd2: number,
-  timeoutMs = 1000,
-  retries = 3,
+  timeoutMs = 500, // 사양서 권장: 500ms
+  retries = 5, // 사양서 권장: 초기 1회 + 재시도 4회 = 총 5회
 ): Promise<Uint8Array | null> {
   if (!billAcceptorWriter) {
     logCommand("SEND_COMMAND", packet, undefined, "지폐인식기가 연결되지 않음")
@@ -274,20 +274,27 @@ async function sendCommandAndWaitResponse(
 
       // 명령 전송
       await billAcceptorWriter.write(packet)
-      logDebug("명령 전송 완료")
+      logDebug(
+        `명령 전송 완료 (${Array.from(packet)
+          .map((b) => "0x" + b.toString(16).padStart(2, "0"))
+          .join(" ")})`,
+      )
 
       // 응답 대기
       try {
         const response = await responsePromise
-        logDebug("유효한 응답 수신")
+        logDebug(
+          `유효한 응답 수신 (${Array.from(response)
+            .map((b) => "0x" + b.toString(16).padStart(2, "0"))
+            .join(" ")})`,
+        )
         return response
       } catch (timeoutError) {
-        logDebug(`명령 타임아웃 (시도 ${attempt}/${retries}): ${timeoutError}`)
+        logDebug(`명령 타임아웃 (시도 ${attempt}/${retries})`)
         if (attempt === retries) {
-          logCommand("SEND_COMMAND", packet, undefined, "최종 타임아웃")
+          logCommand("SEND_COMMAND", packet, undefined, `최종 타임아웃 (${retries}회 시도 후)`)
           return null
         }
-        // 재시도 전 잠시 대기
         await new Promise((resolve) => setTimeout(resolve, 100))
       }
     } catch (error) {
@@ -651,13 +658,12 @@ export async function checkConnection(): Promise<boolean> {
       return true
     }
 
-    // 일반적인 연결 테스트 시도
     const packet = createPacket(0x48, 0x69, 0x3f) // 'H' 'i' '?'
-    const response = await sendCommandAndWaitResponse(packet, 0x68, 0x69, 2000) // 2초 타임아웃
+    const response = await sendCommandAndWaitResponse(packet, 0x6d, 0x65, 500) // 'm' 'e' 응답 기대
 
     if (response && response.length === 5) {
-      if (response[1] === 0x68 && response[2] === 0x69 && response[3] === 0x3f) {
-        // 'h' 'i' '?'
+      if (response[1] === 0x6d && response[2] === 0x65 && response[3] === 0x21) {
+        // 'm' 'e' '!'
         logCommand("Check Connection", packet, response)
         return true
       }
