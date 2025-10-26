@@ -55,9 +55,8 @@ export default function PaymentScreen({
 
       setStatusMessage("지폐를 투입해주세요...")
 
-      // 2. 지폐 투입 대기 및 인식
       let attempts = 0
-      const maxAttempts = 120 // 60초 타임아웃 (500ms 간격)
+      const maxAttempts = 30 // 60초 타임아웃 (2초 간격)
 
       while (attempts < maxAttempts && !isPaymentComplete()) {
         const status = await getStatus()
@@ -127,7 +126,7 @@ export default function PaymentScreen({
               setStatusMessage(`${amount.toLocaleString()}원 수취 완료`)
               break
             }
-            await new Promise((resolve) => setTimeout(resolve, 500))
+            await new Promise((resolve) => setTimeout(resolve, 2000))
             stackAttempts++
           }
 
@@ -151,7 +150,7 @@ export default function PaymentScreen({
           return
         }
 
-        await new Promise((resolve) => setTimeout(resolve, 500))
+        await new Promise((resolve) => setTimeout(resolve, 2000))
         attempts++
       }
 
