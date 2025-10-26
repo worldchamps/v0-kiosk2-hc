@@ -40,10 +40,9 @@ export default function PaymentScreen({
     async (eventData: number) => {
       console.log("[v0] Event received:", eventData.toString(16))
 
-      // 0x05 = RECOGNITION_END (지폐 인식 완료)
-      if (eventData === 0x05) {
-        console.log("[v0] Bill recognition complete event received")
-        setStatusMessage("지폐 인식 완료, 처리 중...")
+      if (eventData === 0x0b) {
+        console.log("[v0] STACK_END event received")
+        setStatusMessage("지폐 처리 중...")
 
         try {
           // 1초 대기
