@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { X, ArrowLeft, Check, Printer, Banknote, DollarSign } from "lucide-react"
-import { connectPrinter, isPrinterConnected } from "@/lib/printer-utils"
+import { openPrinterPort } from "@/lib/printer-utils"
 import { connectBillAcceptor, isBillAcceptorConnected } from "@/lib/bill-acceptor-utils"
 import { connectBillDispenser, isBillDispenserConnected } from "@/lib/bill-dispenser-utils"
 
@@ -17,7 +17,6 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
   const [input, setInput] = useState("")
   const [error, setError] = useState("")
 
-  const [printerConnected, setPrinterConnected] = useState(false)
   const [acceptorConnected, setAcceptorConnected] = useState(false)
   const [dispenserConnected, setDispenserConnected] = useState(false)
   const [connectingDevice, setConnectingDevice] = useState<string | null>(null)
@@ -33,13 +32,6 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
 
   useEffect(() => {
     const checkDeviceStatus = async () => {
-      try {
-        const printerStatus = await isPrinterConnected()
-        setPrinterConnected(printerStatus)
-      } catch (e) {
-        setPrinterConnected(false)
-      }
-
       setAcceptorConnected(isBillAcceptorConnected())
       setDispenserConnected(isBillDispenserConnected())
     }
@@ -53,15 +45,10 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
     setConnectingDevice("printer")
     setError("")
     try {
-      const success = await connectPrinter()
-      if (success) {
-        setPrinterConnected(true)
-        setError("")
-      } else {
-        setError("프린터 포트 선택 취소")
-      }
+      await openPrinterPort()
+      setError("프린터 포트 선택 완료")
     } catch (err) {
-      setError(`프린터 연결 오류: ${err}`)
+      setError(`프린터 포트 선택 취소`)
     } finally {
       setConnectingDevice(null)
     }
@@ -148,22 +135,16 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
         <div className="mb-6 p-4 bg-gray-50 rounded-lg">
           <h3 className="text-lg font-semibold mb-3">디바이스 연결</h3>
           <div className="grid grid-cols-3 gap-3">
-            {/* 프린터 연결 버튼 */}
             <Button
-              variant={printerConnected ? "default" : "outline"}
-              className={`h-20 flex flex-col items-center justify-center gap-2 ${
-                printerConnected ? "bg-green-600 hover:bg-green-700" : ""
-              }`}
+              variant="outline"
+              className="h-20 flex flex-col items-center justify-center gap-2 bg-transparent"
               onClick={handleConnectPrinter}
               disabled={connectingDevice !== null}
             >
               <Printer className="h-6 w-6" />
-              <span className="text-sm">
-                {connectingDevice === "printer" ? "연결 중..." : printerConnected ? "프린터 연결됨" : "프린터 연결"}
-              </span>
+              <span className="text-sm">{connectingDevice === "printer" ? "포트 선택 중..." : "프린터 포트 선택"}</span>
             </Button>
 
-            {/* 지폐인식기 연결 버튼 */}
             <Button
               variant={acceptorConnected ? "default" : "outline"}
               className={`h-20 flex flex-col items-center justify-center gap-2 ${
@@ -182,7 +163,6 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
               </span>
             </Button>
 
-            {/* 지폐방출기 연결 버튼 */}
             <Button
               variant={dispenserConnected ? "default" : "outline"}
               className={`h-20 flex flex-col items-center justify-center gap-2 ${
@@ -203,7 +183,6 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
           </div>
         </div>
 
-        {/* 비밀번호 입력 표시 */}
         <div className="relative mb-6">
           <div className="h-16 border-2 rounded-lg flex items-center px-4 bg-gray-50">
             <div className="text-2xl font-mono tracking-widest">{input.replace(/./g, "•")}</div>
@@ -211,7 +190,6 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
           {error && <p className="text-red-500 mt-2">{error}</p>}
         </div>
 
-        {/* 키패드 */}
         <div className="space-y-2">
           {keypadLayout.map((row, rowIndex) => (
             <div key={rowIndex} className="flex justify-center gap-1">
@@ -228,7 +206,6 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
             </div>
           ))}
 
-          {/* 기능 버튼 */}
           <div className="flex justify-between mt-4">
             <Button variant="outline" className="flex-1 h-12 mr-2 bg-transparent" onClick={handleBackspace}>
               <ArrowLeft className="h-5 w-5 mr-1" />
