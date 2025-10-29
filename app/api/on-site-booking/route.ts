@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server"
 import { createSheetsClient } from "@/lib/google-sheets"
 import { addToPMSQueue } from "@/lib/firebase-admin"
 import { sendAligoSMS, formatBookingMessage } from "@/lib/aligo-sms"
+import { getRoomInfoByMatchingNumber, updateRoomStatusInFirebase } from "@/lib/firebase-beach-rooms"
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,42 +17,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
+    console.log("[v0] Checking room availability from Firebase...")
+    const roomInfo = await getRoomInfoByMatchingNumber(roomCode)
+
+    if (!roomInfo) {
+      console.log("[v0] Room not found in Firebase:", roomCode)
+      return NextResponse.json({ error: "객실을 찾을 수 없습니다." }, { status: 404 })
+    }
+
+    if (roomInfo.status !== "공실") {
+      console.log("[v0] Room is no longer available:", roomCode, "Status:", roomInfo.status)
+      return NextResponse.json(
+        { error: "이 객실은 방금 예약이 완료되었습니다. 다른 객실을 선택해주세요." },
+        { status: 409 },
+      )
+    }
+
     const sheets = createSheetsClient()
     const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID
 
     if (!spreadsheetId) {
       return NextResponse.json({ error: "Spreadsheet ID not configured" }, { status: 500 })
-    }
-
-    console.log("[v0] Checking room availability before booking...")
-    const statusCheckResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: "Beach Room Status!A2:G",
-    })
-
-    const statusRows = statusCheckResponse.data.values
-    let roomStillAvailable = false
-    let roomRowIndex = -1
-
-    if (statusRows) {
-      for (let i = 0; i < statusRows.length; i++) {
-        if (statusRows[i][6] === roomCode) {
-          roomRowIndex = i
-          const currentStatus = (statusRows[i][4] || "").trim()
-          if (currentStatus === "공실") {
-            roomStillAvailable = true
-          }
-          break
-        }
-      }
-    }
-
-    if (!roomStillAvailable) {
-      console.log("[v0] Room is no longer available:", roomCode)
-      return NextResponse.json(
-        { error: "이 객실은 방금 예약이 완료되었습니다. 다른 객실을 선택해주세요." },
-        { status: 409 },
-      )
     }
 
     // Generate reservation ID
@@ -68,11 +54,11 @@ export async function POST(request: NextRequest) {
       phoneNumber, // Phone Number
       checkInDate, // Check-in Date
       checkOutDate, // Check-out Date
-      roomCode, // Use roomCode (G열) instead of roomNumber for consistency
-      password || "", // Password
+      roomCode, // Use roomCode (matchingRoomNumber)
+      password || roomInfo.password, // Use password from Firebase if not provided
       "Checked In", // Check-in Status - 현장예약은 즉시 체크인
       new Date().toISOString(), // Check-in Time - 현재 시간
-      "", // Floor (will be filled from Beach Room Status)
+      roomInfo.floor, // Floor from Firebase
     ]
 
     console.log("[v0] Adding reservation to Google Sheets...")
@@ -95,7 +81,7 @@ export async function POST(request: NextRequest) {
           roomNumber: roomCode,
           checkInDate,
           checkOutDate,
-          password: password || "",
+          password: password || roomInfo.password,
         })
 
         const smsResult = await sendAligoSMS({
@@ -114,24 +100,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    console.log("[v0] Updating room status to '사용 중'...")
-    if (roomRowIndex >= 0) {
-      console.log(`[v0] Found room at row ${roomRowIndex + 2}, updating status...`)
-      await sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range: `Beach Room Status!E${roomRowIndex + 2}`,
-        valueInputOption: "USER_ENTERED",
-        requestBody: {
-          values: [["사용 중"]],
-        },
-      })
-      console.log(`[v0] Room status updated to '사용 중' for ${roomCode}`)
+    console.log("[v0] Updating room status to '사용 중' in Firebase...")
+    const updateSuccess = await updateRoomStatusInFirebase(roomCode, "사용 중")
+
+    if (updateSuccess) {
+      console.log(`[v0] ✅ Room status updated to '사용 중' for ${roomCode}`)
+    } else {
+      console.error(`[v0] ❌ Failed to update room status for ${roomCode}`)
+      // Continue even if Firebase update fails - reservation is already saved
     }
 
     try {
       console.log("[v0] Adding to Firebase PMS Queue with roomCode:", roomCode)
       await addToPMSQueue({
-        roomNumber: roomCode, // Use roomCode (G열) instead of roomNumber for consistency
+        roomNumber: roomCode,
         guestName,
         checkInDate,
       })
@@ -151,7 +133,7 @@ export async function POST(request: NextRequest) {
         roomCode,
         checkInDate,
         checkOutDate,
-        password,
+        password: password || roomInfo.password,
       },
     })
   } catch (error) {

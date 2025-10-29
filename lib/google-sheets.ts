@@ -126,6 +126,7 @@ export async function validateSheetColumns(spreadsheetId: string) {
 
 /**
  * Beach Room Status 시트에서 객실 정보 조회
+ * @deprecated Use Firebase instead: getRoomInfoByMatchingNumber from lib/firebase-beach-rooms.ts
  */
 export async function getRoomInfoFromStatus(spreadsheetId: string, roomNumber: string) {
   try {

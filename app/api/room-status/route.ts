@@ -1,47 +1,35 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
-import { createSheetsClient } from "@/lib/google-sheets"
+import { getBeachRoomStatusFromFirebase } from "@/lib/firebase-beach-rooms"
 
 export async function GET(request: NextRequest) {
   try {
-    const sheets = createSheetsClient()
-    const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID || ""
-
-    if (!spreadsheetId) {
-      return NextResponse.json({ error: "Spreadsheet ID not configured" }, { status: 500 })
-    }
-
     const { searchParams } = new URL(request.url)
     const building = searchParams.get("building")
     const roomNumber = searchParams.get("roomNumber")
     const floor = searchParams.get("floor")
 
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: "Beach Room Status!A2:F",
-    })
+    console.log("[v0] Fetching room status from Firebase...")
+    const roomsData = await getBeachRoomStatusFromFirebase()
 
-    const rows = response.data.values
-
-    if (!rows || rows.length === 0) {
+    if (!roomsData || roomsData.length === 0) {
       return NextResponse.json({
         rooms: [],
         message: "No room data found",
       })
     }
 
-    const roomsData = rows.map((row) => {
-      return {
-        building: row[0] || "",
-        roomNumber: row[1] || "",
-        roomType: row[2] || "",
-        status: row[3] || "",
-        price: row[4] || "",
-        floor: row[5] || "",
-      }
-    })
+    const mappedRooms = roomsData.map((room) => ({
+      building: room.category,
+      roomNumber: room.roomNumber,
+      roomType: room.roomType,
+      status: room.status,
+      price: "", // Price not stored in Firebase
+      floor: room.floor,
+      matchingRoomNumber: room.matchingRoomNumber,
+    }))
 
-    let filteredRooms = [...roomsData]
+    let filteredRooms = [...mappedRooms]
 
     if (building) {
       filteredRooms = filteredRooms.filter((room) => room.building === building)
@@ -55,9 +43,12 @@ export async function GET(request: NextRequest) {
       filteredRooms = filteredRooms.filter((room) => room.floor === floor)
     }
 
+    console.log(`[v0] Returning ${filteredRooms.length} rooms after filtering`)
+
     return NextResponse.json({
       rooms: filteredRooms,
       total: filteredRooms.length,
+      source: "firebase", // Indicate data source
     })
   } catch (error) {
     console.error("Error fetching room status data:", error)
