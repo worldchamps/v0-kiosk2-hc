@@ -52,8 +52,15 @@ export default function ReservationConfirm({
   }, [])
 
   const handleCheckReservation = () => {
+    console.log("[v0] ReservationConfirm handleCheckReservation called")
+    console.log("[v0] guestName:", guestName)
+    console.log("[v0] loading:", loading)
+
     if (guestName.trim() && !loading) {
+      console.log("[v0] Calling onCheckReservation with:", guestName)
       onCheckReservation(guestName)
+    } else {
+      console.log("[v0] Conditions not met - guestName.trim():", guestName.trim(), "!loading:", !loading)
     }
   }
 

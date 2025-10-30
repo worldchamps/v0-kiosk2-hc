@@ -208,12 +208,19 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   }
 
   const handleCheckReservation = async (name) => {
-    if (!name.trim()) return
+    console.log("[v0] handleCheckReservation called with name:", name)
+
+    if (!name.trim()) {
+      console.log("[v0] Name is empty, returning")
+      return
+    }
 
     setLoading(true)
     setError("")
 
     try {
+      console.log("[v0] Fetching reservations for:", name, "property:", kioskProperty)
+
       const response = await fetch(
         `/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false&kioskProperty=${kioskProperty}`,
         {
@@ -221,13 +228,18 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         },
       )
 
+      console.log("[v0] API response status:", response.status)
+
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`)
       }
 
       const data = await response.json()
+      console.log("[v0] API response data:", data)
 
       if (data.reservations && data.reservations.length > 0) {
+        console.log("[v0] Found", data.reservations.length, "reservations")
+
         if (data.reservations.length > 1) {
           setReservationsList(data.reservations)
           setCurrentScreen("reservationList")
@@ -237,6 +249,8 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
           setCurrentScreen("reservationDetails")
         }
       } else {
+        console.log("[v0] No reservations found for this property, searching all properties")
+
         const allPropertiesResponse = await fetch(
           `/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false&searchAll=true`,
           {
@@ -249,14 +263,18 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         }
 
         const allPropertiesData = await allPropertiesResponse.json()
+        console.log("[v0] All properties search result:", allPropertiesData)
 
         if (allPropertiesData.reservations && allPropertiesData.reservations.length > 0) {
           const foundReservation = allPropertiesData.reservations[0]
           const targetProperty = foundReservation.property
 
+          console.log("[v0] Found reservation in different property:", targetProperty)
+
           setRedirectTargetProperty(targetProperty)
           setShowPropertyRedirect(true)
         } else {
+          console.log("[v0] No reservations found anywhere, showing not found screen")
           setCurrentScreen("reservationNotFound")
         }
       }
@@ -265,6 +283,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       setError("예약 확인 중 오류가 발생했습니다. 다시 시도해 주세요.")
       setCurrentScreen("reservationNotFound")
     } finally {
+      console.log("[v0] Setting loading to false")
       setLoading(false)
     }
   }
