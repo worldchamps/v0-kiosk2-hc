@@ -43,6 +43,9 @@ export async function POST(request: NextRequest) {
     // Generate reservation ID
     const reservationId = `ONSITE-${Date.now()}`
 
+    const formattedRoomNumber = roomInfo.matchingRoomNumber
+    console.log("[v0] Using matchingRoomNumber from Firebase:", formattedRoomNumber)
+
     // Prepare reservation data
     const reservationData = [
       "더 비치스테이", // Place
@@ -54,7 +57,7 @@ export async function POST(request: NextRequest) {
       phoneNumber, // Phone Number
       checkInDate, // Check-in Date
       checkOutDate, // Check-out Date
-      roomCode, // Use roomCode (matchingRoomNumber)
+      formattedRoomNumber, // Use matchingRoomNumber directly (B321, A101, etc.)
       password || roomInfo.password, // Use password from Firebase if not provided
       "Checked In", // Check-in Status - 현장예약은 즉시 체크인
       new Date().toISOString(), // Check-in Time - 현재 시간
@@ -78,7 +81,7 @@ export async function POST(request: NextRequest) {
       try {
         const smsMessage = formatBookingMessage({
           guestName,
-          roomNumber: roomCode,
+          roomNumber: formattedRoomNumber,
           checkInDate,
           checkOutDate,
           password: password || roomInfo.password,
@@ -111,13 +114,13 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      console.log("[v0] Adding to Firebase PMS Queue with roomCode:", roomCode)
+      console.log("[v0] Adding to Firebase PMS Queue with roomCode:", formattedRoomNumber)
       await addToPMSQueue({
-        roomNumber: roomCode,
+        roomNumber: formattedRoomNumber,
         guestName,
         checkInDate,
       })
-      console.log("[v0] Successfully added to Firebase PMS Queue:", { roomCode, guestName })
+      console.log("[v0] Successfully added to Firebase PMS Queue:", { roomCode: formattedRoomNumber, guestName })
     } catch (firebaseError) {
       console.error("[v0] Failed to add to Firebase PMS Queue:", firebaseError)
       // Continue even if Firebase fails - Google Sheets update is primary
@@ -129,7 +132,7 @@ export async function POST(request: NextRequest) {
       data: {
         reservationId,
         guestName,
-        roomNumber,
+        roomNumber: formattedRoomNumber,
         roomCode,
         checkInDate,
         checkOutDate,
