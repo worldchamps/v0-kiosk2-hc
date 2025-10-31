@@ -15,6 +15,14 @@ export async function GET(request: Request) {
 
     console.log("[v0] Available rooms from Firebase:", availableRooms.length)
 
+    if (availableRooms.length > 0) {
+      console.log("[v0] 🔍 First available room data:")
+      console.log("[v0]   category:", availableRooms[0].category)
+      console.log("[v0]   roomNumber:", availableRooms[0].roomNumber)
+      console.log("[v0]   matchingRoomNumber:", availableRooms[0].matchingRoomNumber)
+      console.log("[v0]   Will be sent as roomCode:", availableRooms[0].matchingRoomNumber)
+    }
+
     if (availableRooms.length === 0) {
       return NextResponse.json({
         availableRooms: [],

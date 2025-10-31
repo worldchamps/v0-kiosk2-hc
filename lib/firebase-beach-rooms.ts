@@ -36,6 +36,15 @@ export async function getBeachRoomStatusFromFirebase(): Promise<BeachRoomData[]>
     const rooms: BeachRoomData[] = Object.values(data)
 
     console.log(`[Firebase] Successfully fetched ${rooms.length} rooms from Firebase`)
+    console.log("[Firebase] 🔍 Sample room data (first 3 rooms):")
+    rooms.slice(0, 3).forEach((room, index) => {
+      console.log(`[Firebase]   Room ${index + 1}:`, {
+        category: room.category,
+        roomNumber: room.roomNumber,
+        matchingRoomNumber: room.matchingRoomNumber,
+        status: room.status,
+      })
+    })
 
     return rooms
   } catch (error) {
@@ -50,12 +59,24 @@ export async function getBeachRoomStatusFromFirebase(): Promise<BeachRoomData[]>
 export async function getRoomInfoByMatchingNumber(matchingRoomNumber: string): Promise<BeachRoomData | null> {
   try {
     const rooms = await getBeachRoomStatusFromFirebase()
+
+    console.log(`[Firebase] 🔍 Searching for room with matchingRoomNumber: "${matchingRoomNumber}"`)
+    console.log(`[Firebase] Total rooms in database: ${rooms.length}`)
+
     const room = rooms.find((r) => r.matchingRoomNumber === matchingRoomNumber)
 
     if (!room) {
-      console.warn(`[Firebase] Room not found: ${matchingRoomNumber}`)
+      console.warn(`[Firebase] ❌ Room not found: ${matchingRoomNumber}`)
+      console.log("[Firebase] Available matchingRoomNumbers:", rooms.map((r) => r.matchingRoomNumber).slice(0, 10))
       return null
     }
+
+    console.log(`[Firebase] ✅ Found room:`, {
+      category: room.category,
+      roomNumber: room.roomNumber,
+      matchingRoomNumber: room.matchingRoomNumber,
+      status: room.status,
+    })
 
     return room
   } catch (error) {

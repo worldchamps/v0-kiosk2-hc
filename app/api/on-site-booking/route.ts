@@ -10,6 +10,13 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { guestName, phoneNumber, roomNumber, roomCode, roomType, price, checkInDate, checkOutDate, password } = body
 
+    console.log("[v0] ========================================")
+    console.log("[v0] 🏨 On-site Booking Request")
+    console.log("[v0] ========================================")
+    console.log("[v0] Request body roomNumber:", roomNumber)
+    console.log("[v0] Request body roomCode:", roomCode)
+    console.log("[v0] Guest Name:", guestName)
+
     console.log("[v0] On-site booking request:", { guestName, phoneNumber, roomNumber, roomCode, roomType })
 
     // Validate required fields
@@ -24,6 +31,14 @@ export async function POST(request: NextRequest) {
       console.log("[v0] Room not found in Firebase:", roomCode)
       return NextResponse.json({ error: "객실을 찾을 수 없습니다." }, { status: 404 })
     }
+
+    console.log("[v0] 📋 Firebase Room Data:")
+    console.log("[v0]   category:", roomInfo.category)
+    console.log("[v0]   roomNumber:", roomInfo.roomNumber)
+    console.log("[v0]   matchingRoomNumber:", roomInfo.matchingRoomNumber)
+    console.log("[v0]   status:", roomInfo.status)
+    console.log("[v0]   password:", roomInfo.password)
+    console.log("[v0]   floor:", roomInfo.floor)
 
     if (roomInfo.status !== "공실") {
       console.log("[v0] Room is no longer available:", roomCode, "Status:", roomInfo.status)
@@ -44,6 +59,9 @@ export async function POST(request: NextRequest) {
     const reservationId = `ONSITE-${Date.now()}`
 
     const formattedRoomNumber = roomInfo.matchingRoomNumber
+    console.log("[v0] 📝 Final room number to be saved:", formattedRoomNumber)
+    console.log("[v0] Expected format: B321, A101, Camp 301, etc.")
+
     console.log("[v0] Using matchingRoomNumber from Firebase:", formattedRoomNumber)
 
     // Prepare reservation data
