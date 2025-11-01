@@ -10,14 +10,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { guestName, phoneNumber, roomNumber, roomCode, roomType, price, checkInDate, checkOutDate, password } = body
 
-    console.log("[v0] ========================================")
-    console.log("[v0] 🏨 On-site Booking Request")
-    console.log("[v0] ========================================")
-    console.log("[v0] Request body roomNumber:", roomNumber)
-    console.log("[v0] Request body roomCode:", roomCode)
-    console.log("[v0] Guest Name:", guestName)
-
     console.log("[v0] On-site booking request:", { guestName, phoneNumber, roomNumber, roomCode, roomType })
+    console.log("[v0] roomCode received from frontend:", roomCode)
 
     // Validate required fields
     if (!guestName || !phoneNumber || !roomNumber || !roomCode || !checkInDate || !checkOutDate) {
@@ -31,14 +25,6 @@ export async function POST(request: NextRequest) {
       console.log("[v0] Room not found in Firebase:", roomCode)
       return NextResponse.json({ error: "객실을 찾을 수 없습니다." }, { status: 404 })
     }
-
-    console.log("[v0] 📋 Firebase Room Data:")
-    console.log("[v0]   category:", roomInfo.category)
-    console.log("[v0]   roomNumber:", roomInfo.roomNumber)
-    console.log("[v0]   matchingRoomNumber:", roomInfo.matchingRoomNumber)
-    console.log("[v0]   status:", roomInfo.status)
-    console.log("[v0]   password:", roomInfo.password)
-    console.log("[v0]   floor:", roomInfo.floor)
 
     if (roomInfo.status !== "공실") {
       console.log("[v0] Room is no longer available:", roomCode, "Status:", roomInfo.status)
@@ -58,11 +44,11 @@ export async function POST(request: NextRequest) {
     // Generate reservation ID
     const reservationId = `ONSITE-${Date.now()}`
 
-    const formattedRoomNumber = roomInfo.matchingRoomNumber
-    console.log("[v0] 📝 Final room number to be saved:", formattedRoomNumber)
-    console.log("[v0] Expected format: B321, A101, Camp 301, etc.")
-
-    console.log("[v0] Using matchingRoomNumber from Firebase:", formattedRoomNumber)
+    console.log("[v0] Room info from Firebase:", {
+      matchingRoomNumber: roomInfo.matchingRoomNumber,
+      roomNumber: roomInfo.roomNumber,
+      roomCodeToUse: roomCode,
+    })
 
     // Prepare reservation data
     const reservationData = [
@@ -75,12 +61,14 @@ export async function POST(request: NextRequest) {
       phoneNumber, // Phone Number
       checkInDate, // Check-in Date
       checkOutDate, // Check-out Date
-      formattedRoomNumber, // Use matchingRoomNumber directly (B321, A101, etc.)
+      roomCode, // Use roomCode (matchingRoomNumber)
       password || roomInfo.password, // Use password from Firebase if not provided
       "Checked In", // Check-in Status - 현장예약은 즉시 체크인
       new Date().toISOString(), // Check-in Time - 현재 시간
       roomInfo.floor, // Floor from Firebase
     ]
+
+    console.log("[v0] Writing to Reservations sheet - Room Number (column J):", roomCode)
 
     console.log("[v0] Adding reservation to Google Sheets...")
     // Append to Reservations sheet
@@ -99,7 +87,7 @@ export async function POST(request: NextRequest) {
       try {
         const smsMessage = formatBookingMessage({
           guestName,
-          roomNumber: formattedRoomNumber,
+          roomNumber: roomCode,
           checkInDate,
           checkOutDate,
           password: password || roomInfo.password,
@@ -132,13 +120,13 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      console.log("[v0] Adding to Firebase PMS Queue with roomCode:", formattedRoomNumber)
+      console.log("[v0] Adding to Firebase PMS Queue with roomCode:", roomCode)
       await addToPMSQueue({
-        roomNumber: formattedRoomNumber,
+        roomNumber: roomCode,
         guestName,
         checkInDate,
       })
-      console.log("[v0] Successfully added to Firebase PMS Queue:", { roomCode: formattedRoomNumber, guestName })
+      console.log("[v0] Successfully added to Firebase PMS Queue:", { roomCode, guestName })
     } catch (firebaseError) {
       console.error("[v0] Failed to add to Firebase PMS Queue:", firebaseError)
       // Continue even if Firebase fails - Google Sheets update is primary
@@ -150,7 +138,7 @@ export async function POST(request: NextRequest) {
       data: {
         reservationId,
         guestName,
-        roomNumber: formattedRoomNumber,
+        roomNumber,
         roomCode,
         checkInDate,
         checkOutDate,

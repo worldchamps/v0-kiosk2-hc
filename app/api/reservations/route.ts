@@ -12,23 +12,14 @@ export async function GET(request: NextRequest) {
     const kioskProperty = searchParams.get("kioskProperty")
     const searchAllProperties = searchParams.get("searchAll") === "true"
 
-    console.log("[v0] /api/reservations GET called")
-    console.log("[v0] Parameters:", {
-      guestName,
-      todayOnly,
-      kioskProperty,
-      searchAllProperties,
-    })
+    console.log("[v0] Reservations API called with kioskProperty:", kioskProperty, "searchAll:", searchAllProperties)
 
     const sheets = createSheetsClient()
     const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID || ""
 
     if (!spreadsheetId) {
-      console.log("[v0] ERROR: Spreadsheet ID not configured")
       return NextResponse.json({ error: "Spreadsheet ID not configured" }, { status: 500 })
     }
-
-    console.log("[v0] Fetching from Google Sheets range: Reservations!A94:N")
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -37,10 +28,7 @@ export async function GET(request: NextRequest) {
 
     const rows = response.data.values
 
-    console.log("[v0] Rows fetched from sheet:", rows?.length || 0)
-
     if (!rows || rows.length === 0) {
-      console.log("[v0] No rows found in sheet")
       return NextResponse.json({
         reservations: [],
         today: getCurrentDateKST(),
@@ -50,8 +38,6 @@ export async function GET(request: NextRequest) {
 
     const reservations = []
     const today = getCurrentDateKST()
-
-    console.log("[v0] Today's date (KST):", today)
 
     for (const row of rows) {
       const rowGuestName = row[SHEET_COLUMNS.GUEST_NAME] || ""
@@ -134,14 +120,13 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    console.log("[v0] Total reservations found after filtering:", reservations.length)
-    console.log("[v0] Returning reservations:", reservations)
+    console.log("[v0] Total reservations found:", reservations.length)
 
     return NextResponse.json({
       reservations,
     })
   } catch (error) {
-    console.error("[v0] ERROR in /api/reservations:", error)
+    console.error("Error fetching reservations:", error)
     return NextResponse.json(
       { error: "Failed to fetch reservations", details: error instanceof Error ? error.message : String(error) },
       { status: 500 },

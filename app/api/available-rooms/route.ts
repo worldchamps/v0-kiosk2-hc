@@ -15,14 +15,6 @@ export async function GET(request: Request) {
 
     console.log("[v0] Available rooms from Firebase:", availableRooms.length)
 
-    if (availableRooms.length > 0) {
-      console.log("[v0] 🔍 First available room data:")
-      console.log("[v0]   category:", availableRooms[0].category)
-      console.log("[v0]   roomNumber:", availableRooms[0].roomNumber)
-      console.log("[v0]   matchingRoomNumber:", availableRooms[0].matchingRoomNumber)
-      console.log("[v0]   Will be sent as roomCode:", availableRooms[0].matchingRoomNumber)
-    }
-
     if (availableRooms.length === 0) {
       return NextResponse.json({
         availableRooms: [],
@@ -43,6 +35,15 @@ export async function GET(request: Request) {
       floor: room.floor,
       roomCode: room.matchingRoomNumber, // Use matchingRoomNumber as roomCode
     }))
+
+    console.log("[v0] Sample room data from Firebase:")
+    if (mappedRooms.length > 0) {
+      console.log("[v0] First room:", {
+        roomNumber: mappedRooms[0].roomNumber,
+        matchingRoomNumber: availableRooms[0].matchingRoomNumber,
+        roomCode: mappedRooms[0].roomCode,
+      })
+    }
 
     // Group by room type
     const roomsByType = mappedRooms.reduce(
