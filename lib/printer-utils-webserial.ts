@@ -160,7 +160,7 @@ export async function connectPrinter(): Promise<boolean> {
         dataBits: 8,
         stopBits: 1,
         parity: "none",
-        flowControl: "hardware",
+        flowControl: "none", // Bixolon은 hardware flow control 미지원
       })
       logDebug("✅ 포트가 성공적으로 열렸습니다.")
     } catch (err) {
@@ -234,7 +234,7 @@ export async function autoConnectPrinter(): Promise<boolean> {
       dataBits: 8,
       stopBits: 1,
       parity: "none",
-      flowControl: "hardware",
+      flowControl: "none",
     })
 
     // Set up the output stream
@@ -295,6 +295,9 @@ export async function printText(text: string): Promise<boolean> {
     const encoded = new TextEncoder().encode(text)
     logCommand("TEXT", encoded)
     await printerWriter.write(encoded)
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    logDebug(`✅ ${encoded.length} 바이트 전송 완료`)
 
     return true
   } catch (error) {
