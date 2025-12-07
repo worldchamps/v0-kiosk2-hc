@@ -80,10 +80,15 @@ export function setSimplePrintMode(simple: boolean): void {
  * Simple Mode 상태 확인 함수
  */
 export function getSimplePrintMode(): boolean {
-  // 1. 환경 변수 확인 (최우선)
-  if (typeof process !== "undefined" && process.env && process.env.PRINTER_SIMPLE_MODE === "true") {
-    logDebug("환경 변수에서 Simple Mode 활성화됨")
-    return true
+  if (typeof process !== "undefined" && process.env) {
+    if (process.env.NEXT_PUBLIC_FORCE_SIMPLE_MODE === "true") {
+      logDebug("NEXT_PUBLIC_FORCE_SIMPLE_MODE 환경 변수로 Simple Mode 강제 활성화")
+      return true
+    }
+    if (process.env.PRINTER_SIMPLE_MODE === "true") {
+      logDebug("PRINTER_SIMPLE_MODE 환경 변수로 Simple Mode 활성화")
+      return true
+    }
   }
 
   // 2. 저장된 설정 확인
@@ -743,6 +748,7 @@ export function getPrinterDiagnostics(): any {
     simpleMode: getSimplePrintMode(),
     environmentVariables: {
       PRINTER_SIMPLE_MODE: process.env.PRINTER_SIMPLE_MODE || "not set",
+      NEXT_PUBLIC_FORCE_SIMPLE_MODE: process.env.NEXT_PUBLIC_FORCE_SIMPLE_MODE || "not set",
     },
     commandLog: commandLog.slice(-10),
   }
