@@ -8,7 +8,7 @@ let printerPort: SerialPort | null = null
 let printerWriter: WritableStreamDefaultWriter | null = null
 
 // Print mode setting
-let simplePrintMode = false
+let simplePrintMode = true
 
 // Debug logging
 const ENABLE_DEBUG_LOGGING = true

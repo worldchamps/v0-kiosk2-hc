@@ -5,13 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Check, Printer, Eye, EyeOff } from "lucide-react"
 import { useEffect, useState, useRef } from "react"
 import DirectPrinter from "./direct-printer"
-import {
-  printReceipt,
-  getSimplePrintMode,
-  getPrinterModel,
-  isPrinterConnected,
-  autoConnectPrinter,
-} from "@/lib/printer-utils-unified"
+import { printReceipt, getPrinterModel, isPrinterConnected, autoConnectPrinter } from "@/lib/printer-utils-unified"
 import Image from "next/image"
 import { getBuildingZoomImagePath } from "@/lib/location-utils"
 import type { KioskLocation } from "@/lib/location-utils"
@@ -106,7 +100,7 @@ export default function CheckInComplete({
     setAudioPlayed(false)
 
     const forceSimple = process.env.NEXT_PUBLIC_FORCE_SIMPLE_MODE === "true"
-    const currentSimpleMode = forceSimple || getSimplePrintMode()
+    const currentSimpleMode = forceSimple || true // Changed to true for default simple mode
     setSimpleMode(currentSimpleMode)
     setPrinterModel(getPrinterModel())
 
