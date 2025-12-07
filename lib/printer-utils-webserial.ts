@@ -126,43 +126,66 @@ export async function connectPrinter(): Promise<boolean> {
     // If already connected, reuse the connection
     if (printerPort && printerWriter) {
       logDebug("✅ 프린터가 이미 연결되어 있습니다.")
-      return true
+      if (printerPort.readable && printerPort.writable) {
+        logDebug("✅ 포트가 열려 있고 쓰기 가능한 상태입니다.")
+        return true
+      } else {
+        logDebug("⚠️ 포트 상태가 비정상입니다. 재연결을 시도합니다.")
+        printerPort = null
+        printerWriter = null
+      }
     }
 
     // 사용자에게 포트 선택 요청
     try {
       logDebug("👤 사용자에게 포트 선택 요청 중...")
       printerPort = await (navigator as any).serial.requestPort()
-      logDebug("✅ 사용자가 포트를 선택했습니다.")
+      const portInfo = printerPort.getInfo()
+      logDebug(`✅ 사용자가 포트를 선택했습니다: USB Vendor=${portInfo.usbVendorId}, Product=${portInfo.usbProductId}`)
     } catch (err) {
-      logDebug("❌ 사용자가 포트 선택을 취소했습니다.")
+      logDebug(`❌ 사용자가 포트 선택을 취소했습니다: ${err}`)
       return false
     }
 
     // Open the port
     logDebug("🔓 포트 열기 시도 중... (115200 bps)")
-    await printerPort.open({
-      baudRate: 115200,
-      dataBits: 8,
-      stopBits: 1,
-      parity: "none",
-      flowControl: "hardware",
-    })
-    logDebug("✅ 포트가 성공적으로 열렸습니다.")
+    try {
+      await printerPort.open({
+        baudRate: 115200,
+        dataBits: 8,
+        stopBits: 1,
+        parity: "none",
+        flowControl: "hardware",
+      })
+      logDebug("✅ 포트가 성공적으로 열렸습니다.")
+    } catch (err) {
+      logDebug(`❌ 포트 열기 실패: ${err}`)
+      return false
+    }
 
     // Set up the output stream
+    if (!printerPort.writable) {
+      logDebug("❌ 포트에 쓰기 가능한 스트림이 없습니다!")
+      return false
+    }
+
     const writableStream = printerPort.writable
     printerWriter = writableStream.getWriter()
     logDebug("✅ Writer 스트림을 설정했습니다.")
 
     // Initialize printer
     logDebug("🔧 프린터 초기화 중...")
-    await initializePrinter()
+    const initSuccess = await initializePrinter()
+    if (!initSuccess) {
+      logDebug("❌ 프린터 초기화에 실패했습니다.")
+      return false
+    }
 
     logDebug("🎉 프린터가 성공적으로 연결되었습니다!")
     return true
   } catch (error) {
-    logDebug("❌ 프린터 연결 중 오류 발생: " + error)
+    logDebug(`❌ 프린터 연결 중 오류 발생: ${error}`)
+    console.error("[PRINTER ERROR]", error)
     return false
   }
 }
@@ -259,13 +282,19 @@ export async function printText(text: string): Promise<boolean> {
       return false
     }
 
+    if (!printerPort || !printerPort.writable) {
+      logDebug("❌ 프린터 포트가 더 이상 쓰기 가능하지 않습니다!")
+      return false
+    }
+
     const encoded = new TextEncoder().encode(text)
     logCommand("TEXT", encoded)
     await printerWriter.write(encoded)
 
     return true
   } catch (error) {
-    logDebug("❌ 텍스트 인쇄 중 오류 발생: " + error)
+    logDebug(`❌ 텍스트 인쇄 중 오류 발생: ${error}`)
+    console.error("[PRINTER WRITE ERROR]", error)
     return false
   }
 }
@@ -314,13 +343,23 @@ function formatDateForReceipt(dateString: string): string {
  */
 export async function printReceipt(receiptData: any): Promise<boolean> {
   try {
-    if (!printerWriter) {
-      logDebug("❌ 프린터가 연결되어 있지 않습니다.")
+    if (!printerWriter || !printerPort) {
+      logDebug("❌ 프린터가 연결되어 있지 않습니다. 자동 연결을 시도합니다...")
+      const connected = await autoConnectPrinter()
+      if (!connected) {
+        logDebug("❌ 프린터 자동 연결에 실패했습니다.")
+        return false
+      }
+    }
+
+    if (!printerPort?.writable) {
+      logDebug("❌ 프린터 포트가 쓰기 불가능 상태입니다!")
       return false
     }
 
     const useSimpleMode = getSimplePrintMode()
     logDebug(`📄 영수증 인쇄 시작 (${useSimpleMode ? "Simple Mode" : "Rich Mode"})`)
+    logDebug(`🔌 포트 상태: readable=${!!printerPort.readable}, writable=${!!printerPort.writable}`)
 
     if (useSimpleMode) {
       return printSimpleReceipt(receiptData)
@@ -328,7 +367,8 @@ export async function printReceipt(receiptData: any): Promise<boolean> {
       return printFormattedReceipt(receiptData)
     }
   } catch (error) {
-    logDebug("❌ 영수증 인쇄 중 오류 발생: " + error)
+    logDebug(`❌ 영수증 인쇄 중 오류 발생: ${error}`)
+    console.error("[PRINTER RECEIPT ERROR]", error)
     return false
   }
 }
