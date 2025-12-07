@@ -290,4 +290,4 @@ Firebase Console → Realtime Database → `print_queue/property3` 확인
 - [ ] 프린트 상태 실시간 모니터링 대시보드
 \`\`\`
 
-```json file="" isHidden
+\`\`\`json file="" isHidden
