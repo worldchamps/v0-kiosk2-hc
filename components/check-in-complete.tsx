@@ -105,8 +105,13 @@ export default function CheckInComplete({
     setAutoPrintAttempted(false)
     setAudioPlayed(false)
 
-    setSimpleMode(getSimplePrintMode())
+    const forceSimple = process.env.NEXT_PUBLIC_FORCE_SIMPLE_MODE === "true"
+    const currentSimpleMode = forceSimple || getSimplePrintMode()
+    setSimpleMode(currentSimpleMode)
     setPrinterModel(getPrinterModel())
+
+    logDebug(`Force simple mode from env: ${forceSimple}`)
+    logDebug(`Final simple mode setting: ${currentSimpleMode}`)
 
     const buildingType = getBuildingType()
     if (buildingType) {
@@ -413,6 +418,7 @@ export default function CheckInComplete({
                 <p>Building Type: {getBuildingType()}</p>
                 <p>Audio Played: {audioPlayed ? "Yes" : "No"}</p>
                 <p>Popup Mode: {isPopupMode ? "Yes" : "No"}</p>
+                <p>Force Simple Mode (Env): {process.env.NEXT_PUBLIC_FORCE_SIMPLE_MODE === "true" ? "Yes" : "No"}</p>
                 {countdown !== null && <p>Countdown: {countdown}s</p>}
                 <details>
                   <summary>Debug Logs</summary>
