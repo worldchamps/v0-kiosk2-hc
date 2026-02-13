@@ -1,9 +1,9 @@
+/* Do Hyeon 폰트 추가 */
+@import url("https://fonts.googleapis.com/css2?family=Do+Hyeon&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-/* Do Hyeon 폰트 추가 */
-@import url("https://fonts.googleapis.com/css2?family=Do+Hyeon&display=swap");
 
 :root {
   --foreground-rgb: 0, 0, 0;
