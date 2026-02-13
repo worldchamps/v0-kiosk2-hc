@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "Reservations!A94:N",
+      range: "Reservations!A2:N",
     })
 
     const rows = response.data.values
