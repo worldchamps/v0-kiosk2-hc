@@ -14,17 +14,31 @@ export async function GET(request: NextRequest) {
 
     console.log("[v0] Reservations API called with kioskProperty:", kioskProperty, "searchAll:", searchAllProperties)
 
-    const sheets = createSheetsClient()
     const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID || ""
 
     if (!spreadsheetId) {
+      console.error("[v0] GOOGLE_SHEETS_SPREADSHEET_ID is not set")
       return NextResponse.json({ error: "Spreadsheet ID not configured" }, { status: 500 })
     }
 
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: "Reservations!A2:N",
-    })
+    console.log("[v0] Creating sheets client...")
+    const sheets = createSheetsClient()
+
+    console.log("[v0] Fetching from Reservations!A2:N...")
+    let response
+    try {
+      response = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: "Reservations!A2:N",
+      })
+    } catch (sheetsError) {
+      console.error("[v0] Google Sheets API call failed:", sheetsError instanceof Error ? sheetsError.message : String(sheetsError))
+      return NextResponse.json(
+        { error: "Google Sheets API failed", details: sheetsError instanceof Error ? sheetsError.message : String(sheetsError) },
+        { status: 500 },
+      )
+    }
+    console.log("[v0] Sheets API call succeeded")
 
     const rows = response.data.values
 
