@@ -131,7 +131,8 @@ export async function GET(request: NextRequest) {
       reservations,
     })
   } catch (error) {
-    console.error("Error fetching reservations:", error)
+    console.error("[v0] Error fetching reservations:", error instanceof Error ? error.message : String(error))
+    console.error("[v0] Error stack:", error instanceof Error ? error.stack : "no stack")
     return NextResponse.json(
       { error: "Failed to fetch reservations", details: error instanceof Error ? error.message : String(error) },
       { status: 500 },
