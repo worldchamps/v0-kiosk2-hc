@@ -28,7 +28,11 @@ export async function GET(request: NextRequest) {
 
     const rows = response.data.values
 
+    console.log("[v0] Sheets API response - rows count:", rows?.length || 0)
+    console.log("[v0] First 3 rows sample:", JSON.stringify(rows?.slice(0, 3)))
+
     if (!rows || rows.length === 0) {
+      console.log("[v0] No rows returned from Reservations!A2:N")
       return NextResponse.json({
         reservations: [],
         today: getCurrentDateKST(),
@@ -38,6 +42,7 @@ export async function GET(request: NextRequest) {
 
     const reservations = []
     const today = getCurrentDateKST()
+    console.log("[v0] Today (KST):", today, "Guest name filter:", guestName, "todayOnly:", todayOnly)
 
     for (const row of rows) {
       const rowGuestName = row[SHEET_COLUMNS.GUEST_NAME] || ""
