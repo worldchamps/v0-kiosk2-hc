@@ -194,7 +194,7 @@ export function getKioskPropertyId(): PropertyId {
     if (propertyFromSubdomain) {
       // 감지된 Property를 캐시
       if (!(window as any).__KIOSK_PROPERTY_ID__) {
-        ;(window as any).__KIOSK_PROPERTY_ID__ = propertyFromSubdomain
+        ; (window as any).__KIOSK_PROPERTY_ID__ = propertyFromSubdomain
         console.log(`[v0] Property detected from subdomain (${window.location.hostname}): ${propertyFromSubdomain}`)
       }
       return propertyFromSubdomain

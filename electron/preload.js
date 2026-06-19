@@ -7,20 +7,38 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getOverlayMode: () => ipcRenderer.invoke("get-overlay-mode"),
 
   // 지폐 인식기
+  getHardwareStatus: () => ipcRenderer.invoke("get-hardware-status"),
   sendToBillAcceptor: (command) => ipcRenderer.invoke("send-to-bill-acceptor", command),
 
-  onBillAcceptorData: (callback) => ipcRenderer.on("bill-acceptor-data", (event, data) => callback(data)),
+  // 프린터 (Bixolon)
+  printToBixolon: (text) => ipcRenderer.invoke("print-to-bixolon", text),
+  cutBixolonPaper: () => ipcRenderer.invoke("cut-bixolon-paper"),
+  sendRawToBixolon: (data) => ipcRenderer.invoke("send-raw-to-bixolon", data),
 
-  onBillAcceptorStatus: (callback) => ipcRenderer.on("bill-acceptor-status", (event, status) => callback(status)),
+  onBillAcceptorData: (callback) => {
+    ipcRenderer.removeAllListeners("bill-acceptor-data")
+    ipcRenderer.on("bill-acceptor-data", (event, data) => callback(data))
+  },
+
+  onBillAcceptorStatus: (callback) => {
+    ipcRenderer.removeAllListeners("bill-acceptor-status")
+    ipcRenderer.on("bill-acceptor-status", (event, status) => callback(status))
+  },
 
   reconnectBillAcceptor: () => ipcRenderer.invoke("reconnect-bill-acceptor"),
 
   // 지폐 방출기
   sendToBillDispenser: (command) => ipcRenderer.invoke("send-to-bill-dispenser", command),
 
-  onBillDispenserData: (callback) => ipcRenderer.on("bill-dispenser-data", (event, data) => callback(data)),
+  onBillDispenserData: (callback) => {
+    ipcRenderer.removeAllListeners("bill-dispenser-data")
+    ipcRenderer.on("bill-dispenser-data", (event, data) => callback(data))
+  },
 
-  onBillDispenserStatus: (callback) => ipcRenderer.on("bill-dispenser-status", (event, status) => callback(status)),
+  onBillDispenserStatus: (callback) => {
+    ipcRenderer.removeAllListeners("bill-dispenser-status")
+    ipcRenderer.on("bill-dispenser-status", (event, status) => callback(status))
+  },
 
   reconnectBillDispenser: () => ipcRenderer.invoke("reconnect-bill-dispenser"),
 

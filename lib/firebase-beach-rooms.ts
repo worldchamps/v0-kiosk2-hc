@@ -125,14 +125,30 @@ export async function getAvailableRooms(location?: string): Promise<BeachRoomDat
     let filteredRooms = allRooms.filter((room) => room.status === "공실")
 
     // Location 필터링
+    // Location 필터링
     if (location) {
       const upperLocation = location.toUpperCase()
 
       if (upperLocation === "CAMP") {
-        filteredRooms = filteredRooms.filter((room) => room.category === "Camp")
-      } else if (["A", "B", "D"].includes(upperLocation)) {
-        // Property3: Beach A, Beach B
-        filteredRooms = filteredRooms.filter((room) => room.category === "Beach A" || room.category === "Beach B")
+        filteredRooms = filteredRooms.filter((room) => {
+          const cat = room.category.toUpperCase().trim()
+          return cat === "CAMP" || cat === "THE CAMP" || cat === "더 캠프스테이" || cat === "캠프"
+        })
+      } else if (["A", "B"].includes(upperLocation)) {
+        filteredRooms = filteredRooms.filter((room) => {
+          const cat = room.category.toUpperCase().trim()
+          return cat === "BEACH A" || cat === "BEACH B" || cat === "A동" || cat === "B동"
+        })
+      } else if (["C", "D"].includes(upperLocation)) {
+        filteredRooms = filteredRooms.filter((room) => {
+          const cat = room.category.toUpperCase().trim()
+          return cat === "BEACH C" || cat === "BEACH D" || cat === "C동" || cat === "D동"
+        })
+      } else if (upperLocation === "KARIV") {
+        filteredRooms = filteredRooms.filter((room) => {
+          const cat = room.category.toUpperCase().trim()
+          return cat.includes("KARIV") || cat.includes("카리브")
+        })
       }
     }
 

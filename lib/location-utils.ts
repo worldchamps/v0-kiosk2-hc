@@ -1,5 +1,7 @@
 // 키오스크 위치 타입 정의
-export type KioskLocation = "A" | "B" | "CAMP" | "D" | "KARIV"
+import { getKioskPropertyId } from "@/lib/property-utils"
+
+export type KioskLocation = "A" | "B" | "C" | "CAMP" | "D" | "KARIV"
 
 // 로컬 스토리지에 키오스크 위치 저장
 export function saveKioskLocation(location: KioskLocation): void {
@@ -10,10 +12,46 @@ export function saveKioskLocation(location: KioskLocation): void {
 
 // 로컬 스토리지에서 키오스크 위치 불러오기
 export function getKioskLocation(): KioskLocation {
+  const propertyId = getKioskPropertyId()
+
+  // Property 4 is exclusively CAMP
+  if (propertyId === "property4") {
+    return "CAMP"
+  }
+
+  // Property 2 is exclusively Kariv
+  if (propertyId === "property2") {
+    return "KARIV"
+  }
+
   if (typeof window !== "undefined") {
     const savedLocation = localStorage.getItem("kioskLocation") as KioskLocation
+
+    // Property 3 allows A or B
+    if (propertyId === "property3") {
+      if (savedLocation === "A" || savedLocation === "B") {
+        return savedLocation
+      }
+      return "A"
+    }
+
+    // Property 1
+    if (propertyId === "property1") {
+      if (savedLocation === "C" || savedLocation === "D") {
+        return savedLocation
+      }
+      return "C"
+    }
+
     return savedLocation || "A" // 기본값은 A동
   }
+
+  // Server side fallback
+  if (propertyId === "property3") return "A"
+  if (propertyId === "property1") return "C"
+  if (propertyId === "property4") return "CAMP"
+  if (propertyId === "property2") return "KARIV"
+
   return "A"
 }
 

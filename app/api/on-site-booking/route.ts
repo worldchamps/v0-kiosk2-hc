@@ -82,6 +82,7 @@ export async function POST(request: NextRequest) {
     })
     console.log("[v0] Reservation added to Google Sheets")
 
+    /* SMS 발송 비활성화 (사용자 요청)
     if (phoneNumber) {
       console.log("[v0] 📱 Sending SMS notification to:", phoneNumber)
       try {
@@ -108,6 +109,7 @@ export async function POST(request: NextRequest) {
         // Continue even if SMS fails - booking is already complete
       }
     }
+    */
 
     console.log("[v0] Updating room status to '사용 중' in Firebase...")
     const updateSuccess = await updateRoomStatusInFirebase(roomCode, "사용 중")

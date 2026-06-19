@@ -83,11 +83,18 @@ export async function addToPMSQueue(data: {
   const ref = database.ref(`pms_queue/${property}`)
   console.log("[Firebase] Firebase path:", `pms_queue/${property}`)
 
+  // Generate a key without writing
   const newRef = ref.push()
-  console.log("[Firebase] Generated queue ID:", newRef.key)
+  const newKey = newRef.key
+
+  if (!newKey) {
+    throw new Error("Failed to generate Firebase key")
+  }
+
+  console.log("[Firebase] Generated queue ID:", newKey)
 
   const queueData = {
-    id: newRef.key,
+    id: newKey,
     action: "checkin",
     roomNumber: data.roomNumber,
     guestName: data.guestName,
@@ -95,15 +102,20 @@ export async function addToPMSQueue(data: {
     status: "pending",
     property: property,
     createdAt: new Date().toISOString(),
-    completedAt: null,
+    // completedAt is omitted effectively by not including it or setting it if we needed.
+    // Firebase doesn't support 'undefined' well, and 'null' deletes the key.
+    // We just omit it for now.
   }
 
-  console.log("[Firebase] Queue data to be saved:", queueData)
+  console.log("[Firebase] Queue data to be saved:", JSON.stringify(queueData, null, 2))
 
-  await newRef.set(queueData)
+  // Use update to atomically add the child
+  await ref.update({
+    [newKey]: queueData
+  })
 
   console.log(`[Firebase] ✅ Successfully added to ${property} queue:`, data.roomNumber)
-  return newRef.key
+  return newKey
 }
 
 // PMS Queue 항목을 완료 처리

@@ -5,10 +5,11 @@ const path = require("path")
 const { SerialPort } = require("serialport")
 const overlayButtonModule = require("./overlay-button")
 const bixolonPrinter = require("./bixolon-printer")
+const hardwareBridge = require("./hardware-server-bridge")
 
 let mainWindow
-let billAcceptorPort = null
-let billDispenserPort = null
+let billAcceptorPort = null // Now handled by hardware server bridge
+let billDispenserPort = null // Now handled by hardware server bridge
 let printerPort = null
 
 let printerConnecting = false
@@ -23,21 +24,7 @@ if (isDev) {
   console.log(`[v0] Starting in ${OVERLAY_MODE ? "OVERLAY" : "FULLSCREEN"} mode for ${KIOSK_PROPERTY_ID}`)
 }
 
-const BILL_ACCEPTOR_CONFIG = {
-  path: process.env.BILL_ACCEPTOR_PATH || "COM4", // Windows 기본값, 실제 포트로 변경 필요
-  baudRate: Number.parseInt(process.env.BILL_ACCEPTOR_BAUD_RATE) || 9600,
-  dataBits: Number.parseInt(process.env.BILL_ACCEPTOR_DATA_BITS) || 8,
-  stopBits: Number.parseInt(process.env.BILL_ACCEPTOR_STOP_BITS) || 1,
-  parity: process.env.BILL_ACCEPTOR_PARITY || "none",
-}
-
-const BILL_DISPENSER_CONFIG = {
-  path: process.env.BILL_DISPENSER_PATH || "COM5", // Windows 기본값, 실제 포트로 변경 필요
-  baudRate: Number.parseInt(process.env.BILL_DISPENSER_BAUD_RATE) || 9600,
-  dataBits: Number.parseInt(process.env.BILL_DISPENSER_DATA_BITS) || 8,
-  stopBits: Number.parseInt(process.env.BILL_DISPENSER_STOP_BITS) || 1,
-  parity: process.env.BILL_DISPENSER_PARITY || "none",
-}
+// CONFIG for hardware devices now managed by hardware server
 
 const PRINTER_CONFIG = {
   path: process.env.PRINTER_PATH || "COM2",
@@ -79,13 +66,13 @@ function createWindow() {
           ...details.responseHeaders,
           "Content-Security-Policy": [
             "default-src 'self'; " +
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; " +
-              "style-src 'self' 'unsafe-inline'; " +
-              "img-src 'self' data: https: blob:; " +
-              "font-src 'self' data:; " +
-              "connect-src 'self' http://localhost:* https://*; " +
-              "media-src 'self' https://jdpd8txarrh2yidl.public.blob.vercel-storage.com https://*.blob.vercel-storage.com blob: data:; " +
-              "frame-src 'self';",
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://*.firebasedatabase.app https://*.firebaseio.com; " +
+            "style-src 'self' 'unsafe-inline'; " +
+            "img-src 'self' data: https: blob:; " +
+            "font-src 'self' data:; " +
+            "connect-src 'self' http://localhost:* https://* wss://*; " +
+            "media-src 'self' https://jdpd8txarrh2yidl.public.blob.vercel-storage.com https://*.blob.vercel-storage.com blob: data:; " +
+            "frame-src 'self';",
           ],
         },
       })
@@ -106,15 +93,14 @@ function createWindow() {
     })
 
     mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription) => {
-      if (isDev) {
-        console.error("[v0] Failed to load:", errorCode, errorDescription)
-        console.log("[v0] Make sure Next.js server is running on http://localhost:3000")
-      }
-      if (!isDev) {
-        setTimeout(() => {
+      console.error("[v0] Failed to load:", errorCode, errorDescription)
+      console.log("[v0] Retrying in 3 seconds... (Make sure Next.js server is running on http://localhost:3000)")
+      // 항상 재시도 - NODE_ENV 설정과 관계없이 서버 준비될 때까지 반복
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.loadURL(startUrl)
-        }, 3000)
-      }
+        }
+      }, 3000)
     })
 
     mainWindow.webContents.on("did-finish-load", () => {
@@ -126,9 +112,48 @@ function createWindow() {
     })
 
     setTimeout(() => {
-      connectBillAcceptor()
-      connectBillDispenser()
-      connectPrinter()
+      // Hardware Server Bridge initialization
+      hardwareBridge.onStatus((status) => {
+        if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send("bill-acceptor-status", { connected: status.connected })
+          mainWindow.webContents.send("bill-dispenser-status", { connected: status.connected })
+        }
+      })
+
+      hardwareBridge.onMessage((msg) => {
+        if (!mainWindow || !mainWindow.webContents) return
+
+        if (msg.type === "acceptor_event") {
+          // Reconstruct Event packet: $ E S [event] [check]
+          const event = msg.event
+          const check = (0x45 + 0x53 + event) & 0xFF
+          mainWindow.webContents.send("bill-acceptor-data", { data: [0x24, 0x45, 0x53, event, check] })
+        } else if (msg.type === "acceptor_bill_data") {
+          // Reconstruct Bill Data packet: $ g b [value] [check]
+          const value = msg.value
+          const check = (0x67 + 0x62 + value) & 0xFF
+          mainWindow.webContents.send("bill-acceptor-data", { data: [0x24, 0x67, 0x62, value, check] })
+        } else if (msg.type === "dispenser_data") {
+          mainWindow.webContents.send("bill-dispenser-data", { data: msg.data })
+        } else if (msg.type === "acceptor_raw") {
+          mainWindow.webContents.send("bill-acceptor-data", { data: msg.packet })
+        } else if (msg.type === "acceptor_ok") {
+          // Reconstruct OK packet: $ O K [data] [check]
+          // $ = 0x24, O = 0x4F, K = 0x4B
+          const data = msg.data
+          const check = (0x4F + 0x4B + data) & 0xFF
+          mainWindow.webContents.send("bill-acceptor-data", { data: [0x24, 0x4F, 0x4B, data, check] })
+        } else if (msg.type === "acceptor_ng") {
+          // Reconstruct NG packet: $ N G [data] [check]
+          // $ = 0x24, N = 0x4E, G = 0x47
+          const data = msg.data
+          const check = (0x4E + 0x47 + data) & 0xFF
+          mainWindow.webContents.send("bill-acceptor-data", { data: [0x24, 0x4E, 0x47, data, check] })
+        }
+      })
+
+      hardwareBridge.connect()
+      // connectPrinter() // Disabled: Printer is now managed by hardware_server
     }, 2000)
   } else {
     if (isDev) {
@@ -182,223 +207,7 @@ async function detectPrinterPort() {
   }
 }
 
-async function connectBillAcceptor() {
-  if (billAcceptorConnecting) {
-    if (isDev) {
-      console.log("[v0] 지폐 인식기 연결 시도 중... 대기")
-    }
-    return
-  }
-
-  if (billAcceptorPort && billAcceptorPort.isOpen) {
-    if (isDev) {
-      console.log("[v0] 지폐 인식기 이미 연결됨")
-    }
-    return
-  }
-
-  billAcceptorConnecting = true
-
-  try {
-    if (billAcceptorPort && billAcceptorPort.isOpen) {
-      await new Promise((resolve) => {
-        billAcceptorPort.close((err) => {
-          if (err && isDev) {
-            console.error("[v0] 지폐 인식기 포트 닫기 실패:", err.message)
-          }
-          resolve()
-        })
-      })
-      await new Promise((resolve) => setTimeout(resolve, 500))
-    }
-
-    billAcceptorPort = new SerialPort({
-      path: BILL_ACCEPTOR_CONFIG.path,
-      baudRate: BILL_ACCEPTOR_CONFIG.baudRate,
-      dataBits: BILL_ACCEPTOR_CONFIG.dataBits,
-      stopBits: BILL_ACCEPTOR_CONFIG.stopBits,
-      parity: BILL_ACCEPTOR_CONFIG.parity,
-      autoOpen: false,
-    })
-
-    billAcceptorPort.open((err) => {
-      billAcceptorConnecting = false
-
-      if (err) {
-        if (isDev) {
-          console.error("[v0] 지폐 인식기 연결 실패:", err.message)
-        }
-        if (mainWindow && mainWindow.webContents) {
-          mainWindow.webContents.send("bill-acceptor-status", {
-            connected: false,
-            error: err.message,
-          })
-        }
-        setTimeout(connectBillAcceptor, 10000)
-        return
-      }
-
-      if (isDev) {
-        console.log("[v0] 지폐 인식기 연결 성공")
-      }
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("bill-acceptor-status", {
-          connected: true,
-        })
-      }
-    })
-
-    billAcceptorPort.on("data", (data) => {
-      if (isDev) {
-        console.log("[v0] 지폐 인식기 데이터:", data)
-      }
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("bill-acceptor-data", {
-          data: Array.from(data),
-        })
-      }
-    })
-
-    billAcceptorPort.on("error", (err) => {
-      if (isDev) {
-        console.error("[v0] 지폐 인식기 에러:", err)
-      }
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("bill-acceptor-status", {
-          connected: false,
-          error: err.message,
-        })
-      }
-    })
-
-    billAcceptorPort.on("close", () => {
-      if (isDev) {
-        console.log("[v0] 지폐 인식기 연결 끊김")
-      }
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("bill-acceptor-status", {
-          connected: false,
-        })
-      }
-      setTimeout(connectBillAcceptor, 5000)
-    })
-  } catch (error) {
-    billAcceptorConnecting = false
-    if (isDev) {
-      console.error("[v0] 지폐 인식기 초기화 실패:", error)
-    }
-    setTimeout(connectBillAcceptor, 10000)
-  }
-}
-
-async function connectBillDispenser() {
-  if (billDispenserConnecting) {
-    if (isDev) {
-      console.log("[v0] 지폐 방출기 연결 시도 중... 대기")
-    }
-    return
-  }
-
-  if (billDispenserPort && billDispenserPort.isOpen) {
-    if (isDev) {
-      console.log("[v0] 지폐 방출기 이미 연결됨")
-    }
-    return
-  }
-
-  billDispenserConnecting = true
-
-  try {
-    if (billDispenserPort && billDispenserPort.isOpen) {
-      await new Promise((resolve) => {
-        billDispenserPort.close((err) => {
-          if (err && isDev) {
-            console.error("[v0] 지폐 방출기 포트 닫기 실패:", err.message)
-          }
-          resolve()
-        })
-      })
-      await new Promise((resolve) => setTimeout(resolve, 500))
-    }
-
-    billDispenserPort = new SerialPort({
-      path: BILL_DISPENSER_CONFIG.path,
-      baudRate: BILL_DISPENSER_CONFIG.baudRate,
-      dataBits: BILL_DISPENSER_CONFIG.dataBits,
-      stopBits: BILL_DISPENSER_CONFIG.stopBits,
-      parity: BILL_DISPENSER_CONFIG.parity,
-      autoOpen: false,
-    })
-
-    billDispenserPort.open((err) => {
-      billDispenserConnecting = false
-
-      if (err) {
-        if (isDev) {
-          console.error("[v0] 지폐 방출기 연결 실패:", err.message)
-        }
-        if (mainWindow && mainWindow.webContents) {
-          mainWindow.webContents.send("bill-dispenser-status", {
-            connected: false,
-            error: err.message,
-          })
-        }
-        setTimeout(connectBillDispenser, 10000)
-        return
-      }
-
-      if (isDev) {
-        console.log("[v0] 지폐 방출기 연결 성공")
-      }
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("bill-dispenser-status", {
-          connected: true,
-        })
-      }
-    })
-
-    billDispenserPort.on("data", (data) => {
-      if (isDev) {
-        console.log("[v0] 지폐 방출기 데이터:", data)
-      }
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("bill-dispenser-data", {
-          data: Array.from(data),
-        })
-      }
-    })
-
-    billDispenserPort.on("error", (err) => {
-      if (isDev) {
-        console.error("[v0] 지폐 방출기 에러:", err)
-      }
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("bill-dispenser-status", {
-          connected: false,
-          error: err.message,
-        })
-      }
-    })
-
-    billDispenserPort.on("close", () => {
-      if (isDev) {
-        console.log("[v0] 지폐 방출기 연결 끊김")
-      }
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("bill-dispenser-status", {
-          connected: false,
-        })
-      }
-      setTimeout(connectBillDispenser, 5000)
-    })
-  } catch (error) {
-    billDispenserConnecting = false
-    if (isDev) {
-      console.error("[v0] 지폐 방출기 초기화 실패:", error)
-    }
-    setTimeout(connectBillDispenser, 10000)
-  }
-}
+// Printer connection logic remains
 
 async function connectPrinter() {
   if (printerConnecting) {
@@ -573,41 +382,13 @@ async function connectPrinter() {
 }
 
 ipcMain.handle("send-to-bill-acceptor", async (event, command) => {
-  if (!billAcceptorPort || !billAcceptorPort.isOpen) {
-    return { success: false, error: "지폐 인식기가 연결되지 않았습니다" }
-  }
-
-  try {
-    const buffer = Buffer.from(command)
-    await new Promise((resolve, reject) => {
-      billAcceptorPort.write(buffer, (err) => {
-        if (err) reject(err)
-        else resolve()
-      })
-    })
-    return { success: true }
-  } catch (error) {
-    return { success: false, error: error.message }
-  }
+  const success = hardwareBridge.send({ type: "raw_acceptor", data: Array.from(command) })
+  return { success }
 })
 
 ipcMain.handle("send-to-bill-dispenser", async (event, command) => {
-  if (!billDispenserPort || !billDispenserPort.isOpen) {
-    return { success: false, error: "지폐 방출기가 연결되지 않았습니다" }
-  }
-
-  try {
-    const buffer = Buffer.from(command)
-    await new Promise((resolve, reject) => {
-      billDispenserPort.write(buffer, (err) => {
-        if (err) reject(err)
-        else resolve()
-      })
-    })
-    return { success: true }
-  } catch (error) {
-    return { success: false, error: error.message }
-  }
+  const success = hardwareBridge.send({ type: "raw_dispenser", data: Array.from(command) })
+  return { success }
 })
 
 ipcMain.handle("list-serial-ports", async () => {
@@ -628,12 +409,12 @@ ipcMain.handle("list-serial-ports", async () => {
 })
 
 ipcMain.handle("reconnect-bill-acceptor", async () => {
-  await connectBillAcceptor()
+  hardwareBridge.connect()
   return { success: true }
 })
 
 ipcMain.handle("reconnect-bill-dispenser", async () => {
-  await connectBillDispenser()
+  hardwareBridge.connect()
   return { success: true }
 })
 
@@ -646,63 +427,27 @@ ipcMain.handle("get-overlay-mode", async () => {
 })
 
 ipcMain.handle("send-to-printer", async (event, data) => {
-  if (!printerPort || !printerPort.isOpen) {
-    return { success: false, error: "프린터가 연결되지 않았습니다" }
-  }
+  // Legacy handler (keep for now or redirect?)
+  // For consistency with hardware server, we might want to use that instead.
+  // But let's just add the new ones for now.
+  hardwareBridge.send({ type: "printer_raw", data: Array.from(Buffer.from(data)) })
+  return { success: true }
+})
 
-  try {
-    const buffer = Buffer.from(data)
+// New handlers for Hardware Server Printer
+ipcMain.handle("print-to-bixolon", async (event, text) => {
+  hardwareBridge.send({ type: "printer_print", text })
+  return true
+})
 
-    if (isDev) {
-      console.log("[v0] [PRINTER] Sending command to printer:")
-      console.log("[v0] [PRINTER] Buffer length:", buffer.length)
-      console.log(
-        "[v0] [PRINTER] Hex dump:",
-        buffer
-          .toString("hex")
-          .match(/.{1,2}/g)
-          .join(" "),
-      )
-      console.log("[v0] [PRINTER] ASCII (printable):", buffer.toString("ascii").replace(/[^\x20-\x7E]/g, "."))
-    }
+ipcMain.handle("cut-bixolon-paper", async () => {
+  hardwareBridge.send({ type: "printer_cut" })
+  return true
+})
 
-    await new Promise((resolve, reject) => {
-      printerPort.write(buffer, (err) => {
-        if (err) {
-          if (isDev) {
-            console.error("[v0] [PRINTER] Write error:", err.message)
-          }
-          reject(err)
-        } else {
-          if (isDev) {
-            console.log("[v0] [PRINTER] Write successful")
-          }
-          printerPort.drain((drainErr) => {
-            if (drainErr) {
-              if (isDev) {
-                console.error("[v0] [PRINTER] Drain error:", drainErr.message)
-              }
-              reject(drainErr)
-            } else {
-              if (isDev) {
-                console.log("[v0] [PRINTER] Data drained successfully")
-                console.log("[v0] [PRINTER] ⚠️  Note: 'Write successful' means data was sent from computer.")
-                console.log("[v0] [PRINTER] ⚠️  This does NOT confirm the printer received or printed it.")
-                console.log("[v0] [PRINTER] ⚠️  Check if paper actually came out of the printer!")
-              }
-              resolve()
-            }
-          })
-        }
-      })
-    })
-    return { success: true }
-  } catch (error) {
-    if (isDev) {
-      console.error("[v0] [PRINTER] Exception:", error.message)
-    }
-    return { success: false, error: error.message }
-  }
+ipcMain.handle("send-raw-to-bixolon", async (event, data) => {
+  hardwareBridge.send({ type: "printer_raw", data })
+  return true
 })
 
 ipcMain.handle("reconnect-printer", async () => {
@@ -710,6 +455,12 @@ ipcMain.handle("reconnect-printer", async () => {
   return {
     success: printerPort && printerPort.isOpen,
     port: printerPort && printerPort.isOpen ? PRINTER_CONFIG.path : null,
+  }
+})
+
+ipcMain.handle("get-hardware-status", async () => {
+  return {
+    connected: hardwareBridge.isConnected
   }
 })
 

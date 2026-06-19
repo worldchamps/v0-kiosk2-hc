@@ -34,7 +34,13 @@
 }
 
 .korean-keyboard-wrapper .hg-button.dot-key {
-  width: 200px;
+  width: 80px;
+}
+
+.korean-keyboard-wrapper .hg-button.dash-key {
+  width: 80px;
+  font-size: 28px;
+  font-weight: bold;
 }
 
 .korean-keyboard-wrapper .hg-button.enter-key {
@@ -59,4 +65,30 @@
 .korean-keyboard-wrapper .hg-button.shift-key,
 .korean-keyboard-wrapper .hg-button.pre-key {
   width: auto;
+}
+
+/* 한/영 toggle button */
+.korean-keyboard-wrapper .hg-button.lang-key {
+  width: auto;
+  min-width: 80px;
+  background-color: #e8e8e8;
+  font-size: 18px;
+  font-weight: bold;
+  color: #333;
+  border: 2px solid #ccc;
+}
+
+.korean-keyboard-wrapper .hg-button.lang-key:active {
+  background-color: #d0d0d0;
+}
+
+/* Active state when English mode is on */
+.korean-keyboard-wrapper .hg-button.lang-key-active {
+  background-color: #42c0ff;
+  color: white;
+  border-color: #3ab0e8;
+}
+
+.korean-keyboard-wrapper .hg-button.lang-key-active:active {
+  background-color: #3ab0e8;
 }

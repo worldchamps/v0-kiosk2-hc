@@ -102,9 +102,9 @@ function createOverlayButton() {
         ...details.responseHeaders,
         "Content-Security-Policy": [
           "default-src 'self'; " +
-            "script-src 'self' 'unsafe-inline'; " +
-            "style-src 'self' 'unsafe-inline'; " +
-            "img-src 'self' data:;",
+          "script-src 'self' 'unsafe-inline'; " +
+          "style-src 'self' 'unsafe-inline'; " +
+          "img-src 'self' data:;",
         ],
       },
     })
@@ -180,13 +180,13 @@ function createKioskPopup() {
         ...details.responseHeaders,
         "Content-Security-Policy": [
           "default-src 'self'; " +
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
-            "style-src 'self' 'unsafe-inline'; " +
-            "img-src 'self' data: https: blob:; " +
-            "font-src 'self' data:; " +
-            "connect-src 'self' http://localhost:* https://*; " +
-            "media-src 'self' https://jdpd8txarrh2yidl.public.blob.vercel-storage.com https://*.blob.vercel-storage.com blob: data:; " +
-            "frame-src 'self';",
+          "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+          "style-src 'self' 'unsafe-inline'; " +
+          "img-src 'self' data: https: blob:; " +
+          "font-src 'self' data:; " +
+          "connect-src 'self' http://localhost:* https://*; " +
+          "media-src 'self' https://jdpd8txarrh2yidl.public.blob.vercel-storage.com https://*.blob.vercel-storage.com blob: data:; " +
+          "frame-src 'self';",
         ],
       },
     })

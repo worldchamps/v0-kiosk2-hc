@@ -1,17 +1,18 @@
-"use client"
+﻿"use client"
 
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Phone, Loader2, CheckCircle2, Printer, Home, Bed } from "lucide-react"
+import { Phone, Loader2, CheckCircle2, Printer, Home, Bed, AlertTriangle } from "lucide-react"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { getRoomImagePath } from "@/lib/room-utils"
 import { sortRoomTypes } from "@/lib/room-type-order"
 import { printOnSiteReservationReceipt } from "@/lib/printer-utils"
 import { usePayment } from "@/contexts/payment-context"
 import PaymentScreen from "@/components/payment-screen"
+import CheckInComplete from "@/components/check-in-complete"
 
 interface OnSiteReservationProps {
   onNavigate: (screen: string) => void
@@ -44,7 +45,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   const [reservationData, setReservationData] = useState<any>(null)
   const [isPrinting, setIsPrinting] = useState(false)
   const { startPayment, completePayment, cancelPayment } = usePayment()
-  const bookingPrice = 50000
+  const bookingPrice = 100000
 
   const locationName = location === "CAMP" ? "캠프" : location ? `${location}동` : ""
 
@@ -93,7 +94,27 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
 
   const handleRoomSelect = (room: AvailableRoom) => {
     setSelectedRoom(room)
-    setStep("guestInfo")
+
+    // Skip guest info step, set dummy data
+    const dummyGuest = "On-Site Guest"
+    const dummyPhone = "000-0000-0000"
+    setGuestName(dummyGuest)
+    setPhoneNumber(dummyPhone)
+
+    const reservationInfo = {
+      guestName: dummyGuest,
+      phoneNumber: dummyPhone,
+      roomNumber: room.roomCode,
+      roomCode: room.roomCode,
+      roomType: room.roomType,
+      building: room.building,
+      checkInDate,
+      checkOutDate,
+      password: room.password,
+    }
+
+    startPayment(bookingPrice, reservationInfo)
+    setStep("payment")
   }
 
   const handleSubmitBooking = async () => {
@@ -150,13 +171,13 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
       } else {
         alert("예약 중 오류가 발생했습니다: " + data.error)
         await cancelPayment()
-        setStep("guestInfo")
+        setStep("roomSelect")
       }
     } catch (error) {
       console.error("Error submitting booking:", error)
       alert("예약 중 오류가 발생했습니다: " + (error instanceof Error ? error.message : String(error)))
       await cancelPayment()
-      setStep("guestInfo")
+      setStep("roomSelect")
     } finally {
       setSubmitting(false)
     }
@@ -164,7 +185,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
 
   const handlePaymentCancel = async () => {
     await cancelPayment()
-    setStep("guestInfo")
+    setStep("roomSelect")
   }
 
   const handlePrintReceipt = async () => {
@@ -245,6 +266,14 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
           <div>
             <h1 className="kiosk-title">더 비치스테이 {locationName}</h1>
             <div className="kiosk-highlight">현장 예약 - 객실 타입 선택 (1/3)</div>
+
+            <div className="bg-yellow-50 border-2 border-yellow-400 rounded-xl p-6 mt-6 flex items-center justify-center gap-4 animate-pulse">
+              <AlertTriangle className="h-10 w-10 text-yellow-600" />
+              <div className="text-center">
+                <p className="text-2xl font-bold text-yellow-700">이 키오스크는 현금(지폐) 결제만 가능합니다</p>
+                <p className="text-lg font-bold text-yellow-600">Cash Only (No Credit Card)</p>
+              </div>
+            </div>
           </div>
 
           <div className="flex-1 w-full py-6 mt-8 flex flex-col">
@@ -503,7 +532,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
         onPaymentComplete={handlePaymentComplete}
         onCancel={handlePaymentCancel}
         title={`더 비치스테이 ${locationName}`}
-        description="현장 예약 - 결제"
+        description="현장 예약 - 결제 (현금 전용 / Cash Only)"
       />
     )
   }
@@ -511,75 +540,17 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   // Step 5: Completion
   if (step === "complete" && reservationData) {
     return (
-      <div className="flex items-start justify-start w-full h-full">
-        <div className="kiosk-content-container">
-          <div>
-            <h1 className="kiosk-title">더 비치스테이 {locationName}</h1>
-            <div className="kiosk-highlight">예약 완료</div>
-          </div>
-
-          <div className="w-full space-y-6 mt-8">
-            <div className="flex justify-center">
-              <CheckCircle2 className="h-32 w-32 text-green-500" />
-            </div>
-
-            <Card className="shadow-md">
-              <CardContent className="p-8 space-y-4">
-                <h3 className="text-3xl font-bold text-center mb-6">예약이 완료되었습니다!</h3>
-
-                <div className="space-y-3">
-                  <p className="text-xl">
-                    <span className="font-semibold">예약 번호:</span> {reservationData.reservationId}
-                  </p>
-                  <p className="text-xl">
-                    <span className="font-semibold">투숙객:</span> {guestName}
-                  </p>
-                  <p className="text-xl">
-                    <span className="font-semibold">객실 번호:</span> {reservationData.roomCode}
-                  </p>
-                  <p className="text-xl">
-                    <span className="font-semibold">객실 비밀번호:</span> {reservationData.password}
-                  </p>
-                  <p className="text-xl">
-                    <span className="font-semibold">체크인:</span> {checkInDate}
-                  </p>
-                  <p className="text-xl">
-                    <span className="font-semibold">체크아웃:</span> {checkOutDate}
-                  </p>
-                </div>
-
-                <div className="pt-4 border-t">
-                  <p className="text-lg text-gray-600 text-center">문의사항은 010-5126-4644로 연락 부탁드립니다.</p>
-                </div>
-              </CardContent>
-            </Card>
-
-            <div className="flex gap-4">
-              <Button
-                onClick={handlePrintReceipt}
-                disabled={isPrinting}
-                variant="outline"
-                className="h-20 text-2xl flex-1 font-bold bg-transparent"
-              >
-                {isPrinting ? (
-                  <>
-                    <Loader2 className="mr-2 h-6 w-6 animate-spin" />
-                    출력 중...
-                  </>
-                ) : (
-                  <>
-                    <Printer className="mr-2 h-6 w-6" />
-                    영수증 출력
-                  </>
-                )}
-              </Button>
-              <Button onClick={() => onNavigate("standby")} className="h-20 text-2xl flex-1 font-bold">
-                처음으로
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <CheckInComplete
+        reservation={reservationData}
+        revealedInfo={{
+          roomNumber: reservationData.roomCode || selectedRoom?.roomCode || "",
+          password: reservationData.password || selectedRoom?.password || "",
+          floor: selectedRoom?.floor || "",
+        }}
+        kioskLocation={location as any}
+        onNavigate={onNavigate}
+        isPopupMode={false}
+      />
     )
   }
 

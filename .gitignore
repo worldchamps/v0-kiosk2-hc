@@ -31,3 +31,7 @@ next-env.d.ts
 *.exe
 *.dmg
 *.AppImage
+
+# python hardware server
+__pycache__/
+*.py[cod]

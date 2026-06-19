@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "Reservations!A94:N",
+      range: "Reservations!A2:N",
     })
 
     const rows = response.data.values
@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
 
     for (let i = 0; i < rows.length; i++) {
       if (rows[i][SHEET_COLUMNS.RESERVATION_ID] === reservationId) {
-        rowIndex = i + 94
+        rowIndex = i + 2
         reservationData = rows[i]
         break
       }
@@ -153,6 +153,7 @@ export async function POST(request: NextRequest) {
 
     console.log("[v0] ✅ Check-in completed successfully!")
 
+    /* SMS 발송 비활성화 (사용자 요청)
     if (phoneNumber) {
       console.log("[v0] 📱 Sending SMS notification to:", phoneNumber)
       try {
@@ -179,6 +180,7 @@ export async function POST(request: NextRequest) {
     } else {
       console.log("[v0] ⚠️ No phone number provided, skipping SMS")
     }
+    */
 
     console.log("[v0] ========================================")
 

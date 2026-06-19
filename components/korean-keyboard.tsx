@@ -12,13 +12,29 @@ const koreanLayout = {
     "ㅂ ㅈ ㄷ ㄱ ㅅ ㅛ ㅕ ㅑ ㅐ ㅔ",
     "ㅁ ㄴ ㅇ ㄹ ㅎ ㅗ ㅓ ㅏ ㅣ",
     "{shift} ㅋ ㅌ ㅊ ㅍ ㅠ ㅜ ㅡ {pre}",
-    "{space} {dot} {enterText}",
+    "{lang} {space} {dot} {enterText}",
   ],
   shift: [
     "ㅃ ㅉ ㄸ ㄲ ㅆ ㅛ ㅕ ㅑ ㅒ ㅖ",
     "ㅁ ㄴ ㅇ ㄹ ㅎ ㅗ ㅓ ㅏ ㅣ",
     "{shift} ㅋ ㅌ ㅊ ㅍ ㅠ ㅜ ㅡ {pre}",
-    "{space} {dot} {enterText}",
+    "{lang} {space} {dot} {enterText}",
+  ],
+}
+
+// English keyboard layout configuration
+const englishLayout = {
+  default: [
+    "q w e r t y u i o p",
+    "a s d f g h j k l",
+    "{shift} z x c v b n m {pre}",
+    "{lang} {space} {dash} {dot} {enterText}",
+  ],
+  shift: [
+    "Q W E R T Y U I O P",
+    "A S D F G H J K L",
+    "{shift} Z X C V B N M {pre}",
+    "{lang} {space} {dash} {dot} {enterText}",
   ],
 }
 
@@ -31,6 +47,7 @@ interface KoreanKeyboardProps {
 
 export default function KoreanKeyboard({ text, setText, onEnter, disabled = false }: KoreanKeyboardProps) {
   const [layoutName, setLayoutName] = useState("default") // default, shift
+  const [isKorean, setIsKorean] = useState(true) // true = Korean, false = English
 
   const onKeyPress = (key: string) => {
     if (disabled) return
@@ -48,27 +65,43 @@ export default function KoreanKeyboard({ text, setText, onEnter, disabled = fals
     } else if (key === "{dot}") {
       // Add a period
       setText(text + ".")
+    } else if (key === "{dash}") {
+      // Add a hyphen
+      setText(text + "-")
     } else if (key === "{space}") {
       // Add a space
       setText(text + " ")
+    } else if (key === "{lang}") {
+      // Toggle between Korean and English
+      setIsKorean((prev) => !prev)
+      setLayoutName("default")
     } else {
-      // Handle Hangul composition using hangul-js
-      setText(hangul.assemble(hangul.disassemble(text + key)))
+      if (isKorean) {
+        // Handle Hangul composition using hangul-js
+        setText(hangul.assemble(hangul.disassemble(text + key)))
+      } else {
+        // English: just append the character
+        setText(text + key)
+      }
     }
   }
+
+  const currentLayout = isKorean ? koreanLayout : englishLayout
 
   return (
     <div className={`korean-keyboard-wrapper ${disabled ? "opacity-70 pointer-events-none" : ""}`}>
       <Keyboard
         layoutName={layoutName}
-        layout={koreanLayout}
+        layout={currentLayout}
         onKeyPress={onKeyPress}
         display={{
           "{enterText}": "Enter",
           "{shift}": "↑",
           "{space}": " ",
           "{dot}": ".",
+          "{dash}": "-",
           "{pre}": "←",
+          "{lang}": isKorean ? "한/영" : "한/영",
         }}
         buttonTheme={[
           {
@@ -84,12 +117,20 @@ export default function KoreanKeyboard({ text, setText, onEnter, disabled = fals
             buttons: "{dot}",
           },
           {
+            class: "dash-key",
+            buttons: "{dash}",
+          },
+          {
             class: "shift-key",
             buttons: "{shift}",
           },
           {
             class: "pre-key",
             buttons: "{pre}",
+          },
+          {
+            class: isKorean ? "lang-key" : "lang-key lang-key-active",
+            buttons: "{lang}",
           },
         ]}
       />

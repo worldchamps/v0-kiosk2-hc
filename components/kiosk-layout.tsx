@@ -137,7 +137,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         const property = getKioskPropertyId()
         if (propertyUsesElectron(property)) {
           if (typeof window !== "undefined" && (window as any).electronAPI) {
-            ;(window as any).electronAPI.send("close-popup")
+            ; (window as any).electronAPI.send("close-popup")
           }
         } else {
           window.close()
