@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { use, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { saveKioskLocation } from "@/lib/location-utils"
 import KioskLayout from "@/components/kiosk-layout"
@@ -8,9 +8,10 @@ import KioskLayout from "@/components/kiosk-layout"
 // 유효한 위치 목록
 const validLocations = ["A", "B", "D", "CAMP", "KARIV"]
 
-export default function KioskLocationPage({ params }: { params: { location: string } }) {
+export default function KioskLocationPage({ params }: { params: Promise<{ location: string }> }) {
   const router = useRouter()
-  const location = params.location.toUpperCase()
+  const { location: locationParam } = use(params)
+  const location = locationParam.toUpperCase()
 
   useEffect(() => {
     // 유효한 위치인지 확인

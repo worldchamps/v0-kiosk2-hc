@@ -149,6 +149,308 @@ button {
 }
 
 /* 키보드 스타일 조정 */
+/* Primary kiosk home: available rooms are visible immediately on launch */
+.kiosk-home-screen {
+  width: 100%;
+  height: 100%;
+  padding: 48px 64px 38px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  box-sizing: border-box;
+  background:
+    radial-gradient(circle at top right, rgba(66, 192, 255, 0.14), transparent 30%),
+    #fefef7;
+}
+
+.kiosk-home-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 40px;
+  flex-shrink: 0;
+}
+
+.kiosk-home-property {
+  margin: 0 0 2px;
+  font-size: 25px;
+  color: #424242;
+}
+
+.kiosk-home-title {
+  margin: 0;
+  font-size: 58px;
+  line-height: 1.08;
+  font-weight: 800;
+  color: #171717;
+}
+
+.kiosk-home-subtitle {
+  margin: 8px 0 0;
+  font-size: 24px;
+  color: #5b6470;
+}
+
+.kiosk-reservation-check-button {
+  height: 104px !important;
+  min-width: 350px;
+  padding: 0 32px !important;
+  border-radius: 22px !important;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  color: #111 !important;
+  background: rgb(var(--primary-button)) !important;
+  box-shadow: 0 8px 0 rgba(20, 104, 151, 0.2);
+}
+
+.kiosk-reservation-check-button span {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.1;
+}
+
+.kiosk-reservation-check-button strong {
+  font-size: 30px;
+}
+
+.kiosk-reservation-check-button small {
+  margin-top: 7px;
+  font-size: 18px;
+  color: #263947;
+}
+
+.kiosk-cash-banner {
+  min-height: 78px;
+  padding: 14px 22px;
+  border: 3px solid #f2b72d;
+  border-radius: 18px;
+  background: #fff8d9;
+  color: #8a5300;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  flex-shrink: 0;
+}
+
+.kiosk-cash-banner p {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.1;
+  font-weight: 800;
+}
+
+.kiosk-cash-banner span {
+  display: block;
+  margin-top: 3px;
+  font-size: 17px;
+}
+
+.kiosk-room-refresh-button {
+  margin-left: auto;
+  padding: 9px 14px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #6d4c00;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(138, 83, 0, 0.22);
+}
+
+.kiosk-room-refresh-button span {
+  margin: 0;
+  font-size: 16px;
+}
+
+.kiosk-home-content {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.kiosk-home-grid {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: minmax(300px, 1fr);
+  gap: 22px;
+  overflow-y: auto;
+  padding: 2px 4px 10px;
+  scrollbar-width: thin;
+}
+
+.kiosk-room-card {
+  min-width: 0;
+  height: 100%;
+  min-height: 300px;
+  padding: 0;
+  overflow: hidden;
+  border: 3px solid #e6e8eb;
+  border-radius: 24px;
+  background: #fff;
+  box-shadow: 0 9px 22px rgba(26, 43, 62, 0.12);
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  transition:
+    transform 0.12s ease,
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.kiosk-room-card:active {
+  transform: translateY(4px) scale(0.99);
+  border-color: rgb(var(--primary-button));
+  box-shadow: 0 4px 12px rgba(26, 43, 62, 0.16);
+}
+
+.kiosk-room-card-image {
+  position: relative;
+  height: 58%;
+  min-height: 174px;
+  overflow: hidden;
+  background: #eef1f3;
+}
+
+.kiosk-room-card-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.kiosk-room-card-image span {
+  position: absolute;
+  left: 18px;
+  bottom: 16px;
+  margin: 0;
+  padding: 9px 14px;
+  border-radius: 999px;
+  font-size: 20px;
+  color: #fff;
+  background: rgba(10, 93, 55, 0.9);
+  backdrop-filter: blur(5px);
+}
+
+.kiosk-room-card-body {
+  flex: 1;
+  padding: 20px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.kiosk-room-card-body h2 {
+  margin: 0 0 9px;
+  font-size: 31px;
+  line-height: 1.12;
+  color: #171717;
+}
+
+.kiosk-room-card-body p {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  color: #626b76;
+}
+
+.kiosk-room-select-label {
+  flex-shrink: 0;
+  margin: 0 !important;
+  padding: 13px 18px;
+  border-radius: 14px;
+  font-size: 21px !important;
+  color: #111;
+  background: rgb(var(--primary-button));
+}
+
+.kiosk-home-message {
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  border: 3px dashed #d2d7dd;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.7);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.kiosk-home-message-error {
+  color: #b42318;
+  border-color: #f1aaa3;
+  background: #fff4f2;
+}
+
+.kiosk-home-message-error p {
+  font-size: 25px;
+}
+
+.kiosk-room-card-loading {
+  pointer-events: none;
+}
+
+.kiosk-room-image-skeleton,
+.kiosk-room-text-skeleton {
+  background: linear-gradient(90deg, #e7eaed 25%, #f6f7f8 50%, #e7eaed 75%);
+  background-size: 200% 100%;
+  animation: kiosk-home-loading 1.4s infinite;
+}
+
+.kiosk-room-image-skeleton {
+  height: 58%;
+  min-height: 174px;
+}
+
+.kiosk-room-text-skeleton {
+  width: 62%;
+  height: 20px;
+  border-radius: 8px;
+}
+
+.kiosk-room-text-skeleton-title {
+  width: 45%;
+  height: 32px;
+  margin-bottom: 18px;
+}
+
+@keyframes kiosk-home-loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (max-width: 1400px) {
+  .kiosk-home-screen {
+    padding: 36px 44px 30px;
+  }
+
+  .kiosk-home-title {
+    font-size: 48px;
+  }
+
+  .kiosk-reservation-check-button {
+    min-width: 310px;
+  }
+
+  .kiosk-home-grid {
+    gap: 16px;
+  }
+}
+
 .korean-keyboard-wrapper .hg-button {
   height: 50px;
   font-size: 20px;

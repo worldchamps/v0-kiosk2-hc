@@ -1,15 +1,14 @@
 ﻿"use client"
 
-import { useState, useEffect } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Phone, Loader2, CheckCircle2, Printer, Home, Bed, AlertTriangle } from "lucide-react"
+import { Phone, Loader2, Home, Bed, AlertTriangle, CalendarDays, RefreshCw } from "lucide-react"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { getRoomImagePath } from "@/lib/room-utils"
 import { sortRoomTypes } from "@/lib/room-type-order"
-import { printOnSiteReservationReceipt } from "@/lib/printer-utils"
 import { usePayment } from "@/contexts/payment-context"
 import PaymentScreen from "@/components/payment-screen"
 import CheckInComplete from "@/components/check-in-complete"
@@ -43,16 +42,68 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   const [checkInDate, setCheckInDate] = useState("")
   const [checkOutDate, setCheckOutDate] = useState("")
   const [reservationData, setReservationData] = useState<any>(null)
-  const [isPrinting, setIsPrinting] = useState(false)
-  const { startPayment, completePayment, cancelPayment } = usePayment()
+  const [roomsError, setRoomsError] = useState("")
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const { paymentSession, startPayment, completePayment, cancelPayment } = usePayment()
   const bookingPrice = 100000
 
   const locationName = location === "CAMP" ? "캠프" : location ? `${location}동` : ""
 
+  const fetchAvailableRooms = useCallback(
+    async (showLoading = true) => {
+      try {
+        if (showLoading) {
+          setLoading(true)
+        }
+        setRoomsError("")
+
+        const url = location ? `/api/available-rooms?location=${location}` : "/api/available-rooms"
+        const response = await fetch(`${url}&t=${Date.now()}`, {
+          cache: "no-store",
+        })
+
+        if (!response.ok) {
+          throw new Error(`Room lookup failed (${response.status})`)
+        }
+
+        const data = await response.json()
+        setRoomsByType(data.roomsByType || {})
+        setLastUpdated(new Date())
+      } catch (error) {
+        console.error("Error fetching available rooms:", error)
+        setRoomsError("객실 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.")
+      } finally {
+        if (showLoading) {
+          setLoading(false)
+        }
+      }
+    },
+    [location],
+  )
+
+  const resetToHome = useCallback(async () => {
+    if (paymentSession.isActive && paymentSession.acceptedAmount > 0) {
+      console.warn("[v0] Cash has been inserted. Keeping the payment screen active.")
+      return
+    }
+
+    if (paymentSession.isActive) {
+      await cancelPayment()
+    }
+
+    setSelectedRoomType("")
+    setSelectedRoom(null)
+    setGuestName("")
+    setPhoneNumber("")
+    setReservationData(null)
+    setStep("roomType")
+    await fetchAvailableRooms(false)
+  }, [cancelPayment, fetchAvailableRooms, paymentSession.acceptedAmount, paymentSession.isActive])
+
   useIdleTimer({
-    onIdle: () => {
-      console.log("[v0] On-site reservation idle, navigating to idle screen")
-      onNavigate("idle")
+    onIdle: async () => {
+      console.log("[v0] On-site reservation idle, returning to the room home screen")
+      await resetToHome()
     },
     idleTime: 60000,
     enabled: true,
@@ -66,26 +117,17 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
     tomorrow.setDate(tomorrow.getDate() + 1)
     setCheckInDate(today.toISOString().split("T")[0])
     setCheckOutDate(tomorrow.toISOString().split("T")[0])
-  }, [location])
+  }, [fetchAvailableRooms])
 
-  const fetchAvailableRooms = async () => {
-    try {
-      setLoading(true)
-      const url = location ? `/api/available-rooms?location=${location}` : "/api/available-rooms"
-      const response = await fetch(`${url}&t=${Date.now()}`, {
-        cache: "no-store",
-      })
-      const data = await response.json()
+  useEffect(() => {
+    if (step !== "roomType") return
 
-      if (data.roomsByType) {
-        setRoomsByType(data.roomsByType)
-      }
-    } catch (error) {
-      console.error("Error fetching available rooms:", error)
-    } finally {
-      setLoading(false)
-    }
-  }
+    const refreshInterval = window.setInterval(() => {
+      fetchAvailableRooms(false)
+    }, 60000)
+
+    return () => window.clearInterval(refreshInterval)
+  }, [fetchAvailableRooms, step])
 
   const handleRoomTypeSelect = (roomType: string) => {
     setSelectedRoomType(roomType)
@@ -188,96 +230,92 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
     setStep("roomSelect")
   }
 
-  const handlePrintReceipt = async () => {
-    if (!reservationData) return
-
-    setIsPrinting(true)
-    try {
-      const success = await printOnSiteReservationReceipt({
-        reservationId: reservationData.reservationId,
-        guestName,
-        roomCode: reservationData.roomCode,
-        roomType: selectedRoom?.roomType || "",
-        checkInDate,
-        checkOutDate,
-        password: reservationData.password,
-      })
-
-      if (success) {
-        alert("영수증이 출력되었습니다")
-      } else {
-        alert("영수증 출력에 실패했습니다")
-      }
-    } catch (error) {
-      console.error("Print error:", error)
-      alert("영수증 출력 중 오류가 발생했습니다")
-    } finally {
-      setIsPrinting(false)
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center w-full h-full">
-        <Loader2 className="h-16 w-16 animate-spin text-gray-400" />
-      </div>
-    )
-  }
-
   // Step 1: Room Type Selection
   if (step === "roomType") {
     const availableRoomTypes = sortRoomTypes(Object.keys(roomsByType))
 
-    if (availableRoomTypes.length === 0) {
-      return (
-        <div className="flex items-start justify-start w-full h-full">
-          <div className="kiosk-content-container">
-            <div>
-              <h1 className="kiosk-title">더 비치스테이 {locationName}</h1>
-              <div className="kiosk-highlight">현장 예약</div>
-            </div>
-
-            <Card className="w-full mt-8 shadow-md">
-              <CardContent className="p-8 flex flex-col items-center justify-center space-y-6">
-                <Phone className="h-16 w-16 text-gray-400" />
-                <div className="text-center">
-                  <p className="font-bold text-2xl mb-2">현재 예약 가능한 객실이 없습니다</p>
-                  <p className="text-xl text-gray-600 mb-4">예약 문의는 아래 번호로 연락 부탁드립니다</p>
-                  <p className="text-3xl font-bold">010-5126-4644</p>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Button
-              variant="outline"
-              onClick={() => onNavigate("standby")}
-              className="h-20 text-2xl w-full border-3 border-gray-300 mt-8 font-bold"
-            >
-              돌아가기
-            </Button>
-          </div>
-        </div>
-      )
-    }
-
     return (
-      <div className="flex items-start justify-start w-full h-full">
-        <div className="kiosk-content-container">
+      <div className="kiosk-home-screen">
+        <div className="kiosk-home-header">
           <div>
-            <h1 className="kiosk-title">더 비치스테이 {locationName}</h1>
-            <div className="kiosk-highlight">현장 예약 - 객실 타입 선택 (1/3)</div>
+            <p className="kiosk-home-property">더 비치스테이 {locationName}</p>
+            <h1 className="kiosk-home-title">지금 바로 이용 가능한 객실</h1>
+            <p className="kiosk-home-subtitle">원하시는 객실 타입을 선택해주세요</p>
+          </div>
 
-            <div className="bg-yellow-50 border-2 border-yellow-400 rounded-xl p-6 mt-6 flex items-center justify-center gap-4 animate-pulse">
-              <AlertTriangle className="h-10 w-10 text-yellow-600" />
-              <div className="text-center">
-                <p className="text-2xl font-bold text-yellow-700">이 키오스크는 현금(지폐) 결제만 가능합니다</p>
-                <p className="text-lg font-bold text-yellow-600">Cash Only (No Credit Card)</p>
+          <Button
+            type="button"
+            onClick={() => onNavigate("reservationConfirm")}
+            className="kiosk-reservation-check-button"
+          >
+            <CalendarDays className="h-10 w-10" />
+            <span>
+              <strong>예약 확인하기</strong>
+              <small>이미 예약하신 고객</small>
+            </span>
+          </Button>
+        </div>
+
+        <div className="kiosk-cash-banner">
+          <AlertTriangle className="h-9 w-9 flex-shrink-0" />
+          <div>
+            <p>현금(지폐) 결제만 가능합니다</p>
+            <span>Cash Only · 카드 결제 불가</span>
+          </div>
+          <button
+            type="button"
+            className="kiosk-room-refresh-button"
+            onClick={() => fetchAvailableRooms(false)}
+            aria-label="객실 정보 새로고침"
+          >
+            <RefreshCw className={`h-6 w-6 ${loading ? "animate-spin" : ""}`} />
+            <span>
+              {lastUpdated
+                ? `${lastUpdated.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })} 갱신`
+                : "새로고침"}
+            </span>
+          </button>
+        </div>
+
+        <div className="kiosk-home-content">
+          {roomsError && (
+            <div className="kiosk-home-message kiosk-home-message-error">
+              <AlertTriangle className="h-12 w-12" />
+              <p>{roomsError}</p>
+              <Button type="button" onClick={() => fetchAvailableRooms()}>
+                다시 불러오기
+              </Button>
+            </div>
+          )}
+
+          {!roomsError && loading && availableRoomTypes.length === 0 && (
+            <div className="kiosk-home-grid" aria-label="객실 정보를 불러오는 중">
+              {[0, 1, 2].map((index) => (
+                <div key={index} className="kiosk-room-card kiosk-room-card-loading">
+                  <div className="kiosk-room-image-skeleton" />
+                  <div className="kiosk-room-card-body">
+                    <div className="w-full">
+                      <div className="kiosk-room-text-skeleton kiosk-room-text-skeleton-title" />
+                      <div className="kiosk-room-text-skeleton" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!roomsError && !loading && availableRoomTypes.length === 0 && (
+            <div className="kiosk-home-message">
+              <Phone className="h-16 w-16 text-gray-400" />
+              <div>
+                <p className="text-3xl font-bold">현재 예약 가능한 객실이 없습니다</p>
+                <span className="text-xl text-gray-600">예약 문의 010-5126-4644</span>
               </div>
             </div>
-          </div>
+          )}
 
-          <div className="flex-1 w-full py-6 mt-8 flex flex-col">
-            <div className="grid grid-cols-1 gap-6 w-full">
+          {!roomsError && availableRoomTypes.length > 0 && (
+            <div className="kiosk-home-grid">
               {availableRoomTypes.map((roomType) => {
                 const rooms = roomsByType[roomType]
                 const availableCount = rooms.length
@@ -285,52 +323,37 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
                 const imagePath = getRoomImagePath(roomType, sampleRoom.roomCode)
 
                 return (
-                  <Card
+                  <button
+                    type="button"
                     key={roomType}
-                    className="overflow-hidden shadow-lg cursor-pointer hover:shadow-xl transition-all hover:scale-[1.02]"
+                    className="kiosk-room-card"
                     onClick={() => handleRoomTypeSelect(roomType)}
                   >
-                    <CardContent className="p-0">
-                      <div className="flex">
-                        <div className="w-48 h-48 bg-gray-100 flex-shrink-0">
-                          <img
-                            src={imagePath || "/placeholder.svg"}
-                            alt={roomType}
-                            className="w-full h-full object-cover"
-                            onError={(e) => {
-                              e.currentTarget.src = "/placeholder.svg?height=200&width=200"
-                            }}
-                          />
-                        </div>
-                        <div className="flex-1 p-6 flex flex-col justify-between">
-                          <div>
-                            <p className="font-bold text-3xl mb-2">{roomType}</p>
-                            <p className="text-xl text-gray-600 flex items-center gap-2">
-                              <Bed className="h-5 w-5" />
-                              예약 가능: {availableCount}개
-                            </p>
-                          </div>
-                          <div className="text-right mt-4">
-                            <Button size="lg" className="text-xl px-8">
-                              선택하기
-                            </Button>
-                          </div>
-                        </div>
+                    <div className="kiosk-room-card-image">
+                      <img
+                        src={imagePath || "/placeholder.svg"}
+                        alt={roomType}
+                        onError={(e) => {
+                          e.currentTarget.src = "/placeholder.svg?height=360&width=560"
+                        }}
+                      />
+                      <span>{availableCount}개 예약 가능</span>
+                    </div>
+                    <div className="kiosk-room-card-body">
+                      <div>
+                        <h2>{roomType}</h2>
+                        <p>
+                          <Bed className="h-6 w-6" />
+                          객실을 선택해 바로 예약하세요
+                        </p>
                       </div>
-                    </CardContent>
-                  </Card>
+                      <span className="kiosk-room-select-label">선택하기</span>
+                    </div>
+                  </button>
                 )
               })}
             </div>
-          </div>
-
-          <Button
-            variant="outline"
-            onClick={() => onNavigate("standby")}
-            className="h-20 text-2xl w-full border-3 border-gray-300 mt-6 font-bold"
-          >
-            돌아가기
-          </Button>
+          )}
         </div>
       </div>
     )

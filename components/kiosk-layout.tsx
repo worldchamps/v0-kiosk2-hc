@@ -32,7 +32,8 @@ interface KioskLayoutProps {
 }
 
 export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
-  const [currentScreen, setCurrentScreen] = useState("idle")
+  const [currentScreen, setCurrentScreen] = useState("onSiteReservation")
+  const [homeSessionKey, setHomeSessionKey] = useState(0)
   const [reservationData, setReservationData] = useState(null)
   const [reservationsList, setReservationsList] = useState([])
   const [guestName, setGuestName] = useState("")
@@ -105,7 +106,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       property: getPropertyDisplayName(savedProperty),
       location: savedLocation,
       isPopupMode: popupMode,
-      initialScreen: popupMode ? "reservationConfirm" : "idle",
+      initialScreen: popupMode ? "reservationConfirm" : "onSiteReservation",
     })
   }, [])
 
@@ -176,14 +177,25 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
 
     stopAllAudio(false)
 
-    setCurrentScreen(screen)
+    const targetScreen =
+      !isPopupMode && (screen === "idle" || screen === "standby") ? "onSiteReservation" : screen
+
+    if (targetScreen === "onSiteReservation") {
+      setHomeSessionKey((currentKey) => currentKey + 1)
+    }
+
+    setCurrentScreen(targetScreen)
     setError("")
 
-    if (screen !== "reservationConfirm" && screen !== "reservationDetails" && screen !== "reservationList") {
+    if (
+      targetScreen !== "reservationConfirm" &&
+      targetScreen !== "reservationDetails" &&
+      targetScreen !== "reservationList"
+    ) {
       setGuestName("")
     }
 
-    if (screen === "standby" || screen === "idle") {
+    if (targetScreen === "onSiteReservation" || targetScreen === "standby" || targetScreen === "idle") {
       setReservationData(null)
       setReservationsList([])
       setRevealedInfo({
@@ -390,7 +402,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
         )}
 
         {currentScreen === "onSiteReservation" && (
-          <OnSiteReservation onNavigate={handleNavigate} location={kioskLocation} />
+          <OnSiteReservation key={homeSessionKey} onNavigate={handleNavigate} location={kioskLocation} />
         )}
 
         {currentScreen === "reservationDetails" && (
