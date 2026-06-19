@@ -40,6 +40,7 @@ if errorlevel 1 (
 )
 
 echo Launching Electron interface...
+set KIOSK_WINDOW_MODE=true
 start "Electron Kiosk" cmd /c "npx electron ."
 
 echo.

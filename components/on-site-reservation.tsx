@@ -237,7 +237,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
     return (
       <div className="kiosk-home-screen">
         <div className="kiosk-home-header">
-          <div>
+          <div className="kiosk-home-heading">
             <p className="kiosk-home-property">더 비치스테이 {locationName}</p>
             <h1 className="kiosk-home-title">지금 바로 이용 가능한 객실</h1>
             <p className="kiosk-home-subtitle">원하시는 객실 타입을 선택해주세요</p>
@@ -337,13 +337,13 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
                           e.currentTarget.src = "/placeholder.svg?height=360&width=560"
                         }}
                       />
-                      <span>{availableCount}개 예약 가능</span>
+                      <span className="kiosk-room-availability">{availableCount}개 예약 가능</span>
                     </div>
                     <div className="kiosk-room-card-body">
                       <div>
                         <h2>{roomType}</h2>
                         <p>
-                          <Bed className="h-6 w-6" />
+                          <Bed className="kiosk-room-bed-icon" />
                           객실을 선택해 바로 예약하세요
                         </p>
                       </div>

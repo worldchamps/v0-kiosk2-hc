@@ -1,6 +1,6 @@
 require("dotenv").config({ path: require("path").join(__dirname, "..", ".env.local") })
 
-const { app, BrowserWindow, ipcMain } = require("electron")
+const { app, BrowserWindow, ipcMain, Menu } = require("electron")
 const path = require("path")
 const { SerialPort } = require("serialport")
 const overlayButtonModule = require("./overlay-button")
@@ -18,7 +18,9 @@ let billDispenserConnecting = false
 
 const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
 const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"
+const KIOSK_WINDOW_MODE = process.env.KIOSK_WINDOW_MODE === "true"
 const isDev = process.env.NODE_ENV !== "production"
+const useKioskChrome = KIOSK_WINDOW_MODE || !isDev
 
 if (isDev) {
   console.log(`[v0] Starting in ${OVERLAY_MODE ? "OVERLAY" : "FULLSCREEN"} mode for ${KIOSK_PROPERTY_ID}`)
@@ -48,17 +50,23 @@ function createWindow() {
       width: 1920,
       height: 1080,
       fullscreen: true,
-      kiosk: !isDev,
-      frame: isDev,
+      kiosk: useKioskChrome,
+      frame: !useKioskChrome,
+      autoHideMenuBar: true,
       show: false,
       webPreferences: {
         preload: path.join(__dirname, "preload.js"),
         nodeIntegration: false,
         contextIsolation: true,
-        devTools: isDev,
+        devTools: isDev && !KIOSK_WINDOW_MODE,
         autoplayPolicy: "no-user-gesture-required",
       },
     })
+
+    if (useKioskChrome) {
+      Menu.setApplicationMenu(null)
+      mainWindow.setMenuBarVisibility(false)
+    }
 
     mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
       callback({
