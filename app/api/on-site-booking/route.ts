@@ -5,17 +5,58 @@ import { addToPMSQueue } from "@/lib/firebase-admin"
 import { sendAligoSMS, formatBookingMessage } from "@/lib/aligo-sms"
 import { getRoomInfoByMatchingNumber, updateRoomStatusInFirebase } from "@/lib/firebase-beach-rooms"
 
+const ON_SITE_RATES = [
+  { keyword: "디럭스", overnight: 60000, shortStay: 30000 },
+  { keyword: "스위트", overnight: 80000, shortStay: 50000 },
+  { keyword: "스탠다드", overnight: 50000, shortStay: 30000 },
+]
+
+function getOnSitePrice(roomType: string, stayType: unknown) {
+  if (stayType !== "overnight" && stayType !== "shortStay") return undefined
+
+  const rates = ON_SITE_RATES.find(({ keyword }) => roomType.includes(keyword))
+  return rates?.[stayType]
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { guestName, phoneNumber, roomNumber, roomCode, roomType, price, checkInDate, checkOutDate, password } = body
+    const {
+      guestName,
+      phoneNumber,
+      roomNumber,
+      roomCode,
+      roomType,
+      price: requestedPrice,
+      checkInDate,
+      checkOutDate,
+      password,
+      stayType,
+      stayTypeLabel,
+    } = body
+    const price = getOnSitePrice(roomType, stayType)
+    const normalizedStayTypeLabel = stayType === "overnight" ? "숙박" : stayType === "shortStay" ? "대실" : ""
 
     console.log("[v0] On-site booking request:", { guestName, phoneNumber, roomNumber, roomCode, roomType })
     console.log("[v0] roomCode received from frontend:", roomCode)
 
     // Validate required fields
-    if (!guestName || !phoneNumber || !roomNumber || !roomCode || !checkInDate || !checkOutDate) {
+    if (
+      !guestName ||
+      !phoneNumber ||
+      !roomNumber ||
+      !roomCode ||
+      !roomType ||
+      !checkInDate ||
+      !checkOutDate ||
+      !stayType ||
+      !price
+    ) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
+    }
+
+    if (Number(requestedPrice) !== price) {
+      console.warn("[v0] Correcting mismatched on-site price:", { requestedPrice, price, roomType, stayType })
     }
 
     console.log("[v0] Checking room availability from Firebase...")
@@ -67,6 +108,7 @@ export async function POST(request: NextRequest) {
       new Date().toISOString(), // Check-in Time - 현재 시간
       roomInfo.floor, // Floor from Firebase
     ]
+    reservationData[3] = normalizedStayTypeLabel ? `현장예약-${normalizedStayTypeLabel}` : "현장예약"
 
     console.log("[v0] Writing to Reservations sheet - Room Number (column J):", roomCode)
 
@@ -145,6 +187,10 @@ export async function POST(request: NextRequest) {
         checkInDate,
         checkOutDate,
         password: password || roomInfo.password,
+        roomType,
+        price,
+        stayType,
+        stayTypeLabel: normalizedStayTypeLabel || stayTypeLabel,
       },
     })
   } catch (error) {

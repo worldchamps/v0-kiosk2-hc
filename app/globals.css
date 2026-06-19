@@ -307,12 +307,6 @@ button {
     box-shadow 0.12s ease;
 }
 
-.kiosk-room-card:active {
-  transform: translateY(4px) scale(0.99);
-  border-color: rgb(var(--primary-button));
-  box-shadow: 0 4px 12px rgba(26, 43, 62, 0.16);
-}
-
 .kiosk-room-card-image {
   position: relative;
   height: 58%;
@@ -381,17 +375,20 @@ button {
   border: 2px solid;
   border-radius: 16px;
   display: flex;
-  flex-direction: column;
+  align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 10px;
+  text-align: center;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    filter 0.12s ease;
 }
 
-.kiosk-room-price span {
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 18px;
+.kiosk-room-price:active {
+  transform: translateY(3px) scale(0.985);
+  filter: brightness(0.97);
+  box-shadow: none;
 }
 
 .kiosk-room-price strong {
@@ -666,11 +663,8 @@ button {
     min-height: 112px;
     padding: 16px 19px;
     border-radius: 20px;
-  }
-
-  .kiosk-room-price span {
     gap: 9px;
-    font-size: clamp(24px, 2.7vw, 30px);
+    box-shadow: 0 6px 0 rgba(15, 23, 42, 0.1);
   }
 
   .kiosk-room-price strong {
@@ -753,6 +747,315 @@ button {
   .kiosk-room-price {
     min-height: 86px;
     padding: 11px 15px;
+  }
+}
+
+/* Room selection: large photos, a fixed visible back button, and an internal scroll area. */
+.kiosk-room-select-screen {
+  width: 100%;
+  height: 100%;
+  padding: 34px 42px 32px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 100% 0, rgba(66, 192, 255, 0.17), transparent 26%),
+    linear-gradient(180deg, #ffffff 0%, #f6fafc 100%);
+}
+
+.kiosk-room-select-header {
+  flex-shrink: 0;
+  min-height: 176px;
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr) 260px;
+  align-items: center;
+  gap: 20px;
+}
+
+.kiosk-room-select-back {
+  height: 88px;
+  padding: 0 24px;
+  border: 3px solid #168dc8;
+  border-radius: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 28px;
+  color: #06364e;
+  background: #dff4ff;
+  box-shadow: 0 6px 0 rgba(20, 104, 151, 0.18);
+}
+
+.kiosk-room-select-back svg {
+  width: 34px;
+  height: 34px;
+}
+
+.kiosk-room-select-back:active {
+  transform: translateY(4px);
+  box-shadow: 0 2px 0 rgba(20, 104, 151, 0.18);
+}
+
+.kiosk-room-select-heading {
+  min-width: 0;
+}
+
+.kiosk-room-select-heading p {
+  margin: 0 0 5px;
+  font-size: 24px;
+  color: #475569;
+}
+
+.kiosk-room-select-heading h1 {
+  margin: 0;
+  font-size: 48px;
+  line-height: 1.08;
+  color: #111827;
+  word-break: keep-all;
+}
+
+.kiosk-room-select-heading span {
+  display: block;
+  margin-top: 9px;
+  font-size: 24px;
+  color: #64748b;
+}
+
+.kiosk-selected-stay-summary {
+  min-height: 104px;
+  padding: 18px 22px;
+  border: 3px solid;
+  border-radius: 22px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 12px;
+}
+
+.kiosk-selected-stay-summary svg {
+  width: 32px;
+  height: 32px;
+  grid-row: 1 / span 2;
+}
+
+.kiosk-selected-stay-summary span {
+  font-size: 25px;
+  line-height: 1;
+}
+
+.kiosk-selected-stay-summary strong {
+  font-size: 34px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.kiosk-selected-stay-summary.is-overnight {
+  color: #075985;
+  border-color: #38bdf8;
+  background: #e0f2fe;
+}
+
+.kiosk-selected-stay-summary.is-short-stay {
+  color: #9a3412;
+  border-color: #fb923c;
+  background: #fff1e7;
+}
+
+.kiosk-room-options {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 7px 24px 3px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: 22px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: auto;
+  scrollbar-color: #7cccf3 #e7f3f9;
+}
+
+.kiosk-room-option {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 3px solid #dce4ea;
+  border-radius: 24px;
+  color: #111827;
+  background: #fff;
+  box-shadow: 0 8px 20px rgba(26, 43, 62, 0.12);
+  text-align: left;
+  transition:
+    transform 0.12s ease,
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.kiosk-room-option:active {
+  transform: translateY(4px) scale(0.99);
+  border-color: #42c0ff;
+  box-shadow: 0 3px 10px rgba(26, 43, 62, 0.15);
+}
+
+.kiosk-room-option-image {
+  position: relative;
+  width: 100%;
+  height: 300px;
+  overflow: hidden;
+  background: #e8edf1;
+}
+
+.kiosk-room-option-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.kiosk-room-option-image span {
+  position: absolute;
+  right: 16px;
+  bottom: 15px;
+  padding: 10px 15px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 22px;
+  color: #082f49;
+  background: rgba(224, 242, 254, 0.94);
+  border: 2px solid rgba(56, 189, 248, 0.9);
+}
+
+.kiosk-room-option-image span svg {
+  width: 24px;
+  height: 24px;
+}
+
+.kiosk-room-option-details {
+  min-height: 116px;
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+}
+
+.kiosk-room-option-details strong {
+  font-size: 38px;
+  line-height: 1;
+}
+
+.kiosk-room-option-details span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 23px;
+  color: #586574;
+}
+
+.kiosk-room-option-details span svg {
+  width: 23px;
+  height: 23px;
+}
+
+.kiosk-room-options-empty {
+  flex: 1;
+  min-height: 0;
+  border: 3px dashed #d6dde3;
+  border-radius: 26px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.kiosk-room-options-empty > svg {
+  width: 56px;
+  height: 56px;
+  color: #f59e0b;
+}
+
+.kiosk-room-options-empty p {
+  margin: 0;
+  font-size: 32px;
+}
+
+.kiosk-room-options-empty button {
+  min-height: 76px;
+  padding: 0 28px;
+  border-radius: 18px;
+  font-size: 26px;
+  color: #082f49;
+  background: #bae6fd;
+}
+
+@media (orientation: landscape) {
+  .kiosk-room-select-header {
+    min-height: 132px;
+    grid-template-columns: 180px minmax(0, 1fr) 260px;
+  }
+
+  .kiosk-room-options {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .kiosk-room-option-image {
+    height: 230px;
+  }
+}
+
+@media (orientation: portrait) and (max-height: 1600px) {
+  .kiosk-room-select-screen {
+    padding: 24px 30px 22px;
+    gap: 16px;
+  }
+
+  .kiosk-room-select-header {
+    min-height: 142px;
+    grid-template-columns: 170px minmax(0, 1fr) 225px;
+    gap: 14px;
+  }
+
+  .kiosk-room-select-back {
+    height: 76px;
+    padding: 0 18px;
+    font-size: 25px;
+  }
+
+  .kiosk-room-select-heading h1 {
+    font-size: 42px;
+  }
+
+  .kiosk-selected-stay-summary {
+    min-height: 88px;
+    padding: 13px 17px;
+  }
+
+  .kiosk-selected-stay-summary strong {
+    font-size: 30px;
+  }
+
+  .kiosk-room-options {
+    gap: 16px;
+  }
+
+  .kiosk-room-option-image {
+    height: 235px;
+  }
+
+  .kiosk-room-option-details {
+    min-height: 94px;
+    padding: 14px 18px;
+  }
+
+  .kiosk-room-option-details strong {
+    font-size: 33px;
   }
 }
 

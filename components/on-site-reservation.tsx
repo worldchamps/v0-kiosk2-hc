@@ -5,7 +5,18 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Phone, Loader2, Home, Moon, Clock, AlertTriangle, CalendarDays, RefreshCw } from "lucide-react"
+import {
+  Phone,
+  Loader2,
+  Home,
+  Moon,
+  Clock,
+  AlertTriangle,
+  CalendarDays,
+  RefreshCw,
+  ArrowLeft,
+  DoorOpen,
+} from "lucide-react"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { getRoomImagePath } from "@/lib/room-utils"
 import { sortRoomTypes } from "@/lib/room-type-order"
@@ -29,6 +40,13 @@ interface AvailableRoom {
 }
 
 type BookingStep = "roomType" | "roomSelect" | "guestInfo" | "complete" | "payment"
+type StayType = "overnight" | "shortStay"
+
+interface StaySelection {
+  type: StayType
+  label: "숙박" | "대실"
+  price: number
+}
 
 const ROOM_TYPE_PRICES = [
   { keyword: "디럭스", overnight: 60000, shortStay: 30000 },
@@ -44,12 +62,34 @@ function formatPrice(price: number) {
   return `${price.toLocaleString("ko-KR")}원`
 }
 
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+function getBookingDates(stayType: StayType) {
+  const today = new Date()
+  const checkOut = new Date(today)
+
+  if (stayType === "overnight") {
+    checkOut.setDate(checkOut.getDate() + 1)
+  }
+
+  return {
+    checkInDate: formatLocalDate(today),
+    checkOutDate: formatLocalDate(checkOut),
+  }
+}
+
 export default function OnSiteReservation({ onNavigate, location }: OnSiteReservationProps) {
   const [step, setStep] = useState<BookingStep>("roomType")
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [roomsByType, setRoomsByType] = useState<Record<string, AvailableRoom[]>>({})
   const [selectedRoomType, setSelectedRoomType] = useState<string>("")
+  const [selectedStay, setSelectedStay] = useState<StaySelection | null>(null)
   const [selectedRoom, setSelectedRoom] = useState<AvailableRoom | null>(null)
   const [guestName, setGuestName] = useState("")
   const [phoneNumber, setPhoneNumber] = useState("")
@@ -59,7 +99,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   const [roomsError, setRoomsError] = useState("")
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const { paymentSession, startPayment, completePayment, cancelPayment } = usePayment()
-  const bookingPrice = 100000
+  const bookingPrice = selectedStay?.price ?? 0
 
   const locationName = location === "CAMP" ? "캠프" : location ? `${location}동` : ""
 
@@ -106,6 +146,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
     }
 
     setSelectedRoomType("")
+    setSelectedStay(null)
     setSelectedRoom(null)
     setGuestName("")
     setPhoneNumber("")
@@ -125,12 +166,9 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
 
   useEffect(() => {
     fetchAvailableRooms()
-    // Set default dates (today and tomorrow)
-    const today = new Date()
-    const tomorrow = new Date(today)
-    tomorrow.setDate(tomorrow.getDate() + 1)
-    setCheckInDate(today.toISOString().split("T")[0])
-    setCheckOutDate(tomorrow.toISOString().split("T")[0])
+    const dates = getBookingDates("overnight")
+    setCheckInDate(dates.checkInDate)
+    setCheckOutDate(dates.checkOutDate)
   }, [fetchAvailableRooms])
 
   useEffect(() => {
@@ -143,12 +181,18 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
     return () => window.clearInterval(refreshInterval)
   }, [fetchAvailableRooms, step])
 
-  const handleRoomTypeSelect = (roomType: string) => {
+  const handleRoomTypeSelect = (roomType: string, stay: StaySelection) => {
+    const dates = getBookingDates(stay.type)
     setSelectedRoomType(roomType)
+    setSelectedStay(stay)
+    setCheckInDate(dates.checkInDate)
+    setCheckOutDate(dates.checkOutDate)
     setStep("roomSelect")
   }
 
   const handleRoomSelect = (room: AvailableRoom) => {
+    if (!selectedStay) return
+
     setSelectedRoom(room)
 
     // Skip guest info step, set dummy data
@@ -167,14 +211,17 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
       checkInDate,
       checkOutDate,
       password: room.password,
+      stayType: selectedStay.type,
+      stayTypeLabel: selectedStay.label,
+      price: selectedStay.price,
     }
 
-    startPayment(bookingPrice, reservationInfo)
+    startPayment(selectedStay.price, reservationInfo)
     setStep("payment")
   }
 
   const handleSubmitBooking = async () => {
-    if (!selectedRoom || !guestName || !phoneNumber) {
+    if (!selectedRoom || !selectedStay || !guestName || !phoneNumber) {
       alert("모든 정보를 입력해주세요")
       return
     }
@@ -189,9 +236,12 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
       checkInDate,
       checkOutDate,
       password: selectedRoom.password,
+      stayType: selectedStay.type,
+      stayTypeLabel: selectedStay.label,
+      price: selectedStay.price,
     }
 
-    startPayment(bookingPrice, reservationInfo)
+    startPayment(selectedStay.price, reservationInfo)
     setStep("payment")
   }
 
@@ -214,6 +264,8 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
           checkInDate,
           checkOutDate,
           password: selectedRoom?.password,
+          stayType: selectedStay?.type,
+          stayTypeLabel: selectedStay?.label,
         }),
       })
 
@@ -338,12 +390,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
                 const prices = getRoomTypePrices(roomType)
 
                 return (
-                  <button
-                    type="button"
-                    key={roomType}
-                    className="kiosk-room-card"
-                    onClick={() => handleRoomTypeSelect(roomType)}
-                  >
+                  <div key={roomType} className="kiosk-room-card">
                     <div className="kiosk-room-card-image">
                       <img
                         src={imagePath || "/placeholder.svg"}
@@ -357,30 +404,46 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
                     <div className="kiosk-room-card-body">
                       <div className="kiosk-room-card-copy">
                         <h2>{roomType}</h2>
-                        <p>카드를 눌러 이용 가능한 객실을 확인하세요</p>
+                        <p>이용 방법을 선택해주세요</p>
                       </div>
                       {prices ? (
                         <div className="kiosk-room-prices" aria-label={`${roomType} 이용 요금`}>
-                          <div className="kiosk-room-price kiosk-room-price-overnight">
-                            <span>
-                              <Moon className="kiosk-room-price-icon" />
-                              숙박
-                            </span>
-                            <strong>{formatPrice(prices.overnight)}</strong>
-                          </div>
-                          <div className="kiosk-room-price kiosk-room-price-short-stay">
-                            <span>
-                              <Clock className="kiosk-room-price-icon" />
-                              대실
-                            </span>
-                            <strong>{formatPrice(prices.shortStay)}</strong>
-                          </div>
+                          <button
+                            type="button"
+                            className="kiosk-room-price kiosk-room-price-overnight"
+                            onClick={() =>
+                              handleRoomTypeSelect(roomType, {
+                                type: "overnight",
+                                label: "숙박",
+                                price: prices.overnight,
+                              })
+                            }
+                            aria-label={`${roomType} 숙박 ${formatPrice(prices.overnight)}`}
+                          >
+                            <Moon className="kiosk-room-price-icon" />
+                            <strong>숙박 {formatPrice(prices.overnight)}</strong>
+                          </button>
+                          <button
+                            type="button"
+                            className="kiosk-room-price kiosk-room-price-short-stay"
+                            onClick={() =>
+                              handleRoomTypeSelect(roomType, {
+                                type: "shortStay",
+                                label: "대실",
+                                price: prices.shortStay,
+                              })
+                            }
+                            aria-label={`${roomType} 대실 ${formatPrice(prices.shortStay)}`}
+                          >
+                            <Clock className="kiosk-room-price-icon" />
+                            <strong>대실 {formatPrice(prices.shortStay)}</strong>
+                          </button>
                         </div>
                       ) : (
-                        <div className="kiosk-room-price-fallback">객실을 눌러 요금을 확인하세요</div>
+                        <div className="kiosk-room-price-fallback">프런트에 이용 요금을 문의해주세요</div>
                       )}
                     </div>
-                  </button>
+                  </div>
                 )
               })}
             </div>
@@ -391,61 +454,95 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   }
 
   // Step 2: Room Selection
-  if (step === "roomSelect" && selectedRoomType) {
+  if (step === "roomSelect" && selectedRoomType && selectedStay) {
     const rooms = roomsByType[selectedRoomType] || []
 
     return (
-      <div className="flex items-start justify-start w-full h-full">
-        <div className="kiosk-content-container">
-          <div>
-            <h1 className="kiosk-title">더 비치스테이 {locationName}</h1>
-            <div className="kiosk-highlight">{selectedRoomType} - 객실 선택 (2/3)</div>
-          </div>
-
-          <div className="flex-1 w-full py-6 mt-8 flex flex-col">
-            <div className="grid grid-cols-2 gap-6 w-full">
-              {rooms.map((room) => {
-                const imagePath = getRoomImagePath(room.roomType, room.roomCode)
-
-                return (
-                  <Card
-                    key={room.roomCode}
-                    className="overflow-hidden shadow-lg cursor-pointer hover:shadow-xl transition-all hover:scale-[1.02]"
-                    onClick={() => handleRoomSelect(room)}
-                  >
-                    <CardContent className="p-0">
-                      <div className="w-full h-48 bg-gray-100">
-                        <img
-                          src={imagePath || "/placeholder.svg"}
-                          alt={room.roomCode}
-                          className="w-full h-full object-cover"
-                          onError={(e) => {
-                            e.currentTarget.src = "/placeholder.svg?height=200&width=300"
-                          }}
-                        />
-                      </div>
-                      <div className="p-6">
-                        <p className="font-bold text-3xl mb-2">{room.roomCode}</p>
-                        <p className="text-xl text-gray-600 flex items-center gap-2">
-                          <Home className="h-5 w-5" />
-                          {room.building} · {room.floor}층
-                        </p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )
-              })}
-            </div>
-          </div>
-
-          <Button
-            variant="outline"
-            onClick={() => setStep("roomType")}
-            className="h-20 text-2xl w-full border-3 border-gray-300 mt-6 font-bold"
+      <div className="kiosk-room-select-screen">
+        <header className="kiosk-room-select-header">
+          <button
+            type="button"
+            className="kiosk-room-select-back"
+            onClick={() => {
+              setSelectedRoomType("")
+              setSelectedStay(null)
+              setStep("roomType")
+            }}
           >
+            <ArrowLeft />
             돌아가기
-          </Button>
+          </button>
+
+          <div className="kiosk-room-select-heading">
+            <p>더 비치스테이 {locationName}</p>
+            <h1>{selectedRoomType} 객실 선택</h1>
+            <span>원하시는 객실을 눌러주세요</span>
+          </div>
+
+          <div
+            className={`kiosk-selected-stay-summary ${
+              selectedStay.type === "overnight" ? "is-overnight" : "is-short-stay"
+            }`}
+          >
+            {selectedStay.type === "overnight" ? <Moon /> : <Clock />}
+            <span>{selectedStay.label}</span>
+            <strong>{formatPrice(selectedStay.price)}</strong>
+          </div>
+        </header>
+
+        <div className="kiosk-room-options" aria-label={`${selectedRoomType} 객실 목록`}>
+          {rooms.map((room) => {
+            const imagePath = getRoomImagePath(room.roomType, room.roomCode)
+
+            return (
+              <button
+                type="button"
+                key={room.roomCode}
+                className="kiosk-room-option"
+                onClick={() => handleRoomSelect(room)}
+                aria-label={`${room.roomCode} 객실 선택`}
+              >
+                <div className="kiosk-room-option-image">
+                  <img
+                    src={imagePath || "/placeholder.svg"}
+                    alt={`${room.roomCode} 객실`}
+                    onError={(e) => {
+                      e.currentTarget.src = "/placeholder.svg?height=360&width=560"
+                    }}
+                  />
+                  <span>
+                    <DoorOpen />
+                    선택
+                  </span>
+                </div>
+                <div className="kiosk-room-option-details">
+                  <strong>{room.roomCode}</strong>
+                  <span>
+                    <Home />
+                    {room.building} · {room.floor}층
+                  </span>
+                </div>
+              </button>
+            )
+          })}
         </div>
+
+        {rooms.length === 0 && (
+          <div className="kiosk-room-options-empty">
+            <AlertTriangle />
+            <p>선택 가능한 객실이 없습니다</p>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedRoomType("")
+                setSelectedStay(null)
+                setStep("roomType")
+              }}
+            >
+              다른 객실 타입 보기
+            </button>
+          </div>
+        )}
       </div>
     )
   }
@@ -586,7 +683,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
         onPaymentComplete={handlePaymentComplete}
         onCancel={handlePaymentCancel}
         title={`더 비치스테이 ${locationName}`}
-        description="현장 예약 - 결제 (현금 전용 / Cash Only)"
+        description={`${selectedStay?.label ?? "현장 예약"} ${formatPrice(bookingPrice)} · 현금 전용`}
       />
     )
   }
