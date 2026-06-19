@@ -340,19 +340,18 @@ button {
   backdrop-filter: blur(5px);
 }
 
-.kiosk-room-bed-icon {
-  width: 24px;
-  height: 24px;
-  flex-shrink: 0;
-}
-
 .kiosk-room-card-body {
   flex: 1;
   padding: 20px 22px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
   gap: 16px;
+}
+
+.kiosk-room-card-copy {
+  min-width: 0;
 }
 
 .kiosk-room-card-body h2 {
@@ -364,21 +363,71 @@ button {
 
 .kiosk-room-card-body p {
   margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
   font-size: 18px;
   color: #626b76;
 }
 
-.kiosk-room-select-label {
-  flex-shrink: 0;
-  margin: 0 !important;
-  padding: 13px 18px;
-  border-radius: 14px;
-  font-size: 21px !important;
-  color: #111;
-  background: rgb(var(--primary-button));
+.kiosk-room-prices {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.kiosk-room-price {
+  min-width: 0;
+  min-height: 76px;
+  padding: 11px 15px;
+  border: 2px solid;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.kiosk-room-price span {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 18px;
+}
+
+.kiosk-room-price strong {
+  font-size: 25px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.kiosk-room-price-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.kiosk-room-price-overnight {
+  color: #075985;
+  border-color: #7dd3fc;
+  background: #e0f2fe;
+}
+
+.kiosk-room-price-short-stay {
+  color: #9a3412;
+  border-color: #fdba74;
+  background: #fff1e7;
+}
+
+.kiosk-room-price-fallback {
+  width: 100%;
+  min-height: 76px;
+  padding: 16px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: #334155;
+  background: #eef2f6;
 }
 
 .kiosk-home-message {
@@ -591,7 +640,6 @@ button {
   .kiosk-room-card-body {
     min-width: 0;
     padding: 30px 30px 26px;
-    flex-direction: column;
     align-items: stretch;
     justify-content: center;
     gap: 24px;
@@ -605,28 +653,38 @@ button {
   }
 
   .kiosk-room-card-body p {
-    align-items: flex-start;
     font-size: clamp(23px, 2.6vw, 29px);
     line-height: 1.35;
     word-break: keep-all;
   }
 
-  .kiosk-room-bed-icon {
-    width: 30px;
-    height: 30px;
-    margin-top: 2px;
+  .kiosk-room-prices {
+    gap: 14px;
   }
 
-  .kiosk-room-select-label {
-    width: 100%;
-    min-height: 78px;
-    padding: 18px 24px;
-    border-radius: 18px;
-    display: flex !important;
-    align-items: center;
-    justify-content: center;
-    font-size: clamp(28px, 3.2vw, 36px) !important;
-    box-shadow: 0 5px 0 rgba(20, 104, 151, 0.18);
+  .kiosk-room-price {
+    min-height: 112px;
+    padding: 16px 19px;
+    border-radius: 20px;
+  }
+
+  .kiosk-room-price span {
+    gap: 9px;
+    font-size: clamp(24px, 2.7vw, 30px);
+  }
+
+  .kiosk-room-price strong {
+    font-size: clamp(32px, 3.6vw, 40px);
+  }
+
+  .kiosk-room-price-icon {
+    width: 28px;
+    height: 28px;
+  }
+
+  .kiosk-room-price-fallback {
+    min-height: 112px;
+    font-size: clamp(24px, 2.7vw, 30px);
   }
 
   .kiosk-room-card-loading {
@@ -692,9 +750,9 @@ button {
     gap: 17px;
   }
 
-  .kiosk-room-select-label {
-    min-height: 64px;
-    padding: 13px 20px;
+  .kiosk-room-price {
+    min-height: 86px;
+    padding: 11px 15px;
   }
 }
 

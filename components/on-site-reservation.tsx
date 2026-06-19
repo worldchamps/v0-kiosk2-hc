@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Phone, Loader2, Home, Bed, AlertTriangle, CalendarDays, RefreshCw } from "lucide-react"
+import { Phone, Loader2, Home, Moon, Clock, AlertTriangle, CalendarDays, RefreshCw } from "lucide-react"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { getRoomImagePath } from "@/lib/room-utils"
 import { sortRoomTypes } from "@/lib/room-type-order"
@@ -29,6 +29,20 @@ interface AvailableRoom {
 }
 
 type BookingStep = "roomType" | "roomSelect" | "guestInfo" | "complete" | "payment"
+
+const ROOM_TYPE_PRICES = [
+  { keyword: "디럭스", overnight: 60000, shortStay: 30000 },
+  { keyword: "스위트", overnight: 80000, shortStay: 50000 },
+  { keyword: "스탠다드", overnight: 50000, shortStay: 30000 },
+]
+
+function getRoomTypePrices(roomType: string) {
+  return ROOM_TYPE_PRICES.find(({ keyword }) => roomType.includes(keyword))
+}
+
+function formatPrice(price: number) {
+  return `${price.toLocaleString("ko-KR")}원`
+}
 
 export default function OnSiteReservation({ onNavigate, location }: OnSiteReservationProps) {
   const [step, setStep] = useState<BookingStep>("roomType")
@@ -321,6 +335,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
                 const availableCount = rooms.length
                 const sampleRoom = rooms[0]
                 const imagePath = getRoomImagePath(roomType, sampleRoom.roomCode)
+                const prices = getRoomTypePrices(roomType)
 
                 return (
                   <button
@@ -340,14 +355,30 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
                       <span className="kiosk-room-availability">{availableCount}개 예약 가능</span>
                     </div>
                     <div className="kiosk-room-card-body">
-                      <div>
+                      <div className="kiosk-room-card-copy">
                         <h2>{roomType}</h2>
-                        <p>
-                          <Bed className="kiosk-room-bed-icon" />
-                          객실을 선택해 바로 예약하세요
-                        </p>
+                        <p>카드를 눌러 이용 가능한 객실을 확인하세요</p>
                       </div>
-                      <span className="kiosk-room-select-label">선택하기</span>
+                      {prices ? (
+                        <div className="kiosk-room-prices" aria-label={`${roomType} 이용 요금`}>
+                          <div className="kiosk-room-price kiosk-room-price-overnight">
+                            <span>
+                              <Moon className="kiosk-room-price-icon" />
+                              숙박
+                            </span>
+                            <strong>{formatPrice(prices.overnight)}</strong>
+                          </div>
+                          <div className="kiosk-room-price kiosk-room-price-short-stay">
+                            <span>
+                              <Clock className="kiosk-room-price-icon" />
+                              대실
+                            </span>
+                            <strong>{formatPrice(prices.shortStay)}</strong>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="kiosk-room-price-fallback">객실을 눌러 요금을 확인하세요</div>
+                      )}
                     </div>
                   </button>
                 )
