@@ -678,12 +678,12 @@ button {
   }
 
   .kiosk-room-price strong {
-    font-size: clamp(29px, 3.25vw, 36px);
+    font-size: clamp(38px, 4.2vw, 48px);
   }
 
   .kiosk-room-price-icon {
-    width: 30px;
-    height: 30px;
+    width: 38px;
+    height: 38px;
   }
 
   .kiosk-room-price-fallback {
@@ -760,7 +760,7 @@ button {
   }
 
   .kiosk-room-price strong {
-    font-size: clamp(25px, 2.8vw, 31px);
+    font-size: clamp(30px, 3.4vw, 38px);
   }
 }
 
