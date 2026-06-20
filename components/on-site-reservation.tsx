@@ -23,6 +23,7 @@ import { sortRoomTypes } from "@/lib/room-type-order"
 import { usePayment } from "@/contexts/payment-context"
 import PaymentScreen from "@/components/payment-screen"
 import CheckInComplete from "@/components/check-in-complete"
+import SmokingPolicyDialog from "@/components/smoking-policy-dialog"
 
 interface OnSiteReservationProps {
   onNavigate: (screen: string) => void
@@ -91,6 +92,8 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   const [selectedRoomType, setSelectedRoomType] = useState<string>("")
   const [selectedStay, setSelectedStay] = useState<StaySelection | null>(null)
   const [selectedRoom, setSelectedRoom] = useState<AvailableRoom | null>(null)
+  const [pendingRoom, setPendingRoom] = useState<AvailableRoom | null>(null)
+  const [showSmokingPolicy, setShowSmokingPolicy] = useState(false)
   const [guestName, setGuestName] = useState("")
   const [phoneNumber, setPhoneNumber] = useState("")
   const [checkInDate, setCheckInDate] = useState("")
@@ -148,6 +151,8 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
     setSelectedRoomType("")
     setSelectedStay(null)
     setSelectedRoom(null)
+    setPendingRoom(null)
+    setShowSmokingPolicy(false)
     setGuestName("")
     setPhoneNumber("")
     setReservationData(null)
@@ -190,7 +195,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
     setStep("roomSelect")
   }
 
-  const handleRoomSelect = (room: AvailableRoom) => {
+  const startRoomPayment = (room: AvailableRoom) => {
     if (!selectedStay) return
 
     setSelectedRoom(room)
@@ -218,6 +223,27 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
 
     startPayment(selectedStay.price, reservationInfo)
     setStep("payment")
+  }
+
+  const handleRoomSelect = (room: AvailableRoom) => {
+    if (!selectedStay) return
+
+    setPendingRoom(room)
+    setShowSmokingPolicy(true)
+  }
+
+  const handleSmokingPolicyAgree = () => {
+    if (!pendingRoom) return
+
+    const room = pendingRoom
+    setPendingRoom(null)
+    setShowSmokingPolicy(false)
+    startRoomPayment(room)
+  }
+
+  const handleSmokingPolicyCancel = () => {
+    setPendingRoom(null)
+    setShowSmokingPolicy(false)
   }
 
   const handleSubmitBooking = async () => {
@@ -543,6 +569,14 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
             </button>
           </div>
         )}
+
+        <SmokingPolicyDialog
+          open={showSmokingPolicy}
+          onAgree={handleSmokingPolicyAgree}
+          onCancel={handleSmokingPolicyCancel}
+          actionLabel="결제하기"
+          cancelLabel="객실 다시 선택"
+        />
       </div>
     )
   }

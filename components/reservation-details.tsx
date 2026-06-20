@@ -11,6 +11,7 @@ import { playAudio } from "@/lib/audio-utils"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
 import { getKioskPropertyId, propertyUsesElectron } from "@/lib/property-utils"
+import SmokingPolicyDialog from "@/components/smoking-policy-dialog"
 
 interface Reservation {
   place?: string
@@ -52,6 +53,7 @@ export default function ReservationDetails({
   const [roomImagePath, setRoomImagePath] = useState("/hotel-floor-plan.png")
   const [imageExists, setImageExists] = useState(true)
   const [showPassword, setShowPassword] = useState(false)
+  const [showSmokingPolicy, setShowSmokingPolicy] = useState(false)
 
   const locationTitle = getLocationTitle(kioskLocation)
 
@@ -106,7 +108,7 @@ export default function ReservationDetails({
 
   if (!reservation) return null
 
-  const handleCheckIn = async () => {
+  const completeCheckIn = async () => {
     try {
       await onCheckIn()
 
@@ -140,6 +142,15 @@ export default function ReservationDetails({
         }, 500)
       }
     }
+  }
+
+  const handleCheckIn = () => {
+    setShowSmokingPolicy(true)
+  }
+
+  const handleSmokingPolicyAgree = async () => {
+    setShowSmokingPolicy(false)
+    await completeCheckIn()
   }
 
   const handleBackClick = () => {
@@ -310,6 +321,14 @@ export default function ReservationDetails({
             돌아가기
           </Button>
         </div>
+
+        <SmokingPolicyDialog
+          open={showSmokingPolicy}
+          onAgree={handleSmokingPolicyAgree}
+          onCancel={() => setShowSmokingPolicy(false)}
+          actionLabel="체크인하기"
+          cancelLabel="예약 정보로 돌아가기"
+        />
       </div>
     </div>
   )

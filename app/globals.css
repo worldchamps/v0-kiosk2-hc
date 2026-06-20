@@ -764,6 +764,145 @@ button {
   }
 }
 
+/* Required non-smoking confirmation used by on-site booking and reservation check-in. */
+.kiosk-smoking-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  padding: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.kiosk-smoking-dialog {
+  width: min(880px, 100%);
+  padding: 54px;
+  border: 4px solid #f87171;
+  border-radius: 34px;
+  background: #fff;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+  text-align: center;
+}
+
+.kiosk-smoking-dialog-icon {
+  width: 124px;
+  height: 124px;
+  margin: 0 auto 28px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.kiosk-smoking-dialog-icon svg {
+  width: 72px;
+  height: 72px;
+}
+
+.kiosk-smoking-dialog-copy > p {
+  margin: 0 0 8px;
+  font-size: 28px;
+  color: #991b1b;
+}
+
+.kiosk-smoking-dialog-copy h2 {
+  margin: 0;
+  font-size: 58px;
+  line-height: 1.15;
+  color: #111827;
+  word-break: keep-all;
+}
+
+.kiosk-smoking-dialog-copy > div {
+  margin-top: 32px;
+  padding: 26px 28px;
+  border: 3px solid #fbbf24;
+  border-radius: 22px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  color: #78350f;
+  background: #fffbeb;
+  text-align: left;
+}
+
+.kiosk-smoking-dialog-copy > div svg {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+}
+
+.kiosk-smoking-dialog-copy > div span {
+  font-size: 30px;
+  line-height: 1.4;
+  word-break: keep-all;
+}
+
+.kiosk-smoking-dialog-actions {
+  margin-top: 38px;
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.45fr);
+  gap: 18px;
+}
+
+.kiosk-smoking-dialog-actions button {
+  min-height: 104px;
+  padding: 16px 22px;
+  border-radius: 22px;
+  font-size: 30px;
+  line-height: 1.2;
+}
+
+.kiosk-smoking-dialog-cancel {
+  border: 3px solid #cbd5e1;
+  color: #334155;
+  background: #f8fafc;
+}
+
+.kiosk-smoking-dialog-agree {
+  border: 3px solid #0284c7;
+  color: #082f49;
+  background: #7dd3fc;
+  box-shadow: 0 7px 0 rgba(3, 105, 161, 0.24);
+}
+
+.kiosk-smoking-dialog-actions button:active {
+  transform: translateY(4px);
+  box-shadow: none;
+}
+
+@media (orientation: portrait) {
+  .kiosk-smoking-dialog {
+    padding: 62px 48px 52px;
+  }
+
+  .kiosk-smoking-dialog-copy h2 {
+    font-size: clamp(58px, 6.2vw, 72px);
+  }
+
+  .kiosk-smoking-dialog-copy > div span {
+    font-size: clamp(30px, 3.4vw, 38px);
+  }
+
+  .kiosk-smoking-dialog-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .kiosk-smoking-dialog-actions button {
+    min-height: 116px;
+    font-size: clamp(31px, 3.6vw, 40px);
+  }
+
+  .kiosk-smoking-dialog-agree {
+    grid-row: 1;
+  }
+}
+
 /* Room selection: large photos, a fixed visible back button, and an internal scroll area. */
 .kiosk-room-select-screen {
   width: 100%;
