@@ -65,6 +65,7 @@
   "build": {
     "appId": "com.thebeachstay.kiosk",
     "productName": "TheBeachStay Kiosk",
+    "asar": false,
     "directories": {
       "output": "dist"
     },
@@ -76,6 +77,15 @@
       "package.json",
       "node_modules/**/*",
       ".env.local"
+    ],
+    "extraResources": [
+      {
+        "from": "hardware_server",
+        "to": "hardware_server",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "win": {
       "target": "nsis",

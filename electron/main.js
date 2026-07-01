@@ -1,6 +1,8 @@
 require("dotenv").config({ path: require("path").join(__dirname, "..", ".env.local") })
 
 const { app, BrowserWindow, ipcMain, Menu } = require("electron")
+const { spawn } = require("child_process")
+const http = require("http")
 const path = require("path")
 const { SerialPort } = require("serialport")
 const overlayButtonModule = require("./overlay-button")
@@ -15,9 +17,12 @@ let printerPort = null
 let printerConnecting = false
 let billAcceptorConnecting = false
 let billDispenserConnecting = false
+let hardwareServerProcess = null
+let nextServer = null
 
 const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
 const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"
+const KIOSK_START_LOCATION = process.env.KIOSK_START_LOCATION || ""
 const KIOSK_WINDOW_MODE = process.env.KIOSK_WINDOW_MODE === "true"
 const isDev = process.env.NODE_ENV !== "production"
 const useKioskChrome = KIOSK_WINDOW_MODE || !isDev
@@ -27,6 +32,99 @@ if (isDev) {
 }
 
 // CONFIG for hardware devices now managed by hardware server
+
+function getAppDir() {
+  return app.isPackaged ? path.join(process.resourcesPath, "app") : path.join(__dirname, "..")
+}
+
+function getKioskStartUrl(baseUrl) {
+  if (!KIOSK_START_LOCATION) {
+    return baseUrl
+  }
+
+  const normalizedLocation = KIOSK_START_LOCATION.toUpperCase()
+  return `${baseUrl.replace(/\/$/, "")}/kiosk/${encodeURIComponent(normalizedLocation)}`
+}
+
+async function startNextServer() {
+  if (!app.isPackaged || nextServer) {
+    return
+  }
+
+  const appDir = getAppDir()
+  console.log("[NEXT_SERVER] Starting packaged Next server from:", appDir)
+
+  const next = require("next")
+  const nextApp = next({
+    dev: false,
+    dir: appDir,
+    hostname: "localhost",
+    port: 3000,
+  })
+  const handle = nextApp.getRequestHandler()
+
+  await nextApp.prepare()
+
+  nextServer = http.createServer((req, res) => {
+    handle(req, res)
+  })
+
+  await new Promise((resolve, reject) => {
+    nextServer.once("error", (error) => {
+      if (error && error.code === "EADDRINUSE") {
+        console.warn("[NEXT_SERVER] Port 3000 already in use; using existing server")
+        nextServer = null
+        resolve()
+        return
+      }
+      reject(error)
+    })
+    nextServer.listen(3000, "localhost", () => {
+      nextServer.off("error", reject)
+      console.log("[NEXT_SERVER] Listening on http://localhost:3000")
+      resolve()
+    })
+  })
+}
+
+function getHardwareServerDir() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "hardware_server")
+    : path.join(__dirname, "..", "hardware_server")
+}
+
+function startHardwareServer() {
+  if (hardwareServerProcess && !hardwareServerProcess.killed) {
+    return
+  }
+
+  const hardwareServerDir = getHardwareServerDir()
+  const mainPy = path.join(hardwareServerDir, "main.py")
+  const requirements = path.join(hardwareServerDir, "requirements.txt")
+
+  if (!require("fs").existsSync(mainPy)) {
+    console.error("[HARDWARE_SERVER] main.py not found:", mainPy)
+    return
+  }
+
+  const command = `python -m pip install -r "${requirements}" && python "${mainPy}"`
+  console.log("[HARDWARE_SERVER] Starting:", mainPy)
+
+  hardwareServerProcess = spawn("cmd.exe", ["/c", command], {
+    cwd: hardwareServerDir,
+    windowsHide: true,
+    stdio: isDev ? "inherit" : "ignore",
+  })
+
+  hardwareServerProcess.on("exit", (code) => {
+    console.log("[HARDWARE_SERVER] Exited:", code)
+    hardwareServerProcess = null
+  })
+
+  hardwareServerProcess.on("error", (error) => {
+    console.error("[HARDWARE_SERVER] Failed to start:", error)
+  })
+}
 
 const PRINTER_CONFIG = {
   path: process.env.PRINTER_PATH || "COM2",
@@ -86,9 +184,7 @@ function createWindow() {
       })
     })
 
-    const startUrl = isDev
-      ? "http://localhost:3000"
-      : `file://${path.join(__dirname, "../.next/server/app/index.html")}`
+    const startUrl = getKioskStartUrl("http://localhost:3000")
 
     if (isDev) {
       console.log("[v0] Loading URL:", startUrl)
@@ -120,6 +216,8 @@ function createWindow() {
     })
 
     setTimeout(() => {
+      startHardwareServer()
+
       // Hardware Server Bridge initialization
       hardwareBridge.onStatus((status) => {
         if (mainWindow && mainWindow.webContents) {
@@ -160,7 +258,9 @@ function createWindow() {
         }
       })
 
-      hardwareBridge.connect()
+      setTimeout(() => {
+        hardwareBridge.connect()
+      }, 3000)
       // connectPrinter() // Disabled: Printer is now managed by hardware_server
     }, 2000)
   } else {
@@ -810,9 +910,23 @@ ipcMain.handle("printer:print-test", async () => {
   }
 })
 
-app.whenReady().then(createWindow)
+app.whenReady().then(async () => {
+  if (!OVERLAY_MODE) {
+    await startNextServer()
+  }
+  createWindow()
+})
 
 app.on("window-all-closed", () => {
+  if (nextServer) {
+    nextServer.close()
+    nextServer = null
+  }
+
+  if (hardwareServerProcess && !hardwareServerProcess.killed) {
+    hardwareServerProcess.kill()
+  }
+
   if (billAcceptorPort && billAcceptorPort.isOpen) {
     billAcceptorPort.close()
   }
