@@ -2,11 +2,11 @@
 
 import { use, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { saveKioskLocation } from "@/lib/location-utils"
+import { saveKioskLocation, type KioskLocation } from "@/lib/location-utils"
 import KioskLayout from "@/components/kiosk-layout"
 
 // 유효한 위치 목록
-const validLocations = ["A", "B", "D", "CAMP", "KARIV"]
+const validLocations = ["A", "B", "C", "D", "CAMP", "KARIV"]
 
 export default function KioskLocationPage({ params }: { params: Promise<{ location: string }> }) {
   const router = useRouter()
@@ -22,7 +22,7 @@ export default function KioskLocationPage({ params }: { params: Promise<{ locati
     }
 
     // 위치 저장
-    saveKioskLocation(location as any)
+    saveKioskLocation(location as KioskLocation)
 
     // 키오스크 모드 적용
     document.body.classList.add("kiosk-mode")
@@ -37,5 +37,5 @@ export default function KioskLocationPage({ params }: { params: Promise<{ locati
     return <div className="flex items-center justify-center min-h-screen">리다이렉트 중...</div>
   }
 
-  return <KioskLayout onChangeMode={() => router.push("/")} />
+  return <KioskLayout onChangeMode={() => router.push("/")} initialLocation={location as KioskLocation} />
 }

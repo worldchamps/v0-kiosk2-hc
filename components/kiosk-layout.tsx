@@ -29,9 +29,10 @@ import { usePayment } from "@/contexts/payment-context"
 
 interface KioskLayoutProps {
   onChangeMode: () => void
+  initialLocation?: KioskLocation
 }
 
-export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
+export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayoutProps) {
   const [currentScreen, setCurrentScreen] = useState("onSiteReservation")
   const [homeSessionKey, setHomeSessionKey] = useState(0)
   const [reservationData, setReservationData] = useState(null)
@@ -71,7 +72,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
   const { paymentSession, cancelPayment } = usePayment()
 
   useEffect(() => {
-    const savedLocation = getKioskLocation()
+    const savedLocation = initialLocation || getKioskLocation()
     setKioskLocation(savedLocation)
 
     const savedProperty = getKioskPropertyId()
@@ -108,7 +109,7 @@ export default function KioskLayout({ onChangeMode }: KioskLayoutProps) {
       isPopupMode: popupMode,
       initialScreen: popupMode ? "reservationConfirm" : "onSiteReservation",
     })
-  }, [])
+  }, [initialLocation])
 
   useEffect(() => {
     document.body.classList.add("kiosk-mode")

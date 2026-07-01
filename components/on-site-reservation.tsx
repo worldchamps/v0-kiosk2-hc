@@ -114,8 +114,11 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
         }
         setRoomsError("")
 
-        const url = location ? `/api/available-rooms?location=${location}` : "/api/available-rooms"
-        const response = await fetch(`${url}&t=${Date.now()}`, {
+        const params = new URLSearchParams({ t: String(Date.now()) })
+        if (location) {
+          params.set("location", location)
+        }
+        const response = await fetch(`/api/available-rooms?${params.toString()}`, {
           cache: "no-store",
         })
 

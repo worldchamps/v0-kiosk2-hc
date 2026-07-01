@@ -19,7 +19,7 @@ function HomeContent() {
     const isPopup = searchParams.get("popup") === "true"
 
     if (mode === "kiosk" && location) {
-      if (["A", "B", "D", "CAMP"].includes(location)) {
+      if (["A", "B", "C", "D", "CAMP", "KARIV"].includes(location)) {
         saveKioskLocation(location as any)
         router.push(`/kiosk/${location}`)
         return
