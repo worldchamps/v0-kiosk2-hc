@@ -142,7 +142,8 @@ export async function getAvailableRooms(location?: string): Promise<BeachRoomDat
       } else if (["C", "D"].includes(upperLocation)) {
         filteredRooms = filteredRooms.filter((room) => {
           const cat = room.category.toUpperCase().trim()
-          return cat === "BEACH C" || cat === "BEACH D" || cat === "C동" || cat === "D동"
+          const roomCode = (room.matchingRoomNumber || room.roomNumber || "").toUpperCase().trim()
+          return roomCode.startsWith(upperLocation) || cat === `BEACH ${upperLocation}` || cat === `${upperLocation}동`
         })
       } else if (upperLocation === "KARIV") {
         filteredRooms = filteredRooms.filter((room) => {
