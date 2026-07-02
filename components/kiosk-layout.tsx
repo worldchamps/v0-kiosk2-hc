@@ -46,7 +46,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     floor: "",
   })
   const [showAdminKeypad, setShowAdminKeypad] = useState(false)
-  const [kioskLocation, setKioskLocation] = useState<KioskLocation>("A")
+  const [kioskLocation, setKioskLocation] = useState<KioskLocation>(() => initialLocation || getKioskLocation())
   const [isPopupMode, setIsPopupMode] = useState(false)
   const [kioskProperty, setKioskProperty] = useState<PropertyId>("property3")
   const [showPropertyMismatch, setShowPropertyMismatch] = useState(false)
