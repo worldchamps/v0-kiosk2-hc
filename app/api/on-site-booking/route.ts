@@ -4,19 +4,9 @@ import { createSheetsClient } from "@/lib/google-sheets"
 import { addToPMSQueue } from "@/lib/firebase-admin"
 import { sendAligoSMS, formatBookingMessage } from "@/lib/aligo-sms"
 import { getRoomInfoByMatchingNumber, updateRoomStatusInFirebase } from "@/lib/firebase-beach-rooms"
-
-const ON_SITE_RATES = [
-  { keyword: "디럭스", overnight: 60000, shortStay: 30000 },
-  { keyword: "스위트", overnight: 80000, shortStay: 50000 },
-  { keyword: "스탠다드", overnight: 50000, shortStay: 30000 },
-]
-
-function getOnSitePrice(roomType: string, stayType: unknown) {
-  if (stayType !== "overnight" && stayType !== "shortStay") return undefined
-
-  const rates = ON_SITE_RATES.find(({ keyword }) => roomType.includes(keyword))
-  return rates?.[stayType]
-}
+import { getPropertyFromRoomNumber } from "@/lib/property-utils"
+import { isShortStayAvailable, isShortStayRestrictedProperty } from "@/lib/short-stay-policy"
+import { getOnSiteRate } from "@/lib/on-site-pricing"
 
 export async function POST(request: NextRequest) {
   try {
@@ -27,6 +17,7 @@ export async function POST(request: NextRequest) {
       roomNumber,
       roomCode,
       roomType,
+      building,
       price: requestedPrice,
       checkInDate,
       checkOutDate,
@@ -34,8 +25,14 @@ export async function POST(request: NextRequest) {
       stayType,
       stayTypeLabel,
     } = body
-    const price = getOnSitePrice(roomType, stayType)
+    const rateStayType = stayType === "overnight" || stayType === "shortStay" ? stayType : undefined
+    const price = rateStayType ? getOnSiteRate(building || roomCode || roomNumber || "", roomType, rateStayType) : undefined
     const normalizedStayTypeLabel = stayType === "overnight" ? "숙박" : stayType === "shortStay" ? "대실" : ""
+    const propertyId = getPropertyFromRoomNumber(roomCode || roomNumber || "")
+
+    if (stayType === "shortStay" && isShortStayRestrictedProperty(propertyId) && !isShortStayAvailable()) {
+      return NextResponse.json({ error: "대실 예약은 오후 9시 이전에만 가능합니다." }, { status: 403 })
+    }
 
     console.log("[v0] On-site booking request:", { guestName, phoneNumber, roomNumber, roomCode, roomType })
     console.log("[v0] roomCode received from frontend:", roomCode)

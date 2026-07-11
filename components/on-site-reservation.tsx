@@ -24,6 +24,9 @@ import { usePayment } from "@/contexts/payment-context"
 import PaymentScreen from "@/components/payment-screen"
 import CheckInComplete from "@/components/check-in-complete"
 import SmokingPolicyDialog from "@/components/smoking-policy-dialog"
+import { getPropertyFromRoomNumber } from "@/lib/property-utils"
+import { isShortStayAvailable, isShortStayRestrictedProperty } from "@/lib/short-stay-policy"
+import { getOnSiteRate, VARIABLE_RATE_NOTICE } from "@/lib/on-site-pricing"
 
 interface OnSiteReservationProps {
   onNavigate: (screen: string) => void
@@ -49,14 +52,10 @@ interface StaySelection {
   price: number
 }
 
-const ROOM_TYPE_PRICES = [
-  { keyword: "디럭스", overnight: 60000, shortStay: 30000 },
-  { keyword: "스위트", overnight: 80000, shortStay: 50000 },
-  { keyword: "스탠다드", overnight: 50000, shortStay: 30000 },
-]
-
-function getRoomTypePrices(roomType: string) {
-  return ROOM_TYPE_PRICES.find(({ keyword }) => roomType.includes(keyword))
+function getRoomTypePrices(building: string, roomType: string) {
+  const overnight = getOnSiteRate(building, roomType, "overnight")
+  const shortStay = getOnSiteRate(building, roomType, "shortStay")
+  return overnight && shortStay ? { overnight, shortStay } : undefined
 }
 
 function formatPrice(price: number) {
@@ -101,10 +100,26 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   const [reservationData, setReservationData] = useState<any>(null)
   const [roomsError, setRoomsError] = useState("")
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [shortStayAvailable, setShortStayAvailable] = useState(() => isShortStayAvailable())
   const { paymentSession, startPayment, completePayment, cancelPayment } = usePayment()
   const bookingPrice = selectedStay?.price ?? 0
 
   const locationName = location === "CAMP" ? "캠프" : location ? `${location}동` : ""
+  const kioskProperty =
+    location === "A" || location === "B"
+      ? "property3"
+      : location === "C" || location === "D"
+        ? "property1"
+        : null
+  const shouldRestrictShortStay = isShortStayRestrictedProperty(kioskProperty)
+  const showShortStay = !shouldRestrictShortStay || shortStayAvailable
+
+  useEffect(() => {
+    const updateShortStayAvailability = () => setShortStayAvailable(isShortStayAvailable())
+    updateShortStayAvailability()
+    const interval = window.setInterval(updateShortStayAvailability, 30000)
+    return () => window.clearInterval(interval)
+  }, [])
 
   const fetchAvailableRooms = useCallback(
     async (showLoading = true) => {
@@ -190,6 +205,10 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   }, [fetchAvailableRooms, step])
 
   const handleRoomTypeSelect = (roomType: string, stay: StaySelection) => {
+    if (stay.type === "shortStay" && shouldRestrictShortStay && !isShortStayAvailable()) {
+      alert("대실 예약은 오후 9시 이전에만 가능합니다.")
+      return
+    }
     const dates = getBookingDates(stay.type)
     setSelectedRoomType(roomType)
     setSelectedStay(stay)
@@ -200,6 +219,18 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
 
   const startRoomPayment = (room: AvailableRoom) => {
     if (!selectedStay) return
+
+    const roomProperty = getPropertyFromRoomNumber(room.roomCode)
+    if (
+      selectedStay.type === "shortStay" &&
+      isShortStayRestrictedProperty(roomProperty) &&
+      !isShortStayAvailable()
+    ) {
+      alert("대실 예약은 오후 9시 이전에만 가능합니다.")
+      setSelectedStay(null)
+      setStep("roomType")
+      return
+    }
 
     setSelectedRoom(room)
 
@@ -275,6 +306,19 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   }
 
   const handlePaymentComplete = async () => {
+    const roomProperty = getPropertyFromRoomNumber(selectedRoom?.roomCode || "")
+    if (
+      selectedStay?.type === "shortStay" &&
+      isShortStayRestrictedProperty(roomProperty) &&
+      !isShortStayAvailable()
+    ) {
+      alert("오후 9시가 지나 대실 예약을 진행할 수 없습니다.")
+      await cancelPayment()
+      setSelectedStay(null)
+      setStep("roomType")
+      return
+    }
+
     try {
       setSubmitting(true)
       const response = await fetch("/api/on-site-booking", {
@@ -372,6 +416,10 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
           </button>
         </div>
 
+        <div className="px-8 pb-3 text-center text-lg font-semibold text-amber-800">
+          {VARIABLE_RATE_NOTICE}
+        </div>
+
         <div className="kiosk-home-content">
           {roomsError && (
             <div className="kiosk-home-message kiosk-home-message-error">
@@ -416,7 +464,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
                 const availableCount = rooms.length
                 const sampleRoom = rooms[0]
                 const imagePath = getRoomImagePath(roomType, sampleRoom.roomCode)
-                const prices = getRoomTypePrices(roomType)
+                const prices = getRoomTypePrices(sampleRoom.building || location || "", roomType)
 
                 return (
                   <div key={roomType} className="kiosk-room-card">
@@ -452,21 +500,23 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
                             <Moon className="kiosk-room-price-icon" />
                             <strong>숙박 {formatPrice(prices.overnight)}</strong>
                           </button>
-                          <button
-                            type="button"
-                            className="kiosk-room-price kiosk-room-price-short-stay"
-                            onClick={() =>
-                              handleRoomTypeSelect(roomType, {
-                                type: "shortStay",
-                                label: "대실",
-                                price: prices.shortStay,
-                              })
-                            }
-                            aria-label={`${roomType} 대실 ${formatPrice(prices.shortStay)}`}
-                          >
-                            <Clock className="kiosk-room-price-icon" />
-                            <strong>대실 {formatPrice(prices.shortStay)}</strong>
-                          </button>
+                          {showShortStay && (
+                            <button
+                              type="button"
+                              className="kiosk-room-price kiosk-room-price-short-stay"
+                              onClick={() =>
+                                handleRoomTypeSelect(roomType, {
+                                  type: "shortStay",
+                                  label: "대실",
+                                  price: prices.shortStay,
+                                })
+                              }
+                              aria-label={`${roomType} 대실 ${formatPrice(prices.shortStay)}`}
+                            >
+                              <Clock className="kiosk-room-price-icon" />
+                              <strong>대실 {formatPrice(prices.shortStay)}</strong>
+                            </button>
+                          )}
                         </div>
                       ) : (
                         <div className="kiosk-room-price-fallback">프런트에 이용 요금을 문의해주세요</div>
