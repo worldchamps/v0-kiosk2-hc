@@ -10,7 +10,7 @@ import {
   printTestPage,
   getSimplePrintMode,
   setSimplePrintMode,
-} from "@/lib/printer-utils"
+} from "@/lib/printer-utils-unified"
 
 export default function PrinterTest() {
   const [isPrinting, setIsPrinting] = useState(false)
