@@ -365,8 +365,20 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   }
 
   return (
-    <div className="w-full h-full bg-[#fefef7] overflow-hidden kiosk-mode relative">
-      <div className="h-full w-full">
+    <div
+      className={`w-full h-full bg-[#fefef7] overflow-hidden kiosk-mode relative ${
+        kioskLocation === "D" ? "kiosk-has-d-building-banner" : ""
+      }`}
+    >
+      {kioskLocation === "D" && (
+        <div className="kiosk-d-building-banner" role="status" aria-label="D동 전용 키오스크 안내">
+          <strong>D동 전용 키오스크</strong>
+          <span>D로 시작하는 객실만 이용할 수 있습니다</span>
+          <span className="kiosk-d-building-payment">카드 결제 불가 · 현금(지폐) 전용</span>
+        </div>
+      )}
+
+      <div className="kiosk-screen-area">
         {error && <div className="m-4 p-3 bg-red-100 text-red-700 rounded-md">{error}</div>}
 
         {currentScreen === "idle" && (

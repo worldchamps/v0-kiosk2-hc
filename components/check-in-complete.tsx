@@ -2,7 +2,7 @@
 
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Check, Printer, Eye, EyeOff } from "lucide-react"
+import { Check, Printer, Eye, EyeOff, ReceiptText } from "lucide-react"
 import { useEffect, useState, useRef } from "react"
 import DirectPrinter from "./direct-printer"
 import { printReceipt, getPrinterModel, isPrinterConnected, autoConnectPrinter } from "@/lib/printer-utils-unified"
@@ -306,6 +306,16 @@ export default function CheckInComplete({
 
               <p className="text-left text-2xl font-bold">체크인 과정이 완료되었습니다.</p>
               <p className="text-left text-xl font-bold">객실 번호와 비밀번호를 기억해 주세요.</p>
+
+              {kioskLocation === "D" && (
+                <div className="kiosk-d-receipt-notice" role="alert">
+                  <ReceiptText aria-hidden="true" />
+                  <div>
+                    <strong>카드키는 나오지 않습니다</strong>
+                    <p>아래에서 출력되는 객실번호·비밀번호 안내지를 꼭 가져가세요.</p>
+                  </div>
+                </div>
+              )}
 
               {revealedInfo && (
                 <div className="w-full bg-blue-50 rounded-lg p-6 mt-4 space-y-4">
