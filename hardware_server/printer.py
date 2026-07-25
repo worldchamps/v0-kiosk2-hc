@@ -19,8 +19,19 @@ class BixolonPrinter:
     FLOW_CONTROL_NONE = 0
 
     ALIGNMENT_LEFT = 0
+    ALIGNMENT_CENTER = 1
+    ALIGNMENT_RIGHT = 2
+
     FONT_DEFAULT = 0
+    FONT_B = 1
+    FONT_BOLD = 2
+    FONT_UNDERLINE = 4
+
     TEXT_SIZE_NORMAL = 0
+    TEXT_SIZE_DOUBLE_HEIGHT = 0x01
+    TEXT_SIZE_DOUBLE_WIDTH = 0x10
+    TEXT_SIZE_DOUBLE = 0x11
+
     CODE_PAGE_KS5601 = 949
 
     def __init__(self, port, baud_rate=115200, sdk_dll_path=None):
@@ -168,7 +179,14 @@ class BixolonPrinter:
             else:
                 logger.error("BIXOLON PrinterClose failed (SDK result: %s)", result)
 
-    def print_text(self, text):
+    def print_text(
+        self,
+        text,
+        alignment=ALIGNMENT_LEFT,
+        attribute=FONT_DEFAULT,
+        text_size=TEXT_SIZE_NORMAL,
+        code_page=CODE_PAGE_KS5601,
+    ):
         if not self.is_connected and not self.connect():
             return False
 
@@ -176,10 +194,10 @@ class BixolonPrinter:
             with self.lock:
                 result = self.sdk.PrintTextW(
                     str(text),
-                    self.ALIGNMENT_LEFT,
-                    self.FONT_DEFAULT,
-                    self.TEXT_SIZE_NORMAL,
-                    self.CODE_PAGE_KS5601,
+                    alignment,
+                    attribute,
+                    text_size,
+                    code_page,
                 )
             if result != 0:
                 logger.error("BIXOLON PrintTextW failed (SDK result: %s)", result)

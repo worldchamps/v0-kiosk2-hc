@@ -8,14 +8,6 @@ import serial.tools.list_ports
 from printer import BixolonPrinter
 
 
-TEST_TEXT = (
-    "BIXOLON 한글 출력 테스트\n"
-    "안녕하세요.\n"
-    "객실 안내 프린터가 정상입니다.\n"
-    "\n\n"
-)
-
-
 def main():
     parser = argparse.ArgumentParser(description="BIXOLON Korean print test")
     parser.add_argument(
@@ -51,15 +43,89 @@ def main():
         return 1
 
     try:
-        if not printer.print_text(TEST_TEXT):
-            print("FAILED: PrintTextW returned an error.")
-            return 2
+        sections = [
+            {
+                "text": "THE BEACH STAY\n",
+                "alignment": printer.ALIGNMENT_CENTER,
+                "attribute": printer.FONT_BOLD,
+                "text_size": printer.TEXT_SIZE_DOUBLE,
+                "label": "hotel title",
+            },
+            {
+                "text": "입실 안내\n\n",
+                "alignment": printer.ALIGNMENT_CENTER,
+                "attribute": printer.FONT_BOLD,
+                "text_size": printer.TEXT_SIZE_DOUBLE_HEIGHT,
+                "label": "Korean heading",
+            },
+            {
+                "text": "------------------------------------------\n",
+                "alignment": printer.ALIGNMENT_CENTER,
+                "attribute": printer.FONT_DEFAULT,
+                "text_size": printer.TEXT_SIZE_NORMAL,
+                "label": "separator",
+            },
+            {
+                "text": "D동 203호\n\n",
+                "alignment": printer.ALIGNMENT_CENTER,
+                "attribute": printer.FONT_BOLD,
+                "text_size": printer.TEXT_SIZE_DOUBLE,
+                "label": "room number",
+            },
+            {
+                "text": "객실 비밀번호\n",
+                "alignment": printer.ALIGNMENT_CENTER,
+                "attribute": printer.FONT_DEFAULT,
+                "text_size": printer.TEXT_SIZE_NORMAL,
+                "label": "password label",
+            },
+            {
+                "text": "1234\n\n",
+                "alignment": printer.ALIGNMENT_CENTER,
+                "attribute": printer.FONT_BOLD | printer.FONT_UNDERLINE,
+                "text_size": printer.TEXT_SIZE_DOUBLE,
+                "label": "password",
+            },
+            {
+                "text": "------------------------------------------\n",
+                "alignment": printer.ALIGNMENT_CENTER,
+                "attribute": printer.FONT_DEFAULT,
+                "text_size": printer.TEXT_SIZE_NORMAL,
+                "label": "separator",
+            },
+            {
+                "text": "체크인    2026년 7월 25일\n"
+                "체크아웃  2026년 7월 26일\n\n",
+                "alignment": printer.ALIGNMENT_LEFT,
+                "attribute": printer.FONT_DEFAULT,
+                "text_size": printer.TEXT_SIZE_NORMAL,
+                "label": "stay dates",
+            },
+            {
+                "text": "즐거운 시간 보내시기 바랍니다.\n"
+                "감사합니다.\n\n\n",
+                "alignment": printer.ALIGNMENT_CENTER,
+                "attribute": printer.FONT_BOLD,
+                "text_size": printer.TEXT_SIZE_NORMAL,
+                "label": "footer",
+            },
+        ]
+
+        for section in sections:
+            if not printer.print_text(
+                section["text"],
+                alignment=section["alignment"],
+                attribute=section["attribute"],
+                text_size=section["text_size"],
+            ):
+                print(f"FAILED: Could not print {section['label']}.")
+                return 2
 
         if not args.no_cut and not printer.cut_paper():
             print("FAILED: Korean text was sent, but CutPaper returned an error.")
             return 3
 
-        print("SUCCESS: Korean text was sent with KS5601 code page 949.")
+        print("SUCCESS: Korean styled receipt was sent with KS5601 code page 949.")
         return 0
     finally:
         printer.disconnect()
