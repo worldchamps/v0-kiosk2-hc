@@ -53,10 +53,12 @@ export async function printReceipt(receiptData: any): Promise<boolean> {
   // This depends on what receiptData looks like.
   // For now, assume it's Room Info or has similar fields.
   if (receiptData.roomNumber) {
-    return HardwarePrinter.printRoomInfoReceipt({
+    return HardwarePrinter.printReceipt({
+      hotelName: "THE BEACH STAY",
       roomNumber: receiptData.roomNumber,
       password: receiptData.password || "",
-      floor: receiptData.floor || ""
+      checkInDate: receiptData.checkInDate || "",
+      checkOutDate: receiptData.checkOutDate || "",
     })
   }
 

@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   sendToBillAcceptor: (command) => ipcRenderer.invoke("send-to-bill-acceptor", command),
 
   // 프린터 (Bixolon)
-  printToBixolon: (text) => ipcRenderer.invoke("print-to-bixolon", text),
+  printToBixolon: (text, options = {}) => ipcRenderer.invoke("print-to-bixolon", text, options),
   cutBixolonPaper: () => ipcRenderer.invoke("cut-bixolon-paper"),
   sendRawToBixolon: (data) => ipcRenderer.invoke("send-raw-to-bixolon", data),
 

@@ -543,8 +543,15 @@ ipcMain.handle("send-to-printer", async (event, data) => {
 })
 
 // New handlers for Hardware Server Printer
-ipcMain.handle("print-to-bixolon", async (event, text) => {
-  hardwareBridge.send({ type: "printer_print", text })
+ipcMain.handle("print-to-bixolon", async (event, text, options = {}) => {
+  hardwareBridge.send({
+    type: "printer_print",
+    text,
+    alignment: options.alignment,
+    attribute: options.attribute,
+    text_size: options.textSize,
+    code_page: options.codePage,
+  })
   return true
 })
 

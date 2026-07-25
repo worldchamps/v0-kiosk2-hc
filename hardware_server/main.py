@@ -80,7 +80,13 @@ async def handle_client(websocket, *args):
                 elif cmd_type == "printer_print":
                     text = msg.get("text", "")
                     if text:
-                        printer.print_text(text)
+                        printer.print_text(
+                            text,
+                            alignment=msg.get("alignment", printer.ALIGNMENT_LEFT),
+                            attribute=msg.get("attribute", printer.FONT_DEFAULT),
+                            text_size=msg.get("text_size", printer.TEXT_SIZE_NORMAL),
+                            code_page=msg.get("code_page", printer.CODE_PAGE_KS5601),
+                        )
                 elif cmd_type == "printer_cut":
                     printer.cut_paper()
                 elif cmd_type == "printer_raw":

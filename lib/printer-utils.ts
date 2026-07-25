@@ -36,8 +36,32 @@ async function sendRaw(data: number[]) {
   return await window.electronAPI.sendRawToBixolon(data)
 }
 
-export async function printText(text: string) {
-  return await window.electronAPI.printToBixolon(text)
+type PrintTextOptions = {
+  alignment?: number
+  attribute?: number
+  textSize?: number
+  codePage?: number
+}
+
+const STYLE = {
+  ALIGN_LEFT: 0,
+  ALIGN_CENTER: 1,
+  FONT_DEFAULT: 0,
+  FONT_BOLD: 2,
+  FONT_UNDERLINE: 4,
+  SIZE_NORMAL: 0,
+  SIZE_DOUBLE_HEIGHT: 0x01,
+  SIZE_DOUBLE: 0x11,
+  KS5601: 949,
+}
+
+export async function printText(text: string, options: PrintTextOptions = {}) {
+  return await window.electronAPI.printToBixolon(text, {
+    alignment: options.alignment ?? STYLE.ALIGN_LEFT,
+    attribute: options.attribute ?? STYLE.FONT_DEFAULT,
+    textSize: options.textSize ?? STYLE.SIZE_NORMAL,
+    codePage: options.codePage ?? STYLE.KS5601,
+  })
 }
 
 export async function cutPaper() {
@@ -61,43 +85,103 @@ export async function printReceipt(data: {
 }) {
   console.log("[Bixolon] Printing receipt...", data)
 
-  // 1. Initialize
+  const password = data.password
+    ? `${data.password.replace(/\*+$/, "")}*`
+    : ""
+  const roomNumber = formatRoomNumber(data.roomNumber)
+  const checkInDate = formatReceiptDate(data.checkInDate)
+  const checkOutDate = formatReceiptDate(data.checkOutDate)
+
   await sendRaw(CMD.INIT)
 
-  // 2. Hotel Name (Center, 2x Size, Bold)
-  await sendRaw(CMD.ALIGN_CENTER)
-  await sendRaw(CMD.SIZE_2X)
-  await sendRaw(CMD.BOLD_ON)
-  await printText(data.hotelName + "\n\n")
+  await printText(`${data.hotelName}\n`, {
+    alignment: STYLE.ALIGN_CENTER,
+    attribute: STYLE.FONT_BOLD,
+    textSize: STYLE.SIZE_DOUBLE,
+  })
+  await printText("입실 안내\n\n", {
+    alignment: STYLE.ALIGN_CENTER,
+    attribute: STYLE.FONT_BOLD,
+    textSize: STYLE.SIZE_DOUBLE_HEIGHT,
+  })
+  await printText("아래 비밀번호를 도어락에 입력하세요.\n\n", {
+    alignment: STYLE.ALIGN_CENTER,
+    attribute: STYLE.FONT_BOLD,
+  })
+  await printSeparator()
 
-  // 3. Separator
-  await sendRaw(CMD.SIZE_NORMAL)
-  await sendRaw(CMD.BOLD_OFF)
-  await printText("------------------------------------------\n")
+  await printText(`${roomNumber}\n\n`, {
+    alignment: STYLE.ALIGN_CENTER,
+    attribute: STYLE.FONT_BOLD,
+    textSize: STYLE.SIZE_DOUBLE,
+  })
 
-  // 4. Room Info (Left alignment, Double height)
-  await sendRaw(CMD.ALIGN_LEFT)
-  await sendRaw(CMD.SIZE_DOUBLE_HEIGHT)
-  await printText(`Room: ${data.roomNumber}\n`)
-  if (data.password) {
-    await printText(`Pass: ${data.password}\n`)
+  if (password) {
+    await printText("객실 비밀번호\n", {
+      alignment: STYLE.ALIGN_CENTER,
+    })
+    await printText(`${password}\n\n`, {
+      alignment: STYLE.ALIGN_CENTER,
+      attribute: STYLE.FONT_BOLD | STYLE.FONT_UNDERLINE,
+      textSize: STYLE.SIZE_DOUBLE,
+    })
   }
 
-  // 5. Dates (Normal size)
-  await sendRaw(CMD.SIZE_NORMAL)
-  await printText("\n")
-  if (data.checkInDate) await printText(`Check-in:  ${data.checkInDate}\n`)
-  if (data.checkOutDate) await printText(`Check-out: ${data.checkOutDate}\n`)
+  await printSeparator()
+  await printText("도어락 이용 방법\n\n", {
+    alignment: STYLE.ALIGN_CENTER,
+    attribute: STYLE.FONT_BOLD,
+    textSize: STYLE.SIZE_DOUBLE_HEIGHT,
+  })
+  await printText(
+    "1. 도어락 화면을 손으로 터치하세요.\n" +
+      "2. 숫자 자판이 나타날 때까지 기다리세요.\n" +
+      (password ? `3. 비밀번호 ${password}를 입력하세요.\n` : "") +
+      "4. 문이 열리면 입실하세요.\n\n",
+  )
 
-  // 6. Footer
-  await printText("------------------------------------------\n")
-  await sendRaw(CMD.ALIGN_CENTER)
-  await printText("Thank you!\n\n\n\n\n") // Feed lines
+  if (checkInDate || checkOutDate) {
+    await printSeparator()
+    if (checkInDate) await printText(`체크인    ${checkInDate}\n`)
+    if (checkOutDate) await printText(`체크아웃  ${checkOutDate}\n`)
+    await printText("\n")
+  }
 
-  // 7. Cut
+  await printText(
+    "즐거운 시간 보내시기 바랍니다.\n감사합니다.\n\n\n",
+    {
+      alignment: STYLE.ALIGN_CENTER,
+      attribute: STYLE.FONT_BOLD,
+    },
+  )
+
   await cutPaper()
 
   console.log("[Bixolon] Print command sent.")
+}
+
+async function printSeparator() {
+  await printText("------------------------------------------\n", {
+    alignment: STYLE.ALIGN_CENTER,
+  })
+}
+
+function formatRoomNumber(value: string): string {
+  const room = String(value || "").trim()
+  const match = room.replace(/\s/g, "").match(/^([A-Za-z])(\d+)$/)
+  if (match) return `${match[1].toUpperCase()}동 ${match[2]}호`
+  return room
+}
+
+function formatReceiptDate(value?: string): string {
+  if (!value) return ""
+
+  const match = String(value).match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/)
+  if (match) {
+    return `${match[1]}년 ${Number(match[2])}월 ${Number(match[3])}일`
+  }
+
+  return String(value)
 }
 
 // --------------------------------------------------------
@@ -132,7 +216,6 @@ export async function printRoomInfoReceipt(data: {
       roomNumber: data.roomNumber,
       password: data.password,
       checkInDate: now.toLocaleDateString(),
-      checkOutDate: "Remote Print"
     });
     return true;
   } catch (error) {

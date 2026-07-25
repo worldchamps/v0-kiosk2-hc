@@ -59,6 +59,13 @@ def main():
                 "label": "Korean heading",
             },
             {
+                "text": "아래 비밀번호를 도어락에 입력하세요.\n\n",
+                "alignment": printer.ALIGNMENT_CENTER,
+                "attribute": printer.FONT_BOLD,
+                "text_size": printer.TEXT_SIZE_NORMAL,
+                "label": "keyless entry notice",
+            },
+            {
                 "text": "------------------------------------------\n",
                 "alignment": printer.ALIGNMENT_CENTER,
                 "attribute": printer.FONT_DEFAULT,
@@ -80,11 +87,35 @@ def main():
                 "label": "password label",
             },
             {
-                "text": "1234\n\n",
+                "text": "1234*\n\n",
                 "alignment": printer.ALIGNMENT_CENTER,
                 "attribute": printer.FONT_BOLD | printer.FONT_UNDERLINE,
                 "text_size": printer.TEXT_SIZE_DOUBLE,
                 "label": "password",
+            },
+            {
+                "text": "------------------------------------------\n",
+                "alignment": printer.ALIGNMENT_CENTER,
+                "attribute": printer.FONT_DEFAULT,
+                "text_size": printer.TEXT_SIZE_NORMAL,
+                "label": "separator",
+            },
+            {
+                "text": "도어락 이용 방법\n\n",
+                "alignment": printer.ALIGNMENT_CENTER,
+                "attribute": printer.FONT_BOLD,
+                "text_size": printer.TEXT_SIZE_DOUBLE_HEIGHT,
+                "label": "door lock instructions heading",
+            },
+            {
+                "text": "1. 도어락 화면을 손으로 터치하세요.\n"
+                "2. 숫자 자판이 나타날 때까지 기다리세요.\n"
+                "3. 비밀번호 1234*를 입력하세요.\n"
+                "4. 문이 열리면 입실하세요.\n\n",
+                "alignment": printer.ALIGNMENT_LEFT,
+                "attribute": printer.FONT_DEFAULT,
+                "text_size": printer.TEXT_SIZE_NORMAL,
+                "label": "door lock instructions",
             },
             {
                 "text": "------------------------------------------\n",
