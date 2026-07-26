@@ -13,7 +13,8 @@ import {
   Clock,
   AlertTriangle,
   CalendarDays,
-  RefreshCw,
+  CircleHelp,
+  X,
   ArrowLeft,
   DoorOpen,
 } from "lucide-react"
@@ -26,7 +27,7 @@ import CheckInComplete from "@/components/check-in-complete"
 import SmokingPolicyDialog from "@/components/smoking-policy-dialog"
 import { getPropertyFromRoomNumber } from "@/lib/property-utils"
 import { isShortStayAvailable, isShortStayRestrictedProperty } from "@/lib/short-stay-policy"
-import { getOnSiteRate, VARIABLE_RATE_NOTICE } from "@/lib/on-site-pricing"
+import { getOnSiteRate } from "@/lib/on-site-pricing"
 
 interface OnSiteReservationProps {
   onNavigate: (screen: string) => void
@@ -93,6 +94,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   const [selectedRoom, setSelectedRoom] = useState<AvailableRoom | null>(null)
   const [pendingRoom, setPendingRoom] = useState<AvailableRoom | null>(null)
   const [showSmokingPolicy, setShowSmokingPolicy] = useState(false)
+  const [showPaymentGuide, setShowPaymentGuide] = useState(false)
   const [guestName, setGuestName] = useState("")
   const [phoneNumber, setPhoneNumber] = useState("")
   const [checkInDate, setCheckInDate] = useState("")
@@ -375,50 +377,22 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
 
     return (
       <div className="kiosk-home-screen">
-        <div className="kiosk-home-header">
-          <div className="kiosk-home-heading">
-            <p className="kiosk-home-property">더 비치스테이 {locationName}</p>
-            <h1 className="kiosk-home-title">지금 바로 이용 가능한 객실</h1>
-            <p className="kiosk-home-subtitle">원하시는 객실 타입을 선택해주세요</p>
+        <section className="kiosk-payment-notice" aria-label="현금 결제 및 문의 안내">
+          <div className="kiosk-payment-notice-title">
+            <AlertTriangle aria-hidden="true" />
+            <strong>카드 결제 불가 · 현금 전용</strong>
           </div>
-
-          <Button
-            type="button"
-            onClick={() => onNavigate("reservationConfirm")}
-            className="kiosk-reservation-check-button"
-          >
-            <CalendarDays className="h-10 w-10" />
-            <span>
-              <strong>예약 확인하기</strong>
-              <small>이미 예약하신 고객</small>
-            </span>
-          </Button>
-        </div>
-
-        <div className="kiosk-cash-banner">
-          <AlertTriangle className="h-9 w-9 flex-shrink-0" />
-          <div>
-            <p>현금(지폐) 결제만 가능합니다</p>
-            <span>Cash Only · 카드 결제 불가</span>
+          <div className="kiosk-payment-notice-details">
+            <p>
+              <span>계좌이체</span>
+              <strong>352-1453-5719-23 농협 김동훈</strong>
+            </p>
+            <p>
+              <span>기계 고장 및 문의 전화</span>
+              <strong>010-5126-4644</strong>
+            </p>
           </div>
-          <button
-            type="button"
-            className="kiosk-room-refresh-button"
-            onClick={() => fetchAvailableRooms(false)}
-            aria-label="객실 정보 새로고침"
-          >
-            <RefreshCw className={`h-6 w-6 ${loading ? "animate-spin" : ""}`} />
-            <span>
-              {lastUpdated
-                ? `${lastUpdated.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })} 갱신`
-                : "새로고침"}
-            </span>
-          </button>
-        </div>
-
-        <div className="px-8 pb-3 text-center text-lg font-semibold text-amber-800">
-          {VARIABLE_RATE_NOTICE}
-        </div>
+        </section>
 
         <div className="kiosk-home-content">
           {roomsError && (
@@ -528,6 +502,72 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
             </div>
           )}
         </div>
+
+        <nav className="kiosk-home-actions" aria-label="키오스크 주요 메뉴">
+          <button
+            type="button"
+            className="kiosk-home-action kiosk-home-action-reservation"
+            onClick={() => onNavigate("reservationConfirm")}
+          >
+            <CalendarDays aria-hidden="true" />
+            <span>예약 확인</span>
+          </button>
+          <button
+            type="button"
+            className="kiosk-home-action kiosk-home-action-guide"
+            onClick={() => setShowPaymentGuide(true)}
+          >
+            <CircleHelp aria-hidden="true" />
+            <span>현장결제 이용방법</span>
+          </button>
+        </nav>
+
+        {showPaymentGuide && (
+          <div className="kiosk-payment-guide-backdrop" role="presentation">
+            <section
+              className="kiosk-payment-guide"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="payment-guide-title"
+            >
+              <button
+                type="button"
+                className="kiosk-payment-guide-close"
+                onClick={() => setShowPaymentGuide(false)}
+                aria-label="현장결제 이용방법 닫기"
+              >
+                <X />
+              </button>
+              <p className="kiosk-payment-guide-eyebrow">현장결제 이용방법</p>
+              <h2 id="payment-guide-title">화면 순서대로 선택해주세요</h2>
+              <ol>
+                <li>
+                  <strong>1</strong>
+                  <span>숙박 또는 대실 요금을 누릅니다.</span>
+                </li>
+                <li>
+                  <strong>2</strong>
+                  <span>원하는 객실을 선택합니다.</span>
+                </li>
+                <li>
+                  <strong>3</strong>
+                  <span>현금으로 결제합니다. 현금이 없으면 계좌이체 후 문의 전화로 연락해주세요.</span>
+                </li>
+                <li>
+                  <strong>4</strong>
+                  <span>영수증에서 객실번호와 비밀번호를 확인합니다.</span>
+                </li>
+              </ol>
+              <button
+                type="button"
+                className="kiosk-payment-guide-confirm"
+                onClick={() => setShowPaymentGuide(false)}
+              >
+                확인
+              </button>
+            </section>
+          </div>
+        )}
       </div>
     )
   }
