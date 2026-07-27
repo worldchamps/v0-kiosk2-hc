@@ -180,15 +180,21 @@ export default function ReservationDetails({
           <div className="kiosk-highlight">예약 확인됨</div>
         </div>
 
-        <div className={`w-full overflow-auto mt-6 ${isPopupMode ? "py-2" : "py-4"}`}>
-          <div className={`flex gap-4 ${isPopupMode ? "flex-col" : "flex-row"}`}>
+        <div className={`w-full min-h-0 mt-2 ${isPopupMode ? "py-2" : "py-4"}`}>
+          <div className={`flex flex-col ${isPopupMode ? "gap-3" : "gap-6"}`}>
             {/* Image Box */}
-            <div className={`${isPopupMode ? "w-full" : "w-1/2"} flex-shrink-0`}>
-              <Card className="h-full">
+            <div className="w-full">
+              <Card>
                 <CardContent className={isPopupMode ? "p-3" : "p-6"}>
-                  <p className={`text-gray-500 mb-2 ${isPopupMode ? "text-xs" : "text-sm"}`}>객실 이미지</p>
+                  <p
+                    className={`mb-3 font-bold text-gray-700 ${
+                      isPopupMode ? "text-base" : "text-[22px]"
+                    }`}
+                  >
+                    예약한 객실
+                  </p>
                   <div className="bg-gray-100 rounded-lg p-2">
-                    <div className={`relative w-full ${isPopupMode ? "h-[300px]" : "h-[600px]"}`}>
+                    <div className={`relative w-full ${isPopupMode ? "h-[260px]" : "h-[440px]"}`}>
                       <Image
                         src={roomImagePath || "/placeholder.svg"}
                         alt={`${reservation.roomType} 객실 이미지`}
@@ -202,76 +208,112 @@ export default function ReservationDetails({
             </div>
 
             {/* Info Box */}
-            <div className={`${isPopupMode ? "w-full" : "w-1/2"} flex-shrink-0`}>
-              <Card className="h-full">
-                <CardContent className={isPopupMode ? "p-3 space-y-2" : "p-6 space-y-4"}>
-                  <div className={`grid gap-3 grid-cols-2`}>
-                    {reservation.place && (
-                      <div className="col-span-2">
-                        <p className="text-sm text-gray-500">장소</p>
-                        <p className={`font-medium ${isPopupMode ? "text-base" : "text-lg"}`}>{reservation.place}</p>
-                      </div>
-                    )}
-
-                    <div>
-                      <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>이름</p>
-                      <p className={`font-medium ${isPopupMode ? "text-sm" : "text-base"}`}>{reservation.guestName}</p>
-                    </div>
-
-                    <div>
-                      <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>예약 플랫폼</p>
-                      <p className={`font-medium ${isPopupMode ? "text-sm" : "text-base"}`}>
-                        {reservation.bookingPlatform}
+            <div className="w-full">
+              <Card>
+                <CardContent className={isPopupMode ? "p-4" : "p-6"}>
+                  <div className={`grid grid-cols-2 ${isPopupMode ? "gap-3" : "gap-5"}`}>
+                    <div className={`rounded-xl border bg-gray-50 ${isPopupMode ? "p-3" : "p-5"}`}>
+                      <p className={`font-bold text-gray-700 ${isPopupMode ? "text-base" : "text-[22px]"}`}>
+                        예약자 성함
+                      </p>
+                      <p
+                        className={`mt-2 break-words font-bold leading-tight text-gray-950 ${
+                          isPopupMode ? "text-xl" : "text-[30px]"
+                        }`}
+                      >
+                        {reservation.guestName}
                       </p>
                     </div>
 
-                    <div>
-                      <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>객실 타입</p>
-                      <p className={`font-medium ${isPopupMode ? "text-sm" : "text-base"}`}>{reservation.roomType}</p>
+                    <div className={`rounded-xl border bg-gray-50 ${isPopupMode ? "p-3" : "p-5"}`}>
+                      <p className={`font-bold text-gray-700 ${isPopupMode ? "text-base" : "text-[22px]"}`}>
+                        예약한 객실 타입
+                      </p>
+                      <p
+                        className={`mt-2 break-words font-bold leading-tight text-gray-950 ${
+                          isPopupMode ? "text-xl" : "text-[30px]"
+                        }`}
+                      >
+                        {reservation.roomType}
+                      </p>
                     </div>
 
-                    {reservation.phoneNumber && (
-                      <div>
-                        <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>전화번호</p>
-                        <p className={`font-medium ${isPopupMode ? "text-sm" : "text-base"}`}>
-                          {reservation.phoneNumber}
-                        </p>
-                      </div>
-                    )}
-
-                    <div>
-                      <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>체크인</p>
-                      <p className={`font-medium ${isPopupMode ? "text-sm" : "text-base"}`}>
+                    <div className={`rounded-xl border bg-gray-50 ${isPopupMode ? "p-3" : "p-5"}`}>
+                      <p className={`font-bold text-gray-700 ${isPopupMode ? "text-base" : "text-[22px]"}`}>
+                        체크인 날짜
+                      </p>
+                      <p
+                        className={`mt-2 break-words font-bold leading-tight text-gray-950 ${
+                          isPopupMode ? "text-xl" : "text-[30px]"
+                        }`}
+                      >
                         {formatDateKorean(reservation.checkInDate)}
                       </p>
                     </div>
 
-                    <div>
-                      <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>체크아웃</p>
-                      <p className={`font-medium ${isPopupMode ? "text-sm" : "text-base"}`}>
+                    <div className={`rounded-xl border bg-gray-50 ${isPopupMode ? "p-3" : "p-5"}`}>
+                      <p className={`font-bold text-gray-700 ${isPopupMode ? "text-base" : "text-[22px]"}`}>
+                        체크아웃 날짜
+                      </p>
+                      <p
+                        className={`mt-2 break-words font-bold leading-tight text-gray-950 ${
+                          isPopupMode ? "text-xl" : "text-[30px]"
+                        }`}
+                      >
                         {formatDateKorean(reservation.checkOutDate)}
                       </p>
                     </div>
 
+                    {(reservation.place || reservation.bookingPlatform || reservation.phoneNumber) && (
+                      <div
+                        className={`col-span-2 grid border-t text-gray-700 ${
+                          isPopupMode
+                            ? "grid-cols-2 gap-3 pt-3 text-sm"
+                            : "grid-cols-3 gap-5 pt-5 text-lg"
+                        }`}
+                      >
+                        {reservation.place && (
+                          <div>
+                            <p className="font-bold text-gray-500">장소</p>
+                            <p className="mt-1 font-semibold">{reservation.place}</p>
+                          </div>
+                        )}
+                        <div>
+                          <p className="font-bold text-gray-500">예약 플랫폼</p>
+                          <p className="mt-1 font-semibold">{reservation.bookingPlatform}</p>
+                        </div>
+                        {reservation.phoneNumber && (
+                          <div>
+                            <p className="font-bold text-gray-500">전화번호</p>
+                            <p className="mt-1 font-semibold">{reservation.phoneNumber}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {hasRevealedInfo && (
                       <>
-                        <div className={`border-t pt-2 col-span-2 ${isPopupMode ? "mt-1" : "mt-2"}`}>
-                          <p className={`font-medium text-gray-700 ${isPopupMode ? "text-sm" : "text-base"}`}>
+                        <div className={`col-span-2 border-t ${isPopupMode ? "pt-3" : "pt-5"}`}>
+                          <p className={`font-bold text-gray-700 ${isPopupMode ? "text-base" : "text-[22px]"}`}>
                             객실 정보
                           </p>
                         </div>
 
-                        <div>
-                          <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>객실 호수</p>
-                          <p className={`font-medium text-blue-600 ${isPopupMode ? "text-base" : "text-lg"}`}>
+                        <div className={`rounded-xl border bg-blue-50 ${isPopupMode ? "p-3" : "p-5"}`}>
+                          <p className={`font-bold text-gray-700 ${isPopupMode ? "text-base" : "text-[22px]"}`}>
+                            객실 호수
+                          </p>
+                          <p className={`mt-2 font-bold text-blue-600 ${isPopupMode ? "text-xl" : "text-[30px]"}`}>
                             {displayRoomNumber}
                           </p>
                         </div>
 
-                        <div>
-                          <p className={`text-gray-500 ${isPopupMode ? "text-xs" : "text-sm"}`}>비밀번호</p>
-                          <div className="flex items-center">
-                            <p className={`font-medium text-red-600 ${isPopupMode ? "text-base" : "text-lg"}`}>
+                        <div className={`rounded-xl border bg-red-50 ${isPopupMode ? "p-3" : "p-5"}`}>
+                          <p className={`font-bold text-gray-700 ${isPopupMode ? "text-base" : "text-[22px]"}`}>
+                            비밀번호
+                          </p>
+                          <div className="mt-2 flex items-center">
+                            <p className={`font-bold text-red-600 ${isPopupMode ? "text-xl" : "text-[30px]"}`}>
                               {showPassword ? displayPassword : displayPassword.replace(/./g, "•")}
                             </p>
                             <Button
