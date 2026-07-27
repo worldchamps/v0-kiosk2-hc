@@ -267,6 +267,8 @@ function createWindow() {
     if (isDev) {
       console.log("[v0] Creating overlay button for Property1/2")
     }
+    startHardwareServer()
+    hardwareBridge.connect()
     overlayButtonModule.createOverlayButton()
   }
 }

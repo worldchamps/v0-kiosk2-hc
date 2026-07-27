@@ -237,11 +237,12 @@ export function propertyUsesElectron(propertyId: PropertyId): boolean {
 
 /**
  * Property가 프린터를 사용하는지 확인
- * Property1, 2는 프린터 사용 안함
+ * Property1은 Electron 하드웨어 서버 프린터 사용
+ * Property2는 프린터 사용 안함
  * Property3, 4는 Web Serial Port로 프린터 사용
  */
 export function propertyUsesPrinter(propertyId: PropertyId): boolean {
-  return propertyId === "property3" || propertyId === "property4"
+  return propertyId === "property1" || propertyId === "property3" || propertyId === "property4"
 }
 
 /**

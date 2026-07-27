@@ -155,7 +155,8 @@ propertyUsesElectron(propertyId)
 ### 프린터 사용 여부
 \`\`\`typescript
 propertyUsesPrinter(propertyId)
-// property1, property2 → false
+// property1 → true (Electron 하드웨어 서버)
+// property2 → false
 // property3, property4 → true
 \`\`\`
 
