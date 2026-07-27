@@ -15,12 +15,30 @@ const AUDIO_FILES = {
     "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/CBuilding%20Guide-aLyl8nvSxR4nNxBHZ7PTRQVsBtjYJl.mp3",
   BUILDING_D_GUIDE:
     "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/DBuilding%20Guide-i4zaRn19m3BbOUWUQLUgF1k9EhcQAq.mp3",
+  D_111_115_GUIDE: "/audio/d111-115-check-in-guide.mp3",
+  D_211_213_GUIDE: "/audio/d211-213-check-in-guide.mp3",
+  D_215_216_GUIDE: "/audio/d215-216-check-in-guide.mp3",
+  D_311_312_GUIDE: "/audio/d311-312-check-in-guide.mp3",
   BUILDING_CAMP_GUIDE:
     "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/CampBuilding%20Guide-gvNhIVPE0CyFXD9mfRCq81J5ENz0bu.mp3",
   IDLE_WELCOME:
     "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/ElevenLabs_2025-10-11T06_11_56_JiYoung_pvc_sp103_s72_sb93_se0_b_m2-7MVHQLf0Vc79ckFUIUkJRHLdsBMe50.mp3",
   // BGM 추가
   BGM: "https://jdpd8txarrh2yidl.public.blob.vercel-storage.com/BGM-KxDaQotYetSNviIMu8k9fN0pnce4X3.mp3",
+}
+
+const D_ROOM_GUIDE_BY_ROOM: Record<string, keyof typeof AUDIO_FILES> = {
+  D111: "D_111_115_GUIDE",
+  D112: "D_111_115_GUIDE",
+  D113: "D_111_115_GUIDE",
+  D115: "D_111_115_GUIDE",
+  D211: "D_211_213_GUIDE",
+  D212: "D_211_213_GUIDE",
+  D213: "D_211_213_GUIDE",
+  D215: "D_215_216_GUIDE",
+  D216: "D_215_216_GUIDE",
+  D311: "D_311_312_GUIDE",
+  D312: "D_311_312_GUIDE",
 }
 
 // 오디오 객체 캐시
@@ -289,6 +307,20 @@ export function playBuildingGuide(buildingType: string): void {
       console.error(`알 수 없는 건물 타입: ${buildingType}`)
       break
   }
+}
+
+/**
+ * D동 객실 그룹별 안내 음성을 우선 재생하고, 해당 음성이 없으면 건물 공통 안내를 재생합니다.
+ */
+export function playCheckInGuide(roomNumber: string, buildingType: string): void {
+  const roomGuide = D_ROOM_GUIDE_BY_ROOM[roomNumber.trim().toUpperCase()]
+
+  if (roomGuide) {
+    playAudio(roomGuide)
+    return
+  }
+
+  playBuildingGuide(buildingType)
 }
 
 /**

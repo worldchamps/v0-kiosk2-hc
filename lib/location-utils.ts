@@ -80,6 +80,36 @@ export function getBuildingZoomImagePath(roomNumber: string): string {
     return "/hotel-floor-plan.png"
   }
 
+  const normalizedRoomNumber = roomNumber.trim().toUpperCase()
+
+  if (["A131", "A132", "A133", "A135"].includes(normalizedRoomNumber)) {
+    return "/building-a-131-135-zoom.png"
+  }
+
+  if (["A231", "A232", "A233", "A235"].includes(normalizedRoomNumber)) {
+    return "/building-a-231-235-zoom.png"
+  }
+
+  if (["A331", "A332", "A333"].includes(normalizedRoomNumber)) {
+    return "/building-a-331-333-zoom.png"
+  }
+
+  if (["D111", "D112", "D113", "D115"].includes(normalizedRoomNumber)) {
+    return "/building-d-111-115-zoom.png"
+  }
+
+  if (["D211", "D212", "D213"].includes(normalizedRoomNumber)) {
+    return "/building-d-211-213-zoom.png"
+  }
+
+  if (["D215", "D216"].includes(normalizedRoomNumber)) {
+    return "/building-d-215-216-zoom.png"
+  }
+
+  if (["D311", "D312"].includes(normalizedRoomNumber)) {
+    return "/building-d-311-312-zoom.png"
+  }
+
   // Camp/Kariv 우선 체크 후, 아니면 기존 첫 글자(A, B, C, D) 사용
   const buildingSection = roomNumber.startsWith("Camp")
     ? "Camp"

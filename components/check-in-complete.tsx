@@ -9,7 +9,7 @@ import { printReceipt, getPrinterModel, isPrinterConnected, autoConnectPrinter }
 import Image from "next/image"
 import { getBuildingZoomImagePath } from "@/lib/location-utils"
 import type { KioskLocation } from "@/lib/location-utils"
-import { playBuildingGuide, stopAllAudio } from "@/lib/audio-utils"
+import { playCheckInGuide, stopAllAudio } from "@/lib/audio-utils"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { getKioskPropertyId, propertyUsesElectron } from "@/lib/property-utils"
 import { usePayment } from "@/contexts/payment-context"
@@ -112,8 +112,8 @@ export default function CheckInComplete({
       logDebug(`Building type detected: ${buildingType}`)
 
       audioTimerRef.current = setTimeout(() => {
-        logDebug(`Playing building guide audio for ${buildingType}`)
-        playBuildingGuide(buildingType)
+        logDebug(`Playing check-in guide audio for ${roomNumber || buildingType}`)
+        playCheckInGuide(roomNumber, buildingType)
         setAudioPlayed(true)
       }, 1000)
     } else {
