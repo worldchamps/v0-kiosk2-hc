@@ -26,6 +26,8 @@ import {
 import PropertyMismatchDialog from "@/components/property-mismatch-dialog"
 import PropertyRedirectDialog from "@/components/property-redirect-dialog"
 import { usePayment } from "@/contexts/payment-context"
+import { parseReservationQrValue } from "@/lib/reservation-qr"
+import { KioskProgressScreen, RESERVATION_PROGRESS_STEPS } from "@/components/kiosk-progress"
 
 interface KioskLayoutProps {
   onChangeMode: () => void
@@ -282,6 +284,70 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     }
   }
 
+  const findReservationById = async (reservationId: string, searchAll = false) => {
+    const params = new URLSearchParams({
+      reservationId,
+      todayOnly: "false",
+    })
+
+    if (searchAll) {
+      params.set("searchAll", "true")
+    } else {
+      params.set("kioskProperty", kioskProperty)
+    }
+
+    const response = await fetch(`/api/reservations?${params.toString()}`)
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`)
+    }
+
+    const data = await response.json()
+    return data.reservations || []
+  }
+
+  const handleScanReservationQr = async () => {
+    const front = window.electronAPI?.tossFront
+    if (!front) {
+      setError("토스 프론트는 키오스크 앱에서만 사용할 수 있습니다.")
+      return
+    }
+
+    setLoading(true)
+    setError("")
+
+    try {
+      const scanResult = await front.scanReservationQr()
+      if (!scanResult.success || !scanResult.value) {
+        throw new Error(scanResult.error || "QR 코드를 읽지 못했습니다.")
+      }
+
+      const reservationId = parseReservationQrValue(scanResult.value)
+      const reservations = await findReservationById(reservationId)
+
+      if (reservations.length === 1) {
+        setGuestName(reservations[0].guestName || "")
+        setReservationData(reservations[0])
+        setCurrentScreen("reservationDetails")
+        return
+      }
+
+      const allPropertyReservations = await findReservationById(reservationId, true)
+      if (allPropertyReservations.length > 0) {
+        const foundReservation = allPropertyReservations[0]
+        setGuestName(foundReservation.guestName || "")
+        setRedirectTargetProperty(foundReservation.property)
+        setShowPropertyRedirect(true)
+      } else {
+        setCurrentScreen("reservationNotFound")
+      }
+    } catch (err) {
+      console.error("[v0] Reservation QR scan error:", err)
+      setError(err instanceof Error ? err.message : "QR 예약 확인 중 오류가 발생했습니다.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleCheckIn = async () => {
     if (!reservationData || !reservationData.reservationId) return
 
@@ -376,26 +442,31 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         {currentScreen === "standby" && <StandbyScreen onNavigate={handleNavigate} kioskLocation={kioskLocation} />}
 
         {currentScreen === "reservationConfirm" && (
-          <ReservationConfirm
-            onNavigate={handleNavigate}
-            onCheckReservation={handleCheckReservation}
-            guestName={guestName}
-            setGuestName={setGuestName}
-            loading={loading}
-            kioskLocation={kioskLocation}
-            isPopupMode={isPopupMode}
-          />
+          <KioskProgressScreen steps={RESERVATION_PROGRESS_STEPS} currentStep={0}>
+            <ReservationConfirm
+              onNavigate={handleNavigate}
+              onCheckReservation={handleCheckReservation}
+              onScanReservationQr={handleScanReservationQr}
+              guestName={guestName}
+              setGuestName={setGuestName}
+              loading={loading}
+              kioskLocation={kioskLocation}
+              isPopupMode={isPopupMode}
+            />
+          </KioskProgressScreen>
         )}
 
         {currentScreen === "reservationList" && (
-          <ReservationList
-            reservations={reservationsList}
-            onSelectReservation={handleSelectReservation}
-            onNavigate={handleNavigate}
-            kioskLocation={kioskLocation}
-            guestName={guestName}
-            isPopupMode={isPopupMode}
-          />
+          <KioskProgressScreen steps={RESERVATION_PROGRESS_STEPS} currentStep={0}>
+            <ReservationList
+              reservations={reservationsList}
+              onSelectReservation={handleSelectReservation}
+              onNavigate={handleNavigate}
+              kioskLocation={kioskLocation}
+              guestName={guestName}
+              isPopupMode={isPopupMode}
+            />
+          </KioskProgressScreen>
         )}
 
         {currentScreen === "currentLocation" && (
@@ -407,25 +478,32 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         )}
 
         {currentScreen === "reservationDetails" && (
-          <ReservationDetails
-            reservation={reservationData}
-            onCheckIn={handleCheckIn}
-            onNavigate={handleNavigate}
-            loading={loading}
-            revealedInfo={revealedInfo}
-            isPopupMode={isPopupMode}
-            kioskLocation={kioskLocation}
-          />
+          <KioskProgressScreen
+            steps={RESERVATION_PROGRESS_STEPS}
+            currentStep={loading || !!(revealedInfo.roomNumber || revealedInfo.password) ? 2 : 0}
+          >
+            <ReservationDetails
+              reservation={reservationData}
+              onCheckIn={handleCheckIn}
+              onNavigate={handleNavigate}
+              loading={loading}
+              revealedInfo={revealedInfo}
+              isPopupMode={isPopupMode}
+              kioskLocation={kioskLocation}
+            />
+          </KioskProgressScreen>
         )}
 
         {currentScreen === "checkInComplete" && (
-          <CheckInComplete
-            reservation={reservationData}
-            revealedInfo={revealedInfo}
-            kioskLocation={kioskLocation}
-            onNavigate={handleNavigate}
-            isPopupMode={isPopupMode}
-          />
+          <KioskProgressScreen steps={RESERVATION_PROGRESS_STEPS} currentStep={2}>
+            <CheckInComplete
+              reservation={reservationData}
+              revealedInfo={revealedInfo}
+              kioskLocation={kioskLocation}
+              onNavigate={handleNavigate}
+              isPopupMode={isPopupMode}
+            />
+          </KioskProgressScreen>
         )}
 
         {currentScreen === "reservationNotFound" && (
@@ -439,9 +517,9 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       </div>
 
       {!isPopupMode && (
-        <div className="absolute bottom-32 right-4 z-20">
+        <div className="kiosk-admin-slot absolute top-2 right-2 z-20">
           <button
-            className="px-4 py-2 bg-gray-800 text-white rounded-lg opacity-70 hover:opacity-100 transition-opacity text-sm font-medium shadow-lg"
+            className="kiosk-admin-entry"
             onClick={handleModeChangeClick}
             aria-label="관리자 모드"
           >

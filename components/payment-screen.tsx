@@ -3,8 +3,10 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Loader2, Banknote, CheckCircle2, XCircle, AlertCircle } from "lucide-react"
+import { Loader2, Banknote, CheckCircle2, XCircle, AlertCircle, CreditCard } from "lucide-react"
 import { usePayment } from "@/contexts/payment-context"
+import TossFrontCardPayment from "@/components/toss-front-card-payment"
+import type { CompletedPayment } from "@/lib/payment-types"
 import {
   connectBillAcceptor,
   enableAcceptance,
@@ -19,27 +21,31 @@ import { dispenseBills, connectBillDispenser, isBillDispenserConnected } from "@
 import { printReceipt } from "@/lib/printer-utils"
 
 interface PaymentScreenProps {
-  requiredAmount: number
-  onPaymentComplete: () => void
+  cardAmount: number
+  cashAmount: number
+  onPaymentComplete: (payment: CompletedPayment) => void
   onCancel: () => void
   title?: string
   description?: string
 }
 
 export default function PaymentScreen({
-  requiredAmount,
+  cardAmount,
+  cashAmount,
   onPaymentComplete,
   onCancel,
   title = "결제",
-  description = "지폐를 투입해주세요",
+  description = "결제수단을 선택해주세요",
 }: PaymentScreenProps) {
-  const { paymentSession, addBill, isPaymentComplete, cancelPayment } = usePayment()
+  const { paymentSession, startPayment, addBill, isPaymentComplete, cancelPayment } = usePayment()
   const [isConnecting, setIsConnecting] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string>("")
-  const [statusMessage, setStatusMessage] = useState<string>("지폐인식기 연결 중...")
+  const [statusMessage, setStatusMessage] = useState<string>("현금 결제를 준비하고 있습니다...")
   const paymentCompleteRef = useRef(false)
   const [isCancelling, setIsCancelling] = useState(false)
+  const [paymentMethod, setPaymentMethod] = useState<"select" | "cash" | "card">("select")
+  const requiredAmount = paymentMethod === "card" ? cardAmount : cashAmount
 
   // Polling Interval Ref
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
@@ -58,7 +64,7 @@ export default function PaymentScreen({
     paymentCompleteRef.current = true
 
     try {
-      setStatusMessage("디바이스 초기화 중...")
+      setStatusMessage("결제를 마무리하고 있습니다...")
       await initializeDevice()
     } catch (e) {
       console.error("[v0] Error initializing device during completion:", e)
@@ -87,7 +93,7 @@ export default function PaymentScreen({
             setStatusMessage(`거스름돈 반환 완료`)
           } else {
             console.error("[v0] Failed to dispense bills")
-            setStatusMessage("거스름돈 반환 실패 (관리자 문의)")
+            setStatusMessage("거스름돈을 반환하지 못했습니다. 문의전화로 연락해주세요.")
             // Wait to let user see error
             await new Promise(r => setTimeout(r, 3000))
           }
@@ -98,7 +104,7 @@ export default function PaymentScreen({
         }
       } catch (e) {
         console.error("[v0] Dispenser error:", e)
-        setStatusMessage("거스름돈 장치 오류")
+        setStatusMessage("거스름돈을 반환하지 못했습니다. 문의전화로 연락해주세요.")
         await new Promise(r => setTimeout(r, 2000))
       }
     } else {
@@ -107,7 +113,7 @@ export default function PaymentScreen({
 
     console.log("[v0] Payment flow finished, navigating...")
     await new Promise(r => setTimeout(r, 1000))
-    onPaymentComplete()
+    onPaymentComplete({ method: "CASH" })
   }, [requiredAmount, onPaymentComplete])
 
   // Polling Function
@@ -137,7 +143,7 @@ export default function PaymentScreen({
               case 0x05: amount = 5000; break
               default:
                 console.warn("[v0] Polling: Unknown bill code:", billData.toString(16))
-                setError(`알 수 없는 지폐: 0x${billData.toString(16)}`)
+                setError("지폐를 확인할 수 없습니다. 다시 넣어주세요.")
                 break;
             }
 
@@ -153,7 +159,7 @@ export default function PaymentScreen({
             }
           } else {
             console.error("[v0] Polling: Failed to get bill data (Response null)")
-            setError("지폐 인식 실패 (응답 없음)")
+            setError("지폐를 확인할 수 없습니다. 다시 넣어주세요.")
           }
 
           console.log("[v0] Polling: Re-enabling acceptance for next bill...")
@@ -164,7 +170,7 @@ export default function PaymentScreen({
         }
       } catch (e) {
         console.error("[v0] Polling error:", e)
-        setError(`지폐인식기 오류: ${e instanceof Error ? e.message : String(e)}`)
+        setError("현금 결제 중 문제가 발생했습니다. 문의전화로 연락해주세요.")
       } finally {
         isPollingProcessingRef.current = false
       }
@@ -173,6 +179,8 @@ export default function PaymentScreen({
   )
 
   useEffect(() => {
+    if (paymentMethod !== "cash") return
+
     let isMounted = true
 
     const initializePayment = async () => {
@@ -181,19 +189,19 @@ export default function PaymentScreen({
 
       try {
         if (!isBillAcceptorConnected()) {
-          setStatusMessage("지폐인식기 연결 중...")
+          setStatusMessage("현금 결제를 준비하고 있습니다...")
           const connected = await connectBillAcceptor()
           if (!isMounted) return
 
           if (!connected) {
-            setError("지폐인식기 연결 실패")
+            setError("현금 결제를 준비하지 못했습니다. 문의전화로 연락해주세요.")
             setIsConnecting(false)
             return
           }
         }
 
         console.log("[v0] Bill acceptor connected")
-        setStatusMessage("지폐 수취 준비 중...")
+        setStatusMessage("지폐 투입구를 준비하고 있습니다...")
         await enableAcceptance()
         console.log("[v0] Bill acceptance enabled")
 
@@ -211,7 +219,7 @@ export default function PaymentScreen({
       } catch (error) {
         if (isMounted) {
           console.error("[v0] Payment initialization error:", error)
-          setError(`초기화 오류: ${error}`)
+          setError("현금 결제를 준비하지 못했습니다. 문의전화로 연락해주세요.")
           setIsConnecting(false)
         }
       }
@@ -228,7 +236,7 @@ export default function PaymentScreen({
       }
       setConfig(0x1c) // Disable on exit
     }
-  }, [pollDeviceStatus])
+  }, [paymentMethod, pollDeviceStatus])
 
   const remainingAmount = requiredAmount - paymentSession.acceptedAmount
 
@@ -266,19 +274,90 @@ export default function PaymentScreen({
       onCancel()
     } catch (error) {
       console.error("[v0] Cancel error:", error)
-      setError(`취소 오류: ${error}`)
+      setError("결제를 취소하지 못했습니다. 문의전화로 연락해주세요.")
       await new Promise((resolve) => setTimeout(resolve, 3000))
     } finally {
       setIsCancelling(false)
     }
   }
 
+  const selectPaymentMethod = (method: "card" | "cash") => {
+    const amount = method === "card" ? cardAmount : cashAmount
+    if (amount <= 0) return
+    startPayment(amount, paymentSession.reservationData)
+    setPaymentMethod(method)
+  }
+
+  if (paymentMethod === "select") {
+    return (
+      <main className="kiosk-payment-method-screen">
+        <header>
+          <p>선택한 객실</p>
+          <h1>{title}</h1>
+          <span>{description}</span>
+        </header>
+
+        <section className="kiosk-payment-methods" aria-label="결제 방법">
+              <button
+                type="button"
+                onClick={() => selectPaymentMethod("card")}
+                disabled={cardAmount <= 0}
+                className="kiosk-payment-method is-card"
+              >
+                <CreditCard className="h-16 w-16" />
+                <span>
+                  <strong>카드 결제</strong>
+                  <small>{cardAmount > 0 ? `${cardAmount.toLocaleString()}원` : "이용 불가"}</small>
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => selectPaymentMethod("cash")}
+                disabled={cashAmount <= 0}
+                className="kiosk-payment-method is-cash"
+              >
+                <Banknote className="h-16 w-16" />
+                <span>
+                  <strong>현금 결제</strong>
+                  <small>{cashAmount > 0 ? `${cashAmount.toLocaleString()}원` : "이용 불가"}</small>
+                </span>
+              </button>
+        </section>
+
+        <button type="button" className="kiosk-payment-back" onClick={onCancel}>
+          이전 화면
+        </button>
+      </main>
+    )
+  }
+
+  if (paymentMethod === "card") {
+    return (
+      <div className="flex h-full w-full items-start justify-start">
+        <div className="kiosk-content-container">
+          <div className="kiosk-payment-flow-header">
+            <h1>{title}</h1>
+            <p>{description}</p>
+          </div>
+          <div className="mt-8 w-full">
+            <TossFrontCardPayment
+              requiredAmount={requiredAmount}
+              onComplete={onPaymentComplete}
+              onBack={() => setPaymentMethod("select")}
+              onCancel={onCancel}
+            />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex items-start justify-start w-full h-full">
       <div className="kiosk-content-container">
-        <div>
-          <h1 className="kiosk-title">{title}</h1>
-          <div className="kiosk-highlight">{description}</div>
+        <div className="kiosk-payment-flow-header">
+          <h1>{title}</h1>
+          <p>{description}</p>
         </div>
 
         <div className="w-full space-y-6 mt-8">
@@ -378,6 +457,14 @@ export default function PaymentScreen({
             ) : (
               "취소"
             )}
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => setPaymentMethod("select")}
+            disabled={isConnecting || paymentSession.acceptedAmount > 0}
+            className="h-16 w-full text-xl"
+          >
+            결제수단 변경
           </Button>
         </div>
       </div>

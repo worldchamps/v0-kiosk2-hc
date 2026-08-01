@@ -1,0 +1,18 @@
+body {
+  margin: 0;
+  line-height: normal;
+  font-family: "Toss Product Sans", sans-serif;
+  width: 400px;
+  height: 640px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+  font-family: "Toss Product Sans", sans-serif;
+}
+
+#app {
+  width: 400px;
+  height: 640px;
+}

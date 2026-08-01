@@ -1,10 +1,9 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
-import { Button } from "@/components/ui/button"
+import { useEffect, useRef } from "react"
 import { Input } from "@/components/ui/input"
 import KoreanKeyboard from "./korean-keyboard"
-import { Loader2 } from "lucide-react"
+import { ArrowLeft, Loader2, QrCode, Search } from "lucide-react"
 import { type KioskLocation, getLocationTitle } from "@/lib/location-utils"
 import { playAudio } from "@/lib/audio-utils"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
@@ -13,6 +12,7 @@ import { getKioskPropertyId, propertyUsesElectron } from "@/lib/property-utils"
 interface ReservationConfirmProps {
   onNavigate: (screen: string) => void
   onCheckReservation: (name: string) => void
+  onScanReservationQr: () => void
   guestName: string
   setGuestName: (name: string) => void
   loading?: boolean
@@ -23,13 +23,13 @@ interface ReservationConfirmProps {
 export default function ReservationConfirm({
   onNavigate,
   onCheckReservation,
+  onScanReservationQr,
   guestName,
   setGuestName,
   loading = false,
   kioskLocation,
   isPopupMode = false,
 }: ReservationConfirmProps) {
-  const [showKeyboard, setShowKeyboard] = useState(true)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const locationTitle = getLocationTitle(kioskLocation)
@@ -74,65 +74,97 @@ export default function ReservationConfirm({
   }
 
   return (
-    <div className="flex items-start justify-start w-full h-full">
-      <div className="kiosk-content-container">
-        <div>
-          <div className="kiosk-highlight">예약 확인</div>
+    <main className="kiosk-reservation-lookup">
+      <header className="kiosk-reservation-header">
+        <button
+          type="button"
+          className="kiosk-reservation-back"
+          onClick={handleBackClick}
+          disabled={loading}
+        >
+          <ArrowLeft aria-hidden="true" />
+          <span>돌아가기</span>
+        </button>
+
+        <div className="kiosk-reservation-brand">
+          <span>{locationTitle}</span>
+          <strong>예약 확인</strong>
         </div>
 
-        <div className="w-full space-y-8 mt-8">
-          <div className="space-y-4">
-            <label htmlFor="guestName" className="text-5xl font-bold">
-              예약자명을 입력해주세요
-            </label>
-            <Input
-              id="guestName"
-              ref={inputRef}
-              value={guestName}
-              onChange={(e) => setGuestName(e.target.value)}
-              placeholder="예약자명"
-              className="h-24 p-5 border-3 text-center border-gray-300 rounded-lg font-normal bg-white"
-              style={{ padding: "40px", fontSize: "40px" }}
-              disabled={loading}
-            />
-          </div>
+        <div aria-hidden="true" />
+      </header>
 
-          <div className="mt-8">
-            <KoreanKeyboard
-              text={guestName}
-              setText={setGuestName}
-              onEnter={handleCheckReservation}
-              disabled={loading}
-            />
-          </div>
+      <section className="kiosk-reservation-intro" aria-labelledby="reservation-lookup-title">
+        <p>예약 고객 전용</p>
+        <h1 id="reservation-lookup-title">예약을 어떻게<br />찾을까요?</h1>
+        <span>QR을 스캔하거나 예약자명을 입력해주세요.</span>
+      </section>
 
-          <div className="grid grid-cols-2 gap-8 pt-8">
-            <Button
-              onClick={handleCheckReservation}
-              disabled={!guestName.trim() || loading}
-              className="h-20 text-2xl text-black bg-[#42c0ff] hover:bg-[#3ab0e8] shadow-md font-bold rounded-xl"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="mr-3 h-8 w-8 animate-spin" />
-                  처리 중...
-                </>
-              ) : (
-                "입력완료"
-              )}
-            </Button>
+      <section className="kiosk-reservation-panel">
+        <button
+            type="button"
+            onClick={onScanReservationQr}
+            disabled={loading}
+            className="kiosk-reservation-qr"
+          >
+            <span className="kiosk-reservation-qr-icon">
+              {loading ? <Loader2 className="animate-spin" /> : <QrCode />}
+            </span>
+            <span className="kiosk-reservation-qr-copy">
+              <strong>예약 QR 스캔</strong>
+              <small>문자 또는 예약 사이트의 QR을 보여주세요</small>
+            </span>
+            <Search aria-hidden="true" />
+        </button>
 
-            <Button
-              variant="outline"
-              onClick={handleBackClick}
-              className="h-20 text-2xl border-3 border-gray-300 font-bold rounded-xl bg-transparent"
-              disabled={loading}
-            >
-              돌아가기
-            </Button>
-          </div>
+        <div className="kiosk-reservation-divider">
+          <span>또는 예약자명으로 찾기</span>
         </div>
-      </div>
-    </div>
+
+        <div className="kiosk-reservation-name">
+          <label htmlFor="guestName">예약자명</label>
+          <Input
+            id="guestName"
+            ref={inputRef}
+            value={guestName}
+            onChange={(e) => setGuestName(e.target.value)}
+            placeholder="성함을 입력해주세요"
+            className="kiosk-reservation-input"
+            disabled={loading}
+          />
+          <p>예약할 때 입력한 이름과 동일하게 입력해주세요.</p>
+        </div>
+
+        <div className="kiosk-reservation-keyboard">
+          <KoreanKeyboard
+            text={guestName}
+            setText={setGuestName}
+            onEnter={handleCheckReservation}
+            disabled={loading}
+            hideEnter
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={handleCheckReservation}
+          disabled={!guestName.trim() || loading}
+          className="kiosk-reservation-submit"
+        >
+          {loading ? (
+            <>
+              <Loader2 className="animate-spin" />
+              예약을 찾고 있어요
+            </>
+          ) : (
+            <>
+              예약 확인하기
+              <Search aria-hidden="true" />
+            </>
+          )}
+        </button>
+      </section>
+
+    </main>
   )
 }

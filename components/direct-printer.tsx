@@ -5,13 +5,13 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Printer, X, Check, AlertTriangle, Info, Activity } from "lucide-react"
 import {
-  printReceipt,
   getSimplePrintMode,
   setSimplePrintMode,
   autoConnectPrinter,
   getPrinterModel,
   checkPrinterStatus,
-} from "@/lib/printer-utils"
+  printReceipt,
+} from "@/lib/printer-utils-unified"
 
 interface DirectPrinterProps {
   receiptData: any

@@ -43,9 +43,16 @@ interface KoreanKeyboardProps {
   setText: (text: string) => void
   onEnter?: () => void
   disabled?: boolean
+  hideEnter?: boolean
 }
 
-export default function KoreanKeyboard({ text, setText, onEnter, disabled = false }: KoreanKeyboardProps) {
+export default function KoreanKeyboard({
+  text,
+  setText,
+  onEnter,
+  disabled = false,
+  hideEnter = false,
+}: KoreanKeyboardProps) {
   const [layoutName, setLayoutName] = useState("default") // default, shift
   const [isKorean, setIsKorean] = useState(true) // true = Korean, false = English
 
@@ -60,7 +67,6 @@ export default function KoreanKeyboard({ text, setText, onEnter, disabled = fals
       // Toggle between default and shift layouts
       setLayoutName((prev) => (prev === "default" ? "shift" : "default"))
     } else if (key === "{enterText}") {
-      // Handle enter key
       if (onEnter) onEnter()
     } else if (key === "{dot}") {
       // Add a period
@@ -86,7 +92,13 @@ export default function KoreanKeyboard({ text, setText, onEnter, disabled = fals
     }
   }
 
-  const currentLayout = isKorean ? koreanLayout : englishLayout
+  const sourceLayout = isKorean ? koreanLayout : englishLayout
+  const currentLayout = hideEnter
+    ? {
+        default: sourceLayout.default.map((row) => row.replace(" {enterText}", "")),
+        shift: sourceLayout.shift.map((row) => row.replace(" {enterText}", "")),
+      }
+    : sourceLayout
 
   return (
     <div className={`korean-keyboard-wrapper ${disabled ? "opacity-70 pointer-events-none" : ""}`}>
@@ -95,7 +107,7 @@ export default function KoreanKeyboard({ text, setText, onEnter, disabled = fals
         layout={currentLayout}
         onKeyPress={onKeyPress}
         display={{
-          "{enterText}": "Enter",
+          "{enterText}": "확인",
           "{shift}": "↑",
           "{space}": " ",
           "{dot}": ".",

@@ -13,21 +13,24 @@ import {
   Clock,
   AlertTriangle,
   CalendarDays,
-  CircleHelp,
-  X,
+  CreditCard,
+  Landmark,
   ArrowLeft,
   DoorOpen,
+  Check,
+  CigaretteOff,
 } from "lucide-react"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { getRoomImagePath } from "@/lib/room-utils"
 import { sortRoomTypes } from "@/lib/room-type-order"
 import { usePayment } from "@/contexts/payment-context"
 import PaymentScreen from "@/components/payment-screen"
+import type { CompletedPayment } from "@/lib/payment-types"
 import CheckInComplete from "@/components/check-in-complete"
-import SmokingPolicyDialog from "@/components/smoking-policy-dialog"
+import { KioskProgressScreen, ON_SITE_PROGRESS_STEPS } from "@/components/kiosk-progress"
 import { getPropertyFromRoomNumber } from "@/lib/property-utils"
 import { isShortStayAvailable, isShortStayRestrictedProperty } from "@/lib/short-stay-policy"
-import { getOnSiteRate } from "@/lib/on-site-pricing"
+import type { PmsPaymentRates, PmsRoomRates } from "@/lib/pms-rates"
 
 interface OnSiteReservationProps {
   onNavigate: (screen: string) => void
@@ -42,21 +45,36 @@ interface AvailableRoom {
   password: string
   floor: string
   roomCode: string
+  rates: PmsRoomRates | null
+  ratesSource: "pms_status" | null
+  ratesUpdatedAt: string | null
 }
 
-type BookingStep = "roomType" | "roomSelect" | "guestInfo" | "complete" | "payment"
+type BookingStep = "stayType" | "roomType" | "roomSelect" | "confirm" | "guestInfo" | "complete" | "payment"
 type StayType = "overnight" | "shortStay"
 
 interface StaySelection {
   type: StayType
   label: "숙박" | "대실"
-  price: number
 }
 
-function getRoomTypePrices(building: string, roomType: string) {
-  const overnight = getOnSiteRate(building, roomType, "overnight")
-  const shortStay = getOnSiteRate(building, roomType, "shortStay")
-  return overnight && shortStay ? { overnight, shortStay } : undefined
+function getRoomTypePrices(rooms: AvailableRoom[]) {
+  return rooms.find(
+    (room) =>
+      room.rates &&
+      (hasAvailableRate(room.rates.overnight) || hasAvailableRate(room.rates.shortStay)),
+  )?.rates
+}
+
+function hasAvailableRate(rates: PmsPaymentRates | undefined) {
+  return Boolean(rates && (rates.card > 0 || rates.cash > 0))
+}
+
+function formatPaymentRates(rates: PmsPaymentRates) {
+  const parts = []
+  if (rates.card > 0) parts.push(`카드 ${formatPrice(rates.card)}`)
+  if (rates.cash > 0) parts.push(`현금 ${formatPrice(rates.cash)}`)
+  return parts.join(" · ")
 }
 
 function formatPrice(price: number) {
@@ -85,16 +103,13 @@ function getBookingDates(stayType: StayType) {
 }
 
 export default function OnSiteReservation({ onNavigate, location }: OnSiteReservationProps) {
-  const [step, setStep] = useState<BookingStep>("roomType")
+  const [step, setStep] = useState<BookingStep>("stayType")
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [roomsByType, setRoomsByType] = useState<Record<string, AvailableRoom[]>>({})
   const [selectedRoomType, setSelectedRoomType] = useState<string>("")
   const [selectedStay, setSelectedStay] = useState<StaySelection | null>(null)
   const [selectedRoom, setSelectedRoom] = useState<AvailableRoom | null>(null)
-  const [pendingRoom, setPendingRoom] = useState<AvailableRoom | null>(null)
-  const [showSmokingPolicy, setShowSmokingPolicy] = useState(false)
-  const [showPaymentGuide, setShowPaymentGuide] = useState(false)
   const [guestName, setGuestName] = useState("")
   const [phoneNumber, setPhoneNumber] = useState("")
   const [checkInDate, setCheckInDate] = useState("")
@@ -104,7 +119,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [shortStayAvailable, setShortStayAvailable] = useState(() => isShortStayAvailable())
   const { paymentSession, startPayment, completePayment, cancelPayment } = usePayment()
-  const bookingPrice = selectedStay?.price ?? 0
+  const selectedRates = selectedRoom && selectedStay ? selectedRoom.rates?.[selectedStay.type] : undefined
 
   const locationName = location === "CAMP" ? "캠프" : location ? `${location}동` : ""
   const kioskProperty =
@@ -171,12 +186,10 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
     setSelectedRoomType("")
     setSelectedStay(null)
     setSelectedRoom(null)
-    setPendingRoom(null)
-    setShowSmokingPolicy(false)
     setGuestName("")
     setPhoneNumber("")
     setReservationData(null)
-    setStep("roomType")
+    setStep("stayType")
     await fetchAvailableRooms(false)
   }, [cancelPayment, fetchAvailableRooms, paymentSession.acceptedAmount, paymentSession.isActive])
 
@@ -197,7 +210,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   }, [fetchAvailableRooms])
 
   useEffect(() => {
-    if (step !== "roomType") return
+    if (step !== "stayType" && step !== "roomType") return
 
     const refreshInterval = window.setInterval(() => {
       fetchAvailableRooms(false)
@@ -206,16 +219,20 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
     return () => window.clearInterval(refreshInterval)
   }, [fetchAvailableRooms, step])
 
-  const handleRoomTypeSelect = (roomType: string, stay: StaySelection) => {
+  const handleStayTypeSelect = (stay: StaySelection) => {
     if (stay.type === "shortStay" && shouldRestrictShortStay && !isShortStayAvailable()) {
       alert("대실 예약은 오후 9시 이전에만 가능합니다.")
       return
     }
     const dates = getBookingDates(stay.type)
-    setSelectedRoomType(roomType)
     setSelectedStay(stay)
     setCheckInDate(dates.checkInDate)
     setCheckOutDate(dates.checkOutDate)
+    setStep("roomType")
+  }
+
+  const handleRoomTypeSelect = (roomType: string) => {
+    setSelectedRoomType(roomType)
     setStep("roomSelect")
   }
 
@@ -230,7 +247,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
     ) {
       alert("대실 예약은 오후 9시 이전에만 가능합니다.")
       setSelectedStay(null)
-      setStep("roomType")
+      setStep("stayType")
       return
     }
 
@@ -254,32 +271,24 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
       password: room.password,
       stayType: selectedStay.type,
       stayTypeLabel: selectedStay.label,
-      price: selectedStay.price,
+      rates: room.rates?.[selectedStay.type] ?? null,
     }
 
-    startPayment(selectedStay.price, reservationInfo)
+    const roomRates = room.rates?.[selectedStay.type]
+    if (!hasAvailableRate(roomRates)) {
+      alert("이 객실의 이용금액을 확인할 수 없습니다. 다른 객실을 선택해주세요.")
+      return
+    }
+
+    startPayment(roomRates?.cash || roomRates?.card || 0, reservationInfo)
     setStep("payment")
   }
 
   const handleRoomSelect = (room: AvailableRoom) => {
     if (!selectedStay) return
 
-    setPendingRoom(room)
-    setShowSmokingPolicy(true)
-  }
-
-  const handleSmokingPolicyAgree = () => {
-    if (!pendingRoom) return
-
-    const room = pendingRoom
-    setPendingRoom(null)
-    setShowSmokingPolicy(false)
-    startRoomPayment(room)
-  }
-
-  const handleSmokingPolicyCancel = () => {
-    setPendingRoom(null)
-    setShowSmokingPolicy(false)
+    setSelectedRoom(room)
+    setStep("confirm")
   }
 
   const handleSubmitBooking = async () => {
@@ -300,14 +309,37 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
       password: selectedRoom.password,
       stayType: selectedStay.type,
       stayTypeLabel: selectedStay.label,
-      price: selectedStay.price,
+      rates: selectedRoom.rates?.[selectedStay.type] ?? null,
     }
 
-    startPayment(selectedStay.price, reservationInfo)
+    const roomRates = selectedRoom.rates?.[selectedStay.type]
+    if (!hasAvailableRate(roomRates)) {
+      alert("이 객실의 이용금액을 확인할 수 없습니다. 다른 객실을 선택해주세요.")
+      return
+    }
+
+    startPayment(roomRates?.cash || roomRates?.card || 0, reservationInfo)
     setStep("payment")
   }
 
-  const handlePaymentComplete = async () => {
+  const handlePaymentComplete = async (payment: CompletedPayment) => {
+    const bookingPrice =
+      payment.method === "CARD" ? selectedRates?.card ?? 0 : selectedRates?.cash ?? 0
+
+    const cancelApprovedFrontPayment = async () => {
+      if (payment.provider !== "TOSS_FRONT" || !payment.front) return
+      try {
+        const result = await window.electronAPI?.tossFront?.cancelPayment(payment.front)
+        if (!result?.success) {
+          console.error("[Toss Front] Automatic approval cancellation failed:", result?.error)
+          alert("카드 승인취소에 실패했습니다. 관리자에게 문의해주세요.")
+        }
+      } catch (frontCancelError) {
+        console.error("[Toss Front] Automatic approval cancellation failed:", frontCancelError)
+        alert("카드 승인취소에 실패했습니다. 관리자에게 문의해주세요.")
+      }
+    }
+
     const roomProperty = getPropertyFromRoomNumber(selectedRoom?.roomCode || "")
     if (
       selectedStay?.type === "shortStay" &&
@@ -315,9 +347,10 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
       !isShortStayAvailable()
     ) {
       alert("오후 9시가 지나 대실 예약을 진행할 수 없습니다.")
+      await cancelApprovedFrontPayment()
       await cancelPayment()
       setSelectedStay(null)
-      setStep("roomType")
+      setStep("stayType")
       return
     }
 
@@ -341,6 +374,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
           password: selectedRoom?.password,
           stayType: selectedStay?.type,
           stayTypeLabel: selectedStay?.label,
+          payment,
         }),
       })
 
@@ -353,12 +387,14 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
         setStep("complete")
       } else {
         alert("예약 중 오류가 발생했습니다: " + data.error)
+        await cancelApprovedFrontPayment()
         await cancelPayment()
         setStep("roomSelect")
       }
     } catch (error) {
       console.error("Error submitting booking:", error)
       alert("예약 중 오류가 발생했습니다: " + (error instanceof Error ? error.message : String(error)))
+      await cancelApprovedFrontPayment()
       await cancelPayment()
       setStep("roomSelect")
     } finally {
@@ -368,33 +404,47 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
 
   const handlePaymentCancel = async () => {
     await cancelPayment()
-    setStep("roomSelect")
+    setStep("confirm")
   }
 
-  // Step 1: Room Type Selection
-  if (step === "roomType") {
+  // Step 1: Stay type selection
+  if (step === "stayType") {
     const availableRoomTypes = sortRoomTypes(Object.keys(roomsByType))
 
     return (
       <div className="kiosk-home-screen">
-        <section className="kiosk-payment-notice" aria-label="현금 결제 및 문의 안내">
-          <div className="kiosk-payment-notice-title">
-            <AlertTriangle aria-hidden="true" />
-            <strong>카드 결제 불가 · 현금 전용</strong>
+        <header className="kiosk-home-hero">
+          <div className="kiosk-home-heading">
+            <p>더 비치스테이 · {locationName}</p>
+            <h1>어떻게<br />이용하시나요?</h1>
+            <span>원하시는 이용 방법을 먼저 선택해주세요.</span>
           </div>
-          <div className="kiosk-payment-notice-details">
-            <p>
-              <span>계좌이체</span>
-              <strong>352-1453-5719-23 농협 김동훈</strong>
-            </p>
-            <p>
-              <span>기계 고장 및 문의 전화</span>
-              <strong>010-5126-4644</strong>
-            </p>
+
+          <div className="kiosk-home-payment-badge">
+            <CreditCard aria-hidden="true" />
+            <span>
+              <small>결제 방법</small>
+              <strong>카드 · 현금</strong>
+            </span>
           </div>
+        </header>
+
+        <section className="kiosk-payment-notice" aria-label="결제 및 문의 안내">
+          <div className="kiosk-payment-help-title">도움이 필요하세요?</div>
+          <p>
+            <Landmark aria-hidden="true" />
+            <span>계좌번호</span>
+            <strong>농협 352-1453-5719-23</strong>
+            <small>김동훈</small>
+          </p>
+          <p>
+            <Phone aria-hidden="true" />
+            <span>기계 고장 및 문의</span>
+            <strong>010-5126-4644</strong>
+          </p>
         </section>
 
-        <div className="kiosk-home-content">
+        <div className="kiosk-stay-type-content">
           {roomsError && (
             <div className="kiosk-home-message kiosk-home-message-error">
               <AlertTriangle className="h-12 w-12" />
@@ -406,18 +456,8 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
           )}
 
           {!roomsError && loading && availableRoomTypes.length === 0 && (
-            <div className="kiosk-home-grid" aria-label="객실 정보를 불러오는 중">
-              {[0, 1, 2].map((index) => (
-                <div key={index} className="kiosk-room-card kiosk-room-card-loading">
-                  <div className="kiosk-room-image-skeleton" />
-                  <div className="kiosk-room-card-body">
-                    <div className="w-full">
-                      <div className="kiosk-room-text-skeleton kiosk-room-text-skeleton-title" />
-                      <div className="kiosk-room-text-skeleton" />
-                    </div>
-                  </div>
-                </div>
-              ))}
+            <div className="kiosk-stay-loading" aria-label="객실 정보를 불러오는 중">
+              객실 정보를 확인하고 있습니다
             </div>
           )}
 
@@ -432,73 +472,32 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
           )}
 
           {!roomsError && availableRoomTypes.length > 0 && (
-            <div className="kiosk-home-grid">
-              {availableRoomTypes.map((roomType) => {
-                const rooms = roomsByType[roomType]
-                const availableCount = rooms.length
-                const sampleRoom = rooms[0]
-                const imagePath = getRoomImagePath(roomType, sampleRoom.roomCode)
-                const prices = getRoomTypePrices(sampleRoom.building || location || "", roomType)
+            <div className="kiosk-stay-type-options">
+              <button
+                type="button"
+                className="kiosk-stay-type-option is-overnight"
+                onClick={() => handleStayTypeSelect({ type: "overnight", label: "숙박" })}
+              >
+                <Moon aria-hidden="true" />
+                <span>
+                  <strong>숙박</strong>
+                  <small>오늘 입실 · 내일 퇴실</small>
+                </span>
+              </button>
 
-                return (
-                  <div key={roomType} className="kiosk-room-card">
-                    <div className="kiosk-room-card-image">
-                      <img
-                        src={imagePath || "/placeholder.svg"}
-                        alt={roomType}
-                        onError={(e) => {
-                          e.currentTarget.src = "/placeholder.svg?height=360&width=560"
-                        }}
-                      />
-                      <span className="kiosk-room-availability">{availableCount}개 예약 가능</span>
-                    </div>
-                    <div className="kiosk-room-card-body">
-                      <div className="kiosk-room-card-copy">
-                        <h2>{roomType}</h2>
-                        <p>이용 방법을 선택해주세요</p>
-                      </div>
-                      {prices ? (
-                        <div className="kiosk-room-prices" aria-label={`${roomType} 이용 요금`}>
-                          <button
-                            type="button"
-                            className="kiosk-room-price kiosk-room-price-overnight"
-                            onClick={() =>
-                              handleRoomTypeSelect(roomType, {
-                                type: "overnight",
-                                label: "숙박",
-                                price: prices.overnight,
-                              })
-                            }
-                            aria-label={`${roomType} 숙박 ${formatPrice(prices.overnight)}`}
-                          >
-                            <Moon className="kiosk-room-price-icon" />
-                            <strong>숙박 {formatPrice(prices.overnight)}</strong>
-                          </button>
-                          {showShortStay && (
-                            <button
-                              type="button"
-                              className="kiosk-room-price kiosk-room-price-short-stay"
-                              onClick={() =>
-                                handleRoomTypeSelect(roomType, {
-                                  type: "shortStay",
-                                  label: "대실",
-                                  price: prices.shortStay,
-                                })
-                              }
-                              aria-label={`${roomType} 대실 ${formatPrice(prices.shortStay)}`}
-                            >
-                              <Clock className="kiosk-room-price-icon" />
-                              <strong>대실 {formatPrice(prices.shortStay)}</strong>
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="kiosk-room-price-fallback">프런트에 이용 요금을 문의해주세요</div>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
+              {showShortStay && (
+                <button
+                  type="button"
+                  className="kiosk-stay-type-option is-short-stay"
+                  onClick={() => handleStayTypeSelect({ type: "shortStay", label: "대실" })}
+                >
+                  <Clock aria-hidden="true" />
+                  <span>
+                    <strong>대실</strong>
+                    <small>잠시 이용</small>
+                  </span>
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -510,74 +509,91 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
             onClick={() => onNavigate("reservationConfirm")}
           >
             <CalendarDays aria-hidden="true" />
-            <span>예약 확인</span>
-          </button>
-          <button
-            type="button"
-            className="kiosk-home-action kiosk-home-action-guide"
-            onClick={() => setShowPaymentGuide(true)}
-          >
-            <CircleHelp aria-hidden="true" />
-            <span>현장결제 이용방법</span>
+            <span>이미 예약했어요</span>
           </button>
         </nav>
-
-        {showPaymentGuide && (
-          <div className="kiosk-payment-guide-backdrop" role="presentation">
-            <section
-              className="kiosk-payment-guide"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="payment-guide-title"
-            >
-              <button
-                type="button"
-                className="kiosk-payment-guide-close"
-                onClick={() => setShowPaymentGuide(false)}
-                aria-label="현장결제 이용방법 닫기"
-              >
-                <X />
-              </button>
-              <p className="kiosk-payment-guide-eyebrow">현장결제 이용방법</p>
-              <h2 id="payment-guide-title">화면 순서대로 선택해주세요</h2>
-              <ol>
-                <li>
-                  <strong>1</strong>
-                  <span>숙박 또는 대실 요금을 누릅니다.</span>
-                </li>
-                <li>
-                  <strong>2</strong>
-                  <span>원하는 객실을 선택합니다.</span>
-                </li>
-                <li>
-                  <strong>3</strong>
-                  <span>현금으로 결제합니다. 현금이 없으면 계좌이체 후 문의 전화로 연락해주세요.</span>
-                </li>
-                <li>
-                  <strong>4</strong>
-                  <span>영수증에서 객실번호와 비밀번호를 확인합니다.</span>
-                </li>
-              </ol>
-              <button
-                type="button"
-                className="kiosk-payment-guide-confirm"
-                onClick={() => setShowPaymentGuide(false)}
-              >
-                확인
-              </button>
-            </section>
-          </div>
-        )}
       </div>
     )
   }
 
-  // Step 2: Room Selection
-  if (step === "roomSelect" && selectedRoomType && selectedStay) {
-    const rooms = roomsByType[selectedRoomType] || []
+  // Step 2: Room type selection
+  if (step === "roomType" && selectedStay) {
+    const availableRoomTypes = sortRoomTypes(Object.keys(roomsByType)).filter((roomType) =>
+      (roomsByType[roomType] || []).some((room) => hasAvailableRate(room.rates?.[selectedStay.type])),
+    )
 
     return (
-      <div className="kiosk-room-select-screen">
+      <KioskProgressScreen steps={ON_SITE_PROGRESS_STEPS} currentStep={0}>
+        <div className="kiosk-room-type-screen">
+        <header className="kiosk-simple-header">
+          <button
+            type="button"
+            className="kiosk-simple-back"
+            onClick={() => {
+              setSelectedStay(null)
+              setStep("stayType")
+            }}
+          >
+            <ArrowLeft />
+            이전
+          </button>
+          <div>
+            <p>{selectedStay.label} 객실</p>
+            <h1>객실 타입을 선택해주세요</h1>
+          </div>
+        </header>
+
+        <div className="kiosk-room-type-list">
+          {availableRoomTypes.map((roomType) => {
+            const rooms = roomsByType[roomType]
+            const sampleRoom = rooms[0]
+            const imagePath = getRoomImagePath(roomType, sampleRoom.roomCode)
+            const prices = getRoomTypePrices(rooms)?.[selectedStay.type]
+
+            return (
+              <article key={roomType} className="kiosk-room-type-card">
+                <div className="kiosk-room-type-image">
+                  <img
+                    src={imagePath || "/placeholder.svg"}
+                    alt={roomType}
+                    onError={(e) => {
+                      e.currentTarget.src = "/placeholder.svg?height=360&width=560"
+                    }}
+                  />
+                  <span>{rooms.length}개 이용 가능</span>
+                </div>
+                <div className="kiosk-room-type-copy">
+                  <div>
+                    <h2>{roomType}</h2>
+                    {prices && <p>{formatPaymentRates(prices)}</p>}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRoomTypeSelect(roomType)}
+                    aria-label={`${roomType} 선택`}
+                  >
+                    이 객실 선택
+                  </button>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+        </div>
+      </KioskProgressScreen>
+    )
+  }
+
+  // Step 3: Room number selection
+  if (step === "roomSelect" && selectedRoomType && selectedStay) {
+    const rooms = (roomsByType[selectedRoomType] || []).filter((room) =>
+      hasAvailableRate(room.rates?.[selectedStay.type]),
+    )
+    const roomTypeRates = getRoomTypePrices(rooms)?.[selectedStay.type]
+
+    return (
+      <KioskProgressScreen steps={ON_SITE_PROGRESS_STEPS} currentStep={0}>
+        <div className="kiosk-room-select-screen">
         <header className="kiosk-room-select-header">
           <button
             type="button"
@@ -594,8 +610,8 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
 
           <div className="kiosk-room-select-heading">
             <p>더 비치스테이 {locationName}</p>
-            <h1>{selectedRoomType} 객실 선택</h1>
-            <span>원하시는 객실을 눌러주세요</span>
+            <h1>객실번호를 선택해주세요</h1>
+            <span>{selectedRoomType} · {selectedStay.label}</span>
           </div>
 
           <div
@@ -604,8 +620,8 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
             }`}
           >
             {selectedStay.type === "overnight" ? <Moon /> : <Clock />}
-            <span>{selectedStay.label}</span>
-            <strong>{formatPrice(selectedStay.price)}</strong>
+            <span>이용금액</span>
+            <strong>{roomTypeRates ? formatPaymentRates(roomTypeRates) : "요금 확인 필요"}</strong>
           </div>
         </header>
 
@@ -619,7 +635,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
                 key={room.roomCode}
                 className="kiosk-room-option"
                 onClick={() => handleRoomSelect(room)}
-                aria-label={`${room.roomCode} 객실 선택`}
+                aria-label={`${room.roomCode}호 선택`}
               >
                 <div className="kiosk-room-option-image">
                   <img
@@ -638,8 +654,9 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
                   <strong>{room.roomCode}</strong>
                   <span>
                     <Home />
-                    {room.building} · {room.floor}층
+                    {locationName} · {room.floor}층
                   </span>
+                  <b>{room.roomCode}호 선택</b>
                 </div>
               </button>
             )
@@ -663,14 +680,57 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
           </div>
         )}
 
-        <SmokingPolicyDialog
-          open={showSmokingPolicy}
-          onAgree={handleSmokingPolicyAgree}
-          onCancel={handleSmokingPolicyCancel}
-          actionLabel="결제하기"
-          cancelLabel="객실 다시 선택"
-        />
-      </div>
+        </div>
+      </KioskProgressScreen>
+    )
+  }
+
+  // Step 4: Final confirmation
+  if (step === "confirm" && selectedRoom && selectedStay) {
+    const rates = selectedRoom.rates?.[selectedStay.type]
+
+    return (
+      <KioskProgressScreen steps={ON_SITE_PROGRESS_STEPS} currentStep={1}>
+        <main className="kiosk-booking-confirm">
+        <header className="kiosk-simple-header">
+          <button type="button" className="kiosk-simple-back" onClick={() => setStep("roomSelect")}>
+            <ArrowLeft />
+            이전
+          </button>
+          <div>
+            <p>선택 내용 확인</p>
+            <h1>이대로 결제할까요?</h1>
+          </div>
+        </header>
+
+        <section className="kiosk-booking-summary">
+          <div className="kiosk-booking-summary-check">
+            <Check />
+          </div>
+          <p>{selectedStay.label} · {selectedRoomType}</p>
+          <h2>{selectedRoom.roomCode}호</h2>
+          <span>{locationName} · {selectedRoom.floor}층</span>
+          {rates && <strong>{formatPaymentRates(rates)}</strong>}
+        </section>
+
+        <section className="kiosk-booking-smoking">
+          <CigaretteOff aria-hidden="true" />
+          <div>
+            <h2>전 객실은 금연입니다</h2>
+            <p>객실 안에서는 담배를 피울 수 없습니다.</p>
+          </div>
+        </section>
+
+        <div className="kiosk-booking-confirm-actions">
+          <button type="button" className="is-secondary" onClick={() => setStep("roomSelect")}>
+            객실 다시 선택
+          </button>
+          <button type="button" className="is-primary" onClick={() => startRoomPayment(selectedRoom)}>
+            확인하고 결제하기
+          </button>
+        </div>
+        </main>
+      </KioskProgressScreen>
     )
   }
 
@@ -804,31 +864,39 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
 
   // Step 4: Payment
   if (step === "payment" && selectedRoom) {
+    const cardAmount = selectedRates?.card ?? 0
+    const cashAmount = selectedRates?.cash ?? 0
+
     return (
-      <PaymentScreen
-        requiredAmount={bookingPrice}
-        onPaymentComplete={handlePaymentComplete}
-        onCancel={handlePaymentCancel}
-        title={`더 비치스테이 ${locationName}`}
-        description={`${selectedStay?.label ?? "현장 예약"} ${formatPrice(bookingPrice)} · 현금 전용`}
-      />
+      <KioskProgressScreen steps={ON_SITE_PROGRESS_STEPS} currentStep={2}>
+        <PaymentScreen
+          cardAmount={cardAmount}
+          cashAmount={cashAmount}
+          onPaymentComplete={handlePaymentComplete}
+          onCancel={handlePaymentCancel}
+          title="결제 방법을 선택해주세요"
+          description={`${selectedRoomType} · ${selectedStay?.label ?? ""} · ${selectedRoom.roomCode}호`}
+        />
+      </KioskProgressScreen>
     )
   }
 
   // Step 5: Completion
   if (step === "complete" && reservationData) {
     return (
-      <CheckInComplete
-        reservation={reservationData}
-        revealedInfo={{
-          roomNumber: reservationData.roomCode || selectedRoom?.roomCode || "",
-          password: reservationData.password || selectedRoom?.password || "",
-          floor: selectedRoom?.floor || "",
-        }}
-        kioskLocation={location as any}
-        onNavigate={onNavigate}
-        isPopupMode={false}
-      />
+      <KioskProgressScreen steps={ON_SITE_PROGRESS_STEPS} currentStep={2}>
+        <CheckInComplete
+          reservation={reservationData}
+          revealedInfo={{
+            roomNumber: reservationData.roomCode || selectedRoom?.roomCode || "",
+            password: reservationData.password || selectedRoom?.password || "",
+            floor: selectedRoom?.floor || "",
+          }}
+          kioskLocation={location as any}
+          onNavigate={onNavigate}
+          isPopupMode={false}
+        />
+      </KioskProgressScreen>
     )
   }
 

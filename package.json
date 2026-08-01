@@ -14,6 +14,7 @@
     "postinstall": "electron-builder install-app-deps",
     "kiosk:dev": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && npm run electron\"",
     "kiosk:prod": "npm run build && concurrently \"npm run start\" \"wait-on http://localhost:3000 && npm run electron\"",
+    "test:toss-front": "node scripts/test-toss-front-integration.js",
     "lint": "next lint",
     "start": "next start"
   },

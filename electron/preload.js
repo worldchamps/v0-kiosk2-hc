@@ -6,6 +6,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getPropertyId: () => ipcRenderer.invoke("get-property-id"),
   getOverlayMode: () => ipcRenderer.invoke("get-overlay-mode"),
 
+  // 토스 프론트 결제 단말기
+  tossFront: {
+    getStatus: () => ipcRenderer.invoke("toss-front:get-status"),
+    reconnect: () => ipcRenderer.invoke("toss-front:reconnect"),
+    scanReservationQr: () => ipcRenderer.invoke("toss-front:scan-reservation-qr"),
+    requestPayment: (payload) => ipcRenderer.invoke("toss-front:request-payment", payload),
+    recoverPayment: (payload) => ipcRenderer.invoke("toss-front:recover-payment", payload),
+    cancelPayment: (payment) => ipcRenderer.invoke("toss-front:cancel-payment", payment),
+    onStatus: (callback) => {
+      const listener = (_event, status) => callback(status)
+      ipcRenderer.on("toss-front:status", listener)
+      return () => ipcRenderer.removeListener("toss-front:status", listener)
+    },
+  },
+
   // 지폐 인식기
   getHardwareStatus: () => ipcRenderer.invoke("get-hardware-status"),
   sendToBillAcceptor: (command) => ipcRenderer.invoke("send-to-bill-acceptor", command),

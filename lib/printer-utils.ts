@@ -76,13 +76,39 @@ export async function initializePrinter() {
 // High-Level Receipt Printing
 // --------------------------------------------------------
 
-export async function printReceipt(data: {
+export interface CardPaymentReceiptData {
+  provider: "TOSS_FRONT"
+  amount: number
+  tax: number
+  supplyValue: number
+  approvalNumber: string
+  timestamp: number
+  installment: number
+  issuerName?: string
+  maskedCardNumber?: string
+  tid?: string
+}
+
+export interface ReceiptBusinessInfo {
+  name: string
+  registrationNumber?: string
+  representative?: string
+  address?: string
+  phone?: string
+}
+
+export interface KioskReceiptData {
   hotelName: string
   roomNumber: string
   password?: string
   checkInDate?: string
   checkOutDate?: string
-}) {
+  reservationId?: string
+  paymentReceipt?: CardPaymentReceiptData | null
+  business?: ReceiptBusinessInfo
+}
+
+export async function printReceipt(data: KioskReceiptData): Promise<boolean> {
   console.log("[Bixolon] Printing receipt...", data)
 
   const password = data.password
@@ -99,6 +125,50 @@ export async function printReceipt(data: {
     attribute: STYLE.FONT_BOLD,
     textSize: STYLE.SIZE_DOUBLE,
   })
+
+  if (data.paymentReceipt) {
+    const payment = data.paymentReceipt
+    const business = data.business
+
+    await printText("카드 결제 영수증\n\n", {
+      alignment: STYLE.ALIGN_CENTER,
+      attribute: STYLE.FONT_BOLD,
+      textSize: STYLE.SIZE_DOUBLE_HEIGHT,
+    })
+
+    if (business?.name) await printText(`상호        ${business.name}\n`)
+    if (business?.registrationNumber) await printText(`사업자번호  ${business.registrationNumber}\n`)
+    if (business?.representative) await printText(`대표자      ${business.representative}\n`)
+    if (business?.address) await printText(`주소        ${business.address}\n`)
+    if (business?.phone) await printText(`전화        ${business.phone}\n`)
+
+    await printSeparator()
+    await printText(`승인일시    ${formatPaymentDate(payment.timestamp)}\n`)
+    await printText(`승인번호    ${payment.approvalNumber}\n`)
+    if (payment.issuerName) await printText(`카드사      ${payment.issuerName}\n`)
+    if (payment.maskedCardNumber) await printText(`카드번호    ${payment.maskedCardNumber}\n`)
+    await printText(`할부        ${payment.installment > 0 ? `${payment.installment}개월` : "일시불"}\n`)
+    if (data.reservationId) await printText(`예약번호    ${data.reservationId}\n`)
+
+    await printSeparator()
+    await printText(`공급가액    ${formatReceiptAmount(payment.supplyValue)}\n`)
+    await printText(`부가세      ${formatReceiptAmount(payment.tax)}\n`)
+    await printText("결제금액\n", {
+      alignment: STYLE.ALIGN_CENTER,
+      attribute: STYLE.FONT_BOLD,
+    })
+    await printText(`${formatReceiptAmount(payment.amount)}\n\n`, {
+      alignment: STYLE.ALIGN_CENTER,
+      attribute: STYLE.FONT_BOLD,
+      textSize: STYLE.SIZE_DOUBLE,
+    })
+    await printText("카드 승인 완료\n\n", {
+      alignment: STYLE.ALIGN_CENTER,
+      attribute: STYLE.FONT_BOLD,
+    })
+    await printSeparator()
+  }
+
   await printText("입실 안내\n\n", {
     alignment: STYLE.ALIGN_CENTER,
     attribute: STYLE.FONT_BOLD,
@@ -158,6 +228,7 @@ export async function printReceipt(data: {
   await cutPaper()
 
   console.log("[Bixolon] Print command sent.")
+  return true
 }
 
 async function printSeparator() {
@@ -182,6 +253,26 @@ function formatReceiptDate(value?: string): string {
   }
 
   return String(value)
+}
+
+function formatPaymentDate(value: number): string {
+  const timestamp = value < 10_000_000_000 ? value * 1000 : value
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return String(value)
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(date)
+}
+
+function formatReceiptAmount(value: number): string {
+  return `${Number(value || 0).toLocaleString("ko-KR")}원`
 }
 
 // --------------------------------------------------------

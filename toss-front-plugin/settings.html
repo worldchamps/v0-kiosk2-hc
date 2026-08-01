@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://cdn.tossplace.com/toss-front-sdk/v1/index.js"></script>
+    <script src="./sdk.js"></script>
+    <style>
+      body { font-family: sans-serif; padding: 24px; background: #f7f8fa; }
+      .panel { max-width: 520px; margin: 0 auto; padding: 24px; border-radius: 16px; background: white; }
+      label { display: block; margin-bottom: 8px; font-weight: 700; }
+      input { box-sizing: border-box; width: 100%; padding: 14px; border: 1px solid #d1d6db; border-radius: 10px; }
+      button { width: 100%; margin-top: 16px; padding: 14px; border: 0; border-radius: 10px; background: #3182f6; color: white; font-weight: 700; }
+      #message { margin-top: 12px; color: #4e5968; }
+    </style>
+    <title>키오스크 연결 설정</title>
+  </head>
+  <body>
+    <main class="panel">
+      <h1>키오스크 연결 설정</h1>
+      <p>키오스크 PC의 TOSS_FRONT_PAIRING_KEY와 같은 값을 입력하세요.</p>
+      <label for="pairing-key">페어링 키</label>
+      <input id="pairing-key" type="password" autocomplete="off" />
+      <button id="save" type="button">저장</button>
+      <p id="message" aria-live="polite"></p>
+    </main>
+    <script>
+      const input = document.getElementById("pairing-key");
+      const message = document.getElementById("message");
+
+      document.getElementById("save").addEventListener("click", async () => {
+        const value = input.value.trim();
+        if (value.length < 16) {
+          message.textContent = "페어링 키는 16자 이상으로 입력해주세요.";
+          return;
+        }
+        await sdk.storage.set({ key: "kioskPairingKey", value });
+        input.value = "";
+        message.textContent = "저장했습니다. 플러그인을 다시 시작해주세요.";
+      });
+    </script>
+  </body>
+</html>

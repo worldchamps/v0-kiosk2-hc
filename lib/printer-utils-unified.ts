@@ -59,6 +59,15 @@ export async function printReceipt(receiptData: any): Promise<boolean> {
       password: receiptData.password || "",
       checkInDate: receiptData.checkInDate || "",
       checkOutDate: receiptData.checkOutDate || "",
+      reservationId: receiptData.reservationId || "",
+      paymentReceipt: receiptData.paymentReceipt || null,
+      business: {
+        name: process.env.NEXT_PUBLIC_RECEIPT_BUSINESS_NAME || "더 비치스테이",
+        registrationNumber: process.env.NEXT_PUBLIC_RECEIPT_BUSINESS_NUMBER || "",
+        representative: process.env.NEXT_PUBLIC_RECEIPT_REPRESENTATIVE || "",
+        address: process.env.NEXT_PUBLIC_RECEIPT_ADDRESS || "",
+        phone: process.env.NEXT_PUBLIC_RECEIPT_PHONE || "",
+      },
     })
   }
 
@@ -99,6 +108,22 @@ export function getPrinterStatus(): any {
 }
 export function getPrinterDiagnostics(): any {
   return { connected: true, message: "Managed by Hardware Server" }
+}
+export async function checkPrinterStatus(): Promise<{
+  success: boolean
+  online: boolean
+  paperOk: boolean
+  error: boolean
+  message: string
+}> {
+  const connected = isPrinterConnected()
+  return {
+    success: connected,
+    online: connected,
+    paperOk: connected,
+    error: !connected,
+    message: connected ? "Hardware Server에서 프린터를 관리하고 있습니다." : "프린터를 사용할 수 없습니다.",
+  }
 }
 export function getCommandLog(): Array<{ command: string; bytes: number[]; timestamp: string }> {
   return []

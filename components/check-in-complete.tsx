@@ -1,8 +1,6 @@
 "use client"
 
-import { Card, CardContent } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Check, Printer, Eye, EyeOff, ReceiptText } from "lucide-react"
+import { Check, Printer, ReceiptText, MapPin } from "lucide-react"
 import { useEffect, useState, useRef } from "react"
 import DirectPrinter from "./direct-printer"
 import { printReceipt, getPrinterModel, isPrinterConnected, autoConnectPrinter } from "@/lib/printer-utils-unified"
@@ -37,7 +35,6 @@ export default function CheckInComplete({
   const [showPrinter, setShowPrinter] = useState(false)
   const [autoPrintAttempted, setAutoPrintAttempted] = useState(false)
   const [printStatus, setPrintStatus] = useState<"idle" | "printing" | "success" | "error">("idle")
-  const [showPassword, setShowPassword] = useState(false)
   const [simpleMode, setSimpleMode] = useState(false)
   const [printerModel, setPrinterModel] = useState<string>("UNKNOWN")
   const [audioPlayed, setAudioPlayed] = useState(false)
@@ -78,6 +75,7 @@ export default function CheckInComplete({
         reservationId: reservation.reservationId || "",
         password: revealedInfo?.password || reservation.password || "",
         floor: revealedInfo?.floor || reservation.floor || "",
+        paymentReceipt: reservation.paymentReceipt || null,
         timestamp: new Date().toLocaleString("en-US"),
       }
     : {
@@ -89,6 +87,7 @@ export default function CheckInComplete({
         reservationId: "R00000",
         password: revealedInfo?.password || "",
         floor: revealedInfo?.floor || "",
+        paymentReceipt: null,
       }
 
   useEffect(() => {
@@ -290,161 +289,92 @@ export default function CheckInComplete({
   })
 
   return (
-    <div className="flex items-start justify-start w-full h-full">
-      <div className="kiosk-content-container">
-        <div>
-          <h1 className="kiosk-title">더 비치스테이 {kioskLocation === "CAMP" ? "" : kioskLocation + "동"}</h1>
-          <div className="kiosk-highlight">체크인 완료</div>
-        </div>
+    <main className="kiosk-complete-screen">
+      <header className="kiosk-complete-header">
+        <span><Check /></span>
+        <p>결제와 체크인이 완료되었습니다</p>
+        <h1>객실 정보를 확인해주세요</h1>
+      </header>
 
-        <div className="w-full mt-6">
-          <Card className="w-full shadow-md">
-            <CardContent className="p-8 flex flex-col items-start justify-start space-y-6">
-              <div className="h-20 w-20 rounded-full bg-green-100 flex items-center justify-center">
-                <Check className="h-10 w-10 text-green-600" />
-              </div>
-
-              <p className="text-left text-2xl font-bold">체크인 과정이 완료되었습니다.</p>
-              <p className="text-left text-xl font-bold">객실 번호와 비밀번호를 기억해 주세요.</p>
-
-              {kioskLocation === "D" && (
-                <div className="kiosk-d-receipt-notice" role="alert">
-                  <ReceiptText aria-hidden="true" />
-                  <div>
-                    <strong>카드키는 나오지 않습니다</strong>
-                    <p>아래에서 출력되는 객실번호·비밀번호 안내지를 꼭 가져가세요.</p>
-                  </div>
-                </div>
-              )}
-
-              {revealedInfo && (
-                <div className="w-full bg-blue-50 rounded-lg p-6 mt-4 space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-gray-500 font-bold">객실 호수</p>
-                      <p className="text-3xl font-bold text-blue-600">{revealedInfo.roomNumber}</p>
-                    </div>
-                    <div>
-                      <p className="text-gray-500 font-bold">비밀번호</p>
-                      <div className="flex items-center">
-                        <p className="text-3xl font-bold text-red-600">
-                          {showPassword ? revealedInfo.password : revealedInfo.password.replace(/./g, "•")}
-                        </p>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="ml-2 h-8 w-8 p-0"
-                          onClick={() => setShowPassword(!showPassword)}
-                        >
-                          {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                          <span className="sr-only">{showPassword ? "비밀번호 숨기기" : "비밀번호 보기"}</span>
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="w-full mt-4">
-                <p className="text-gray-500 font-bold mb-2">{buildingName} 위치</p>
-                <div className="bg-gray-100 rounded-lg w-full h-[40vh] relative overflow-hidden p-0">
-                  <Image
-                    src={buildingZoomImagePath || "/placeholder.svg"}
-                    alt={`${buildingName} 건물 위치`}
-                    fill
-                    className="object-contain p-0 m-0"
-                    priority
-                  />
-                </div>
-              </div>
-
-              <div className="w-full">
-                {printStatus === "printing" && (
-                  <div className="bg-blue-50 p-4 rounded-lg text-blue-700">영수증을 인쇄하고 있습니다...</div>
-                )}
-                {printStatus === "success" && (
-                  <div className="bg-green-50 p-4 rounded-lg text-green-700">영수증이 성공적으로 인쇄되었습니다.</div>
-                )}
-                {printStatus === "error" && (
-                  <div className="bg-yellow-50 p-4 rounded-lg text-yellow-700">
-                    자동 인쇄에 실패했습니다. 아래 버튼을 눌러 수동으로 인쇄해 주세요.
-                  </div>
-                )}
-              </div>
-
-              <div className="w-full flex justify-between mt-6">
-                {!isPopupMode && (
-                  <Button
-                    className="h-20 text-2xl text-black bg-[#42c0ff] hover:bg-[#3ab0e8] shadow-md font-bold rounded-xl flex items-center space-x-2 px-6"
-                    onClick={() => setShowPrinter(true)}
-                  >
-                    <Printer className="h-6 w-6" />
-                    <span>영수증 인쇄</span>
-                  </Button>
-                )}
-
-                <Button
-                  variant="outline"
-                  className="h-20 text-2xl border-3 border-gray-300 font-bold rounded-xl bg-transparent px-6"
-                  onClick={() => {
-                    logDebug("Back button clicked: clearing all timers")
-                    clearAllTimers()
-                    stopAllAudio()
-                    handleRedirect()
-                  }}
-                >
-                  {isPopupMode ? "닫기" : "돌아가기"}
-                </Button>
-              </div>
-
-              {countdown !== null && printStatus === "success" && (
-                <div className="w-full bg-gray-100 rounded-lg p-4 mt-4">
-                  <p className="text-left text-sm text-gray-500 font-bold">
-                    {isPopupMode
-                      ? `${countdown}초 후 자동으로 창이 닫힙니다.`
-                      : `${countdown}초 후 자동으로 대기 화면으로 돌아갑니다.`}
-                  </p>
-                </div>
-              )}
-
-              {audioPlayed && (
-                <div className="w-full bg-blue-50 rounded-lg p-4 mt-2">
-                  <p className="text-left text-sm text-blue-600 font-bold">
-                    {getBuildingType()} 건물 안내 음성이 재생되었습니다.
-                  </p>
-                </div>
-              )}
-
-              <div className="w-full mt-2 text-xs text-gray-400 border-t pt-2">
-                <p>Print Status: {printStatus}</p>
-                <p>Print Mode: {simpleMode ? "Simple" : "Formatted"}</p>
-                <p>Printer Model: {printerModel}</p>
-                <p>Building Type: {getBuildingType()}</p>
-                <p>Audio Played: {audioPlayed ? "Yes" : "No"}</p>
-                <p>Popup Mode: {isPopupMode ? "Yes" : "No"}</p>
-                <p>Force Simple Mode (Env): {process.env.NEXT_PUBLIC_FORCE_SIMPLE_MODE === "true" ? "Yes" : "No"}</p>
-                {countdown !== null && <p>Countdown: {countdown}s</p>}
-                <details>
-                  <summary>Debug Logs</summary>
-                  <div className="max-h-32 overflow-y-auto text-xs">
-                    {debugInfo.map((log, i) => (
-                      <div key={i}>{log}</div>
-                    ))}
-                  </div>
-                </details>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {showPrinter && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-md w-full">
-              <DirectPrinter receiptData={receiptData} onClose={() => setShowPrinter(false)} />
-            </div>
+      {revealedInfo && (
+        <section className="kiosk-complete-room">
+          <div>
+            <span>객실번호</span>
+            <strong>{revealedInfo.roomNumber}호</strong>
           </div>
-        )}
+          <div>
+            <span>객실 비밀번호</span>
+            <strong>{revealedInfo.password}</strong>
+          </div>
+        </section>
+      )}
+
+      <section className="kiosk-complete-notice" role="alert">
+        <ReceiptText aria-hidden="true" />
+        <div>
+          <h2>객실 안내지를 꼭 가져가세요</h2>
+          <p>객실번호와 비밀번호가 적혀 있습니다.</p>
+        </div>
+      </section>
+
+      <section className="kiosk-complete-map">
+        <div>
+          <MapPin aria-hidden="true" />
+          <h2>{buildingName} 위치</h2>
+        </div>
+        <div className="kiosk-complete-map-image">
+          <Image
+            src={buildingZoomImagePath || "/placeholder.svg"}
+            alt={`${buildingName} 건물 위치`}
+            fill
+            className="object-contain"
+            priority
+          />
+        </div>
+      </section>
+
+      <div className={`kiosk-complete-print-status is-${printStatus}`}>
+        {printStatus === "printing" && "객실 안내지를 인쇄하고 있습니다."}
+        {printStatus === "success" && "객실 안내지가 인쇄되었습니다."}
+        {printStatus === "error" && "인쇄하지 못했습니다. 아래 버튼을 눌러 다시 인쇄해주세요."}
       </div>
-    </div>
+
+      <div className="kiosk-complete-actions">
+        {!isPopupMode && (
+          <button type="button" className="is-secondary" onClick={() => setShowPrinter(true)}>
+            <Printer />
+            안내지 다시 인쇄
+          </button>
+        )}
+        <button
+          type="button"
+          className="is-primary"
+          onClick={() => {
+            logDebug("Back button clicked: clearing all timers")
+            clearAllTimers()
+            stopAllAudio()
+            handleRedirect()
+          }}
+        >
+          {isPopupMode ? "닫기" : "처음 화면으로"}
+        </button>
+      </div>
+
+      {countdown !== null && printStatus === "success" && (
+        <p className="kiosk-complete-countdown">
+          {isPopupMode
+            ? `${countdown}초 후 자동으로 창이 닫힙니다.`
+            : `${countdown}초 후 자동으로 처음 화면으로 돌아갑니다.`}
+        </p>
+      )}
+
+      {showPrinter && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <DirectPrinter receiptData={receiptData} onClose={() => setShowPrinter(false)} />
+          </div>
+        </div>
+      )}
+    </main>
   )
 }

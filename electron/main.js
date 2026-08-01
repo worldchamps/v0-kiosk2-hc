@@ -8,6 +8,7 @@ const { SerialPort } = require("serialport")
 const overlayButtonModule = require("./overlay-button")
 const bixolonPrinter = require("./bixolon-printer")
 const hardwareBridge = require("./hardware-server-bridge")
+const tossFrontBridge = require("./toss-front-bridge")
 
 let mainWindow
 let billAcceptorPort = null // Now handled by hardware server bridge
@@ -19,6 +20,12 @@ let billAcceptorConnecting = false
 let billDispenserConnecting = false
 let hardwareServerProcess = null
 let nextServer = null
+
+tossFrontBridge.on("status", (status) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("toss-front:status", status)
+  }
+})
 
 const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
 const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"
@@ -167,6 +174,19 @@ function createWindow() {
     }
 
     mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+      let isLocalApp = false
+      try {
+        const hostname = new URL(details.url).hostname
+        isLocalApp = hostname === "localhost" || hostname === "127.0.0.1"
+      } catch {
+        isLocalApp = false
+      }
+
+      if (!isLocalApp) {
+        callback({ responseHeaders: details.responseHeaders })
+        return
+      }
+
       callback({
         responseHeaders: {
           ...details.responseHeaders,
@@ -182,6 +202,26 @@ function createWindow() {
           ],
         },
       })
+    })
+
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith("https://pay.toss.im/") || url.startsWith("https://toss.im/")) {
+        return {
+          action: "allow",
+          overrideBrowserWindowOptions: {
+            width: 520,
+            height: 760,
+            parent: mainWindow,
+            modal: true,
+            autoHideMenuBar: true,
+            webPreferences: {
+              nodeIntegration: false,
+              contextIsolation: true,
+            },
+          },
+        }
+      }
+      return { action: "deny" }
     })
 
     const startUrl = getKioskStartUrl("http://localhost:3000")
@@ -217,6 +257,7 @@ function createWindow() {
 
     setTimeout(() => {
       startHardwareServer()
+      tossFrontBridge.reconnect()
 
       // Hardware Server Bridge initialization
       hardwareBridge.onStatus((status) => {
@@ -534,6 +575,49 @@ ipcMain.handle("get-property-id", async () => {
 
 ipcMain.handle("get-overlay-mode", async () => {
   return OVERLAY_MODE
+})
+
+ipcMain.handle("toss-front:get-status", async () => tossFrontBridge.status)
+
+ipcMain.handle("toss-front:reconnect", async () => {
+  tossFrontBridge.reconnect()
+  return tossFrontBridge.status
+})
+
+ipcMain.handle("toss-front:scan-reservation-qr", async () => {
+  try {
+    const value = await tossFrontBridge.requestQrScan()
+    return { success: true, value }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
+})
+
+ipcMain.handle("toss-front:request-payment", async (_event, payload) => {
+  try {
+    const payment = await tossFrontBridge.requestPayment(payload)
+    return { success: true, payment }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
+})
+
+ipcMain.handle("toss-front:recover-payment", async (_event, payload) => {
+  try {
+    const payment = await tossFrontBridge.recoverPayment(payload)
+    return { success: true, payment }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
+})
+
+ipcMain.handle("toss-front:cancel-payment", async (_event, payment) => {
+  try {
+    const cancel = await tossFrontBridge.cancelPayment(payment)
+    return { success: true, cancel }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
 })
 
 ipcMain.handle("send-to-printer", async (event, data) => {
@@ -927,6 +1011,8 @@ app.whenReady().then(async () => {
 })
 
 app.on("window-all-closed", () => {
+  tossFrontBridge.close()
+
   if (nextServer) {
     nextServer.close()
     nextServer = null

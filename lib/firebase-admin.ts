@@ -1,6 +1,7 @@
 import { initializeApp, getApps, cert } from "firebase-admin/app"
 import { getDatabase, type Database } from "firebase-admin/database"
 import { getPropertyFromRoomNumber } from "@/lib/property-utils"
+import { createHash } from "crypto"
 
 let dbInstance: Database | null = null
 
@@ -116,6 +117,41 @@ export async function addToPMSQueue(data: {
 
   console.log(`[Firebase] ✅ Successfully added to ${property} queue:`, data.roomNumber)
   return newKey
+}
+
+function paymentClaimKey(payToken: string) {
+  return createHash("sha256").update(payToken).digest("hex")
+}
+
+export async function claimPayment(
+  provider: "toss_pay" | "toss_front",
+  paymentId: string,
+  details: Record<string, string | number>,
+) {
+  const database = getDB()
+  const ref = database.ref(`payment_claims/${provider}/${paymentClaimKey(paymentId)}`)
+  const result = await ref.transaction((current) => {
+    if (current) return
+    return {
+      ...details,
+      status: "claimed",
+      claimedAt: new Date().toISOString(),
+    }
+  })
+  return result.committed
+}
+
+export async function releasePaymentClaim(provider: "toss_pay" | "toss_front", paymentId: string) {
+  const database = getDB()
+  await database.ref(`payment_claims/${provider}/${paymentClaimKey(paymentId)}`).remove()
+}
+
+export async function claimTossPayment(payToken: string, orderNo: string) {
+  return claimPayment("toss_pay", payToken, { orderNo })
+}
+
+export async function releaseTossPaymentClaim(payToken: string) {
+  await releasePaymentClaim("toss_pay", payToken)
 }
 
 // PMS Queue 항목을 완료 처리

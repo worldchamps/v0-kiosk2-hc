@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
 import { getAvailableRooms } from "@/lib/firebase-beach-rooms"
+import { findPmsRateRoom, getPmsRateProperties } from "@/lib/pms-rates"
+import { getPropertyFromRoomNumber, type PropertyId } from "@/lib/property-utils"
 
 export const dynamic = "force-dynamic"
 export const revalidate = 0
@@ -26,15 +28,32 @@ export async function GET(request: Request) {
       })
     }
 
-    const mappedRooms = availableRooms.map((room) => ({
-      building: room.category,
-      roomNumber: room.roomNumber,
-      roomType: room.roomType,
-      password: room.password,
-      status: room.status,
-      floor: room.floor,
-      roomCode: room.matchingRoomNumber, // Use matchingRoomNumber as roomCode
-    }))
+    const properties = [
+      ...new Set(
+        availableRooms
+          .map((room) => getPropertyFromRoomNumber(room.matchingRoomNumber))
+          .filter((property): property is PropertyId => Boolean(property)),
+      ),
+    ]
+    const pmsProperties = properties.length > 0 ? await getPmsRateProperties(properties) : []
+
+    const mappedRooms = availableRooms.map((room) => {
+      const pmsRoom = findPmsRateRoom(pmsProperties, room.matchingRoomNumber, room.roomNumber)
+      const pmsProperty = pmsProperties.find((item) => item.property === pmsRoom?.property)
+
+      return {
+        building: room.category,
+        roomNumber: room.roomNumber,
+        roomType: room.roomType,
+        password: room.password,
+        status: room.status,
+        floor: room.floor,
+        roomCode: room.matchingRoomNumber,
+        rates: pmsRoom?.rates ?? null,
+        ratesSource: pmsRoom ? "pms_status" : null,
+        ratesUpdatedAt: pmsProperty?.timestamp ?? null,
+      }
+    })
 
     console.log("[v0] Sample room data from Firebase:")
     if (mappedRooms.length > 0) {
@@ -62,7 +81,8 @@ export async function GET(request: Request) {
       roomsByType,
       total: mappedRooms.length,
       location: location || "ALL",
-      source: "firebase", // Indicate data source
+      source: "firebase",
+      ratesSource: "pms_status",
     })
   } catch (error) {
     console.error("Error fetching available rooms:", error)

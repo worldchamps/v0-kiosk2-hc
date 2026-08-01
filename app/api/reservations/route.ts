@@ -8,6 +8,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const guestName = searchParams.get("name")
+    const reservationId = searchParams.get("reservationId")
     const todayOnly = searchParams.get("todayOnly") === "true"
     const kioskProperty = searchParams.get("kioskProperty")
     const searchAllProperties = searchParams.get("searchAll") === "true"
@@ -41,6 +42,7 @@ export async function GET(request: NextRequest) {
 
     for (const row of rows) {
       const rowGuestName = row[SHEET_COLUMNS.GUEST_NAME] || ""
+      const rowReservationId = row[SHEET_COLUMNS.RESERVATION_ID] || ""
       const checkInStatus = row[SHEET_COLUMNS.CHECK_IN_STATUS] || ""
 
       // Filter 1: skip if already checked in (no date normalization needed)
@@ -50,6 +52,10 @@ export async function GET(request: NextRequest) {
 
       // Filter 2: if searching by name, only include matching names (no date normalization needed)
       if (guestName && rowGuestName !== guestName) {
+        continue
+      }
+
+      if (reservationId && rowReservationId !== reservationId) {
         continue
       }
 
@@ -104,7 +110,7 @@ export async function GET(request: NextRequest) {
       reservations.push({
         place: place,
         guestName: rowGuestName,
-        reservationId: row[SHEET_COLUMNS.RESERVATION_ID] || "",
+        reservationId: rowReservationId,
         bookingPlatform: row[SHEET_COLUMNS.BOOKING_PLATFORM] || "",
         roomType: row[SHEET_COLUMNS.ROOM_TYPE] || "",
         price: row[SHEET_COLUMNS.PRICE] || "",

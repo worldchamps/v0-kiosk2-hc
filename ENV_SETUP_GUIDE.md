@@ -50,6 +50,49 @@ API_KEY=your-api-key
 ADMIN_API_KEY=your-admin-key
 \`\`\`
 
+#### 토스페이 카드 결제
+
+\`\`\`env
+# 토스페이 파트너스에서 발급받은 서버용 키 (sk_test_... 또는 sk_live_...)
+TOSS_PAY_API_KEY=sk_test_your_key
+
+# 콜백을 받을 수 있는 이 프로젝트의 공개 HTTPS 주소 (끝의 / 제외)
+TOSS_PAY_PUBLIC_BASE_URL=https://your-kiosk-domain.example.com
+\`\`\`
+
+`TOSS_PAY_API_KEY`는 절대 `NEXT_PUBLIC_` 접두사를 붙이지 마세요. 로컬 키오스크가
+`localhost`에서 실행되더라도 토스 서버의 결과 콜백은 외부에서 접근할 수 있어야 하므로,
+운영 배포 주소를 `TOSS_PAY_PUBLIC_BASE_URL`에 설정해야 합니다.
+
+#### 토스 프론트 오프라인 단말 카드 결제
+
+\`\`\`env
+# 프론트 단말기에서 실행한 플러그인의 WebSocket 서버 주소
+TOSS_FRONT_WS_URL=ws://192.168.0.50:9000/kiosk
+
+# 키오스크와 프론트 설정 화면에 동일하게 입력할 16자 이상의 임의 비밀값
+TOSS_FRONT_PAIRING_KEY=replace-with-a-long-random-secret
+\`\`\`
+
+키오스크 PC와 토스 프론트는 같은 매장 네트워크에 연결되어야 합니다. `192.168.0.50`은
+고정된 서버 주소가 아니라 해당 프론트 단말기의 실제 로컬 IP로 바꾸세요. 이 방식은
+프론트 단말기가 WebSocket 서버, 키오스크가 클라이언트이므로 공개 콜백 URL이 필요하지
+않습니다.
+
+#### 카드 영수증 사업자 정보
+
+```env
+# 종이 카드 영수증 상단에 표시할 정보
+NEXT_PUBLIC_RECEIPT_BUSINESS_NAME=더 비치스테이
+NEXT_PUBLIC_RECEIPT_BUSINESS_NUMBER=
+NEXT_PUBLIC_RECEIPT_REPRESENTATIVE=
+NEXT_PUBLIC_RECEIPT_ADDRESS=
+NEXT_PUBLIC_RECEIPT_PHONE=
+```
+
+값이 비어 있는 항목은 영수증에서 생략됩니다. 사업자등록증의 실제 정보와 동일하게
+입력한 뒤 Electron을 다시 실행하세요.
+
 ### 4. 환경변수 확인
 
 \`\`\`bash

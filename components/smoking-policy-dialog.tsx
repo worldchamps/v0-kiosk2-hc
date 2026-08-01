@@ -1,6 +1,7 @@
 "use client"
 
 import { CigaretteOff, ShieldAlert } from "lucide-react"
+import KioskProgress, { RESERVATION_PROGRESS_STEPS } from "@/components/kiosk-progress"
 
 interface SmokingPolicyDialogProps {
   open: boolean
@@ -21,6 +22,7 @@ export default function SmokingPolicyDialog({
 
   return (
     <div className="kiosk-smoking-dialog-backdrop" role="presentation">
+      <KioskProgress steps={RESERVATION_PROGRESS_STEPS} currentStep={1} />
       <div
         className="kiosk-smoking-dialog"
         role="dialog"
