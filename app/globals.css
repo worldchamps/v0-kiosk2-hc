@@ -2813,6 +2813,10 @@ textarea {
   gap: 18px;
 }
 
+.kiosk-complete-actions {
+  grid-template-columns: 1fr;
+}
+
 .kiosk-booking-confirm-actions button,
 .kiosk-complete-actions button {
   min-height: 112px;

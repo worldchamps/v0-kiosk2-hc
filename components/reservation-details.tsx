@@ -264,33 +264,6 @@ export default function ReservationDetails({
                       </p>
                     </div>
 
-                    {(reservation.place || reservation.bookingPlatform || reservation.phoneNumber) && (
-                      <div
-                        className={`col-span-2 grid border-t text-gray-700 ${
-                          isPopupMode
-                            ? "grid-cols-2 gap-3 pt-3 text-sm"
-                            : "grid-cols-3 gap-5 pt-5 text-lg"
-                        }`}
-                      >
-                        {reservation.place && (
-                          <div>
-                            <p className="font-bold text-gray-500">장소</p>
-                            <p className="mt-1 font-semibold">{reservation.place}</p>
-                          </div>
-                        )}
-                        <div>
-                          <p className="font-bold text-gray-500">예약 플랫폼</p>
-                          <p className="mt-1 font-semibold">{reservation.bookingPlatform}</p>
-                        </div>
-                        {reservation.phoneNumber && (
-                          <div>
-                            <p className="font-bold text-gray-500">전화번호</p>
-                            <p className="mt-1 font-semibold">{reservation.phoneNumber}</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
                     {hasRevealedInfo && (
                       <>
                         <div className={`col-span-2 border-t ${isPopupMode ? "pt-3" : "pt-5"}`}>

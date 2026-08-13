@@ -8,9 +8,10 @@
     <style>
       body { font-family: sans-serif; padding: 24px; background: #f7f8fa; }
       .panel { max-width: 520px; margin: 0 auto; padding: 24px; border-radius: 16px; background: white; }
-      label { display: block; margin-bottom: 8px; font-weight: 700; }
+      label { display: block; margin: 16px 0 8px; font-weight: 700; }
       input { box-sizing: border-box; width: 100%; padding: 14px; border: 1px solid #d1d6db; border-radius: 10px; }
       button { width: 100%; margin-top: 16px; padding: 14px; border: 0; border-radius: 10px; background: #3182f6; color: white; font-weight: 700; }
+      button.secondary { background: #4e5968; }
       #message { margin-top: 12px; color: #4e5968; }
     </style>
     <title>키오스크 연결 설정</title>
@@ -18,25 +19,57 @@
   <body>
     <main class="panel">
       <h1>키오스크 연결 설정</h1>
-      <p>키오스크 PC의 TOSS_FRONT_PAIRING_KEY와 같은 값을 입력하세요.</p>
+      <p>키오스크 PC의 설정과 같은 값을 입력해 주세요.</p>
       <label for="pairing-key">페어링 키</label>
       <input id="pairing-key" type="password" autocomplete="off" />
+      <label for="serial-baud-rate">시리얼 속도 (bps)</label>
+      <input id="serial-baud-rate" type="number" inputmode="numeric" min="1200" step="1" />
+      <button id="serial-connect" type="button" class="secondary">시리얼 포트 연결 권한</button>
       <button id="save" type="button">저장</button>
       <p id="message" aria-live="polite"></p>
     </main>
     <script>
       const input = document.getElementById("pairing-key");
+      const baudRateInput = document.getElementById("serial-baud-rate");
       const message = document.getElementById("message");
+
+      (async () => {
+        const stored = await sdk.storage.get({ key: "kioskSerialBaudRate" });
+        baudRateInput.value = stored?.value || "115200";
+      })();
+
+      document.getElementById("serial-connect").addEventListener("click", async () => {
+        if (!("serial" in navigator)) {
+          message.textContent = "이 환경은 시리얼 포트 연결을 지원하지 않습니다.";
+          return;
+        }
+
+        try {
+          await navigator.serial.requestPort();
+          message.textContent = "시리얼 포트 권한을 연결했습니다. 저장 후 플러그인을 다시 시작해 주세요.";
+        } catch (error) {
+          message.textContent = `시리얼 포트 연결을 완료하지 못했습니다: ${error}`;
+        }
+      });
 
       document.getElementById("save").addEventListener("click", async () => {
         const value = input.value.trim();
+        const baudRate = baudRateInput.value.trim();
+
         if (value.length < 16) {
-          message.textContent = "페어링 키는 16자 이상으로 입력해주세요.";
+          message.textContent = "페어링 키는 16자 이상으로 입력해 주세요.";
           return;
         }
+
+        if (!/^\d+$/.test(baudRate) || Number.parseInt(baudRate, 10) <= 0) {
+          message.textContent = "시리얼 속도를 숫자로 입력해 주세요.";
+          return;
+        }
+
         await sdk.storage.set({ key: "kioskPairingKey", value });
+        await sdk.storage.set({ key: "kioskSerialBaudRate", value: baudRate });
         input.value = "";
-        message.textContent = "저장했습니다. 플러그인을 다시 시작해주세요.";
+        message.textContent = "저장했습니다. 플러그인을 다시 시작해 주세요.";
       });
     </script>
   </body>

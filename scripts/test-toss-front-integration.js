@@ -7,6 +7,7 @@ process.env.TOSS_FRONT_WS_URL = `ws://127.0.0.1:${port}/kiosk`
 process.env.TOSS_FRONT_PAIRING_KEY = pairingKey
 
 const payments = new Map()
+let recoveryRequests = 0
 const server = new WebSocketServer({ port, path: "/kiosk" })
 
 server.on("connection", (socket) => {
@@ -21,6 +22,10 @@ server.on("connection", (socket) => {
     if (!authenticated) return
 
     if (message.type === "PAYMENT_REQUEST") {
+      if (message.paymentKey === "KIOSK-CANCELED-TEST") {
+        socket.send(JSON.stringify({ type: "PAYMENT_FAILED", requestId: message.requestId, reason: "CANCELED" }))
+        return
+      }
       const payment = {
         paymentKey: message.paymentKey,
         amount: message.amount,
@@ -50,6 +55,7 @@ server.on("connection", (socket) => {
         }),
       )
     } else if (message.type === "RECOVER_PAYMENT") {
+      recoveryRequests += 1
       const payment = payments.get(message.paymentKey)
       socket.send(
         JSON.stringify(
@@ -85,6 +91,17 @@ async function run() {
   const payment = await bridge.requestPayment({ amount: 11000, paymentKey: "KIOSK-INTEGRATION-TEST" })
   if (payment.amount !== 11000 || payment.signature.length !== 64) {
     throw new Error("signed payment proof validation failed")
+  }
+
+  const recoveryRequestsBeforeCancel = recoveryRequests
+  await bridge.requestPayment({ amount: 11000, paymentKey: "KIOSK-CANCELED-TEST" }).then(
+    () => { throw new Error("canceled payment unexpectedly succeeded") },
+    (error) => {
+      if (error.message !== "결제가 취소되었습니다.") throw error
+    },
+  )
+  if (recoveryRequests !== recoveryRequestsBeforeCancel) {
+    throw new Error("canceled payment triggered recovery")
   }
 
   const recovered = await bridge.recoverPayment({ amount: 11000, paymentKey: payment.paymentKey })

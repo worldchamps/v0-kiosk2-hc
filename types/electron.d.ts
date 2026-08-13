@@ -4,7 +4,11 @@ export interface TossFrontStatus {
   configured: boolean
   connected: boolean
   authenticated: boolean
+  transport?: "websocket" | "serial" | "auto"
+  transportPreference?: "websocket" | "serial" | "auto"
   url?: string
+  serialPath?: string
+  serialBaudRate?: number
   error?: string
 }
 

@@ -1,8 +1,7 @@
 "use client"
 
-import { Check, Printer, ReceiptText, MapPin } from "lucide-react"
+import { Check, ReceiptText, MapPin } from "lucide-react"
 import { useEffect, useState, useRef } from "react"
-import DirectPrinter from "./direct-printer"
 import { printReceipt, getPrinterModel, isPrinterConnected, autoConnectPrinter } from "@/lib/printer-utils-unified"
 import Image from "next/image"
 import { getBuildingZoomImagePath } from "@/lib/location-utils"
@@ -10,7 +9,6 @@ import type { KioskLocation } from "@/lib/location-utils"
 import { playCheckInGuide, stopAllAudio } from "@/lib/audio-utils"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { getKioskPropertyId, propertyUsesElectron } from "@/lib/property-utils"
-import { usePayment } from "@/contexts/payment-context"
 
 interface CheckInCompleteProps {
   reservation?: any
@@ -32,24 +30,19 @@ export default function CheckInComplete({
   isPopupMode = false,
 }: CheckInCompleteProps) {
   const [countdown, setCountdown] = useState<number | null>(null)
-  const [showPrinter, setShowPrinter] = useState(false)
   const [autoPrintAttempted, setAutoPrintAttempted] = useState(false)
   const [printStatus, setPrintStatus] = useState<"idle" | "printing" | "success" | "error">("idle")
   const [simpleMode, setSimpleMode] = useState(false)
   const [printerModel, setPrinterModel] = useState<string>("UNKNOWN")
   const [audioPlayed, setAudioPlayed] = useState(false)
-  const { paymentSession, completePayment } = usePayment() // Declare usePayment hook
 
   const printTimerRef = useRef<NodeJS.Timeout | null>(null)
   const countdownTimerRef = useRef<NodeJS.Timeout | null>(null)
   const redirectTimerRef = useRef<NodeJS.Timeout | null>(null)
   const audioTimerRef = useRef<NodeJS.Timeout | null>(null)
 
-  const [debugInfo, setDebugInfo] = useState<string[]>([])
-
   const logDebug = (message: string) => {
     console.log(`[CheckInComplete] ${message}`)
-    setDebugInfo((prev) => [...prev, `${new Date().toISOString().substr(11, 8)}: ${message}`])
   }
 
   const roomNumber = revealedInfo?.roomNumber || reservation?.roomNumber || ""
@@ -336,16 +329,10 @@ export default function CheckInComplete({
       <div className={`kiosk-complete-print-status is-${printStatus}`}>
         {printStatus === "printing" && "객실 안내지를 인쇄하고 있습니다."}
         {printStatus === "success" && "객실 안내지가 인쇄되었습니다."}
-        {printStatus === "error" && "인쇄하지 못했습니다. 아래 버튼을 눌러 다시 인쇄해주세요."}
+        {printStatus === "error" && "안내지를 인쇄하지 못했습니다. 관리자에게 문의해주세요."}
       </div>
 
       <div className="kiosk-complete-actions">
-        {!isPopupMode && (
-          <button type="button" className="is-secondary" onClick={() => setShowPrinter(true)}>
-            <Printer />
-            안내지 다시 인쇄
-          </button>
-        )}
         <button
           type="button"
           className="is-primary"
@@ -368,13 +355,6 @@ export default function CheckInComplete({
         </p>
       )}
 
-      {showPrinter && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <DirectPrinter receiptData={receiptData} onClose={() => setShowPrinter(false)} />
-          </div>
-        </div>
-      )}
     </main>
   )
 }
