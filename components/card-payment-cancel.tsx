@@ -20,12 +20,18 @@ export default function CardPaymentCancel() {
   const [busy, setBusy] = useState(false)
 
   const lookup = async () => {
+    const trimmedReservationId = reservationId.trim()
+    if (!trimmedReservationId) {
+      setMessage("예약번호를 입력해주세요.")
+      return
+    }
+
     setBusy(true)
     setPayment(null)
     setMessage("")
     try {
       const response = await fetch(
-        `/api/admin/payment-cancel?reservationId=${encodeURIComponent(reservationId.trim())}`,
+        `/api/admin/payment-cancel?reservationId=${encodeURIComponent(trimmedReservationId)}`,
       )
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || "결제 기록 조회에 실패했습니다.")
@@ -79,13 +85,14 @@ export default function CardPaymentCancel() {
           <Input
             value={reservationId}
             onChange={(event) => setReservationId(event.target.value)}
-            placeholder="ONSITE-1786618230093"
+            placeholder="예: ONSITE-1786618230093"
             disabled={busy}
           />
-          <Button onClick={lookup} disabled={busy || !reservationId.trim()}>
+          <Button onClick={lookup} disabled={busy}>
             조회
           </Button>
         </div>
+        <p className="text-sm text-muted-foreground">회색 글씨는 예시입니다. 예약번호를 직접 입력해주세요.</p>
 
         {payment && (
           <div className="space-y-3 rounded-lg border p-4">
