@@ -129,7 +129,8 @@ export async function claimPayment(
   details: Record<string, string | number>,
 ) {
   const database = getDB()
-  const ref = database.ref(`payment_claims/${provider}/${paymentClaimKey(paymentId)}`)
+  const claimKey = paymentClaimKey(paymentId)
+  const ref = database.ref(`payment_claims/${provider}/${claimKey}`)
   const result = await ref.transaction((current) => {
     if (current) return
     return {
@@ -138,7 +139,45 @@ export async function claimPayment(
       claimedAt: new Date().toISOString(),
     }
   })
+  if (result.committed && details.reservationId) {
+    await database.ref(`payment_claims_by_reservation/${provider}/${details.reservationId}`).set(claimKey)
+  }
   return result.committed
+}
+
+export async function findTossFrontPaymentClaim(reservationId: string) {
+  const database = getDB()
+  const indexedKey = (
+    await database.ref(`payment_claims_by_reservation/toss_front/${reservationId}`).once("value")
+  ).val()
+
+  if (typeof indexedKey === "string") {
+    const snapshot = await database.ref(`payment_claims/toss_front/${indexedKey}`).once("value")
+    if (snapshot.exists()) return { claimKey: indexedKey, ...snapshot.val() }
+  }
+
+  // Legacy payments predate the reservation index; only inspect recent kiosk payments.
+  const snapshot = await database.ref("payment_claims/toss_front").limitToLast(100).once("value")
+  const match = Object.entries(snapshot.val() || {}).find(
+    ([, value]) => (value as { reservationId?: string })?.reservationId === reservationId,
+  )
+  if (!match) return null
+
+  const [claimKey, payment] = match
+  await database.ref(`payment_claims_by_reservation/toss_front/${reservationId}`).set(claimKey)
+  return { claimKey, ...(payment as Record<string, unknown>) }
+}
+
+export async function markTossFrontPaymentCanceled(reservationId: string, cancelApprovalNumber = "") {
+  const payment = await findTossFrontPaymentClaim(reservationId)
+  if (!payment) return false
+
+  await getDB().ref(`payment_claims/toss_front/${payment.claimKey}`).update({
+    status: "canceled",
+    canceledAt: new Date().toISOString(),
+    cancelApprovalNumber,
+  })
+  return true
 }
 
 export async function releasePaymentClaim(provider: "toss_pay" | "toss_front", paymentId: string) {
