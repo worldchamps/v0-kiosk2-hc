@@ -6,6 +6,7 @@ import os
 import websockets
 
 from acceptor import OnePlusAcceptor
+from board3400 import Board3400
 from dispenser import OnePlusDispenser
 from printer import BixolonPrinter
 
@@ -18,9 +19,17 @@ logger = logging.getLogger("HardwareServer")
 DISPENSER_PORT = os.environ.get("DISPENSER_PORT", "COM5")
 ACCEPTOR_PORT = os.environ.get("ACCEPTOR_PORT", "COM4")
 PRINTER_PORT = os.environ.get("PRINTER_PORT", "COM2")
+PROPERTY_ID = (
+    os.environ.get("KIOSK_PROPERTY_ID")
+    or os.environ.get("KIOSK_PROPERTY")
+    or os.environ.get("NEXT_PUBLIC_KIOSK_PROPERTY_ID")
+    or "property3"
+).lower()
+USE_BOARD3400 = PROPERTY_ID == "property4"
 
-dispenser = OnePlusDispenser(DISPENSER_PORT)
-acceptor = OnePlusAcceptor(ACCEPTOR_PORT)
+board3400 = Board3400(os.environ.get("BOARD3400_PORT", "COM1")) if USE_BOARD3400 else None
+dispenser = None if USE_BOARD3400 else OnePlusDispenser(DISPENSER_PORT)
+acceptor = None if USE_BOARD3400 else OnePlusAcceptor(ACCEPTOR_PORT)
 printer = BixolonPrinter(PRINTER_PORT, baud_rate=115200)
 
 connected_clients = set()
@@ -48,6 +57,50 @@ def acceptor_callback(data):
     )
 
 
+def board3400_callback(data):
+    for message in board3400.process_incoming(data):
+        asyncio.run_coroutine_threadsafe(broadcast(message), main_loop)
+
+
+def legacy_packet(command1, command2, data):
+    return bytes([0x24, command1, command2, data, (command1 + command2 + data) & 0xFF])
+
+
+def handle_board3400_message(message):
+    command_type = message.get("type")
+    if command_type == "raw_acceptor":
+        return board3400.handle_acceptor_command(bytes(message.get("data", [])))
+    if command_type == "raw_dispenser":
+        return board3400.handle_dispenser_command(bytes(message.get("data", [])))
+
+    acceptor_commands = {
+        "acceptor_enable": (0x53, 0x41, 0x0D),
+        "acceptor_disable": (0x53, 0x41, 0x0E),
+        "acceptor_stack": (0x53, 0x41, 0x09),
+        "acceptor_return": (0x53, 0x41, 0x06),
+        "acceptor_get_bill": (0x47, 0x42, 0x3F),
+        "acceptor_reset": (0x52, 0x53, 0x54),
+    }
+    if command_type in acceptor_commands:
+        return board3400.handle_acceptor_command(legacy_packet(*acceptor_commands[command_type]))
+    if command_type == "acceptor_config":
+        return board3400.handle_acceptor_command(legacy_packet(0x53, 0x43, message.get("value", 0x3C)))
+    if command_type == "dispense":
+        return board3400.handle_dispenser_command(legacy_packet(0x44, message.get("count", 1), 0x53))
+    if command_type == "dispenser_status":
+        return board3400.handle_dispenser_command(legacy_packet(0x53, 0x74, 0x3F))
+    if command_type == "dispenser_init":
+        return board3400.handle_dispenser_command(legacy_packet(0x49, 0, 0))
+    return None
+
+
+async def poll_board3400_payout():
+    while True:
+        if board3400.payout_in_progress:
+            board3400.query_status()
+        await asyncio.sleep(0.25)
+
+
 async def handle_client(websocket, *args):
     connected_clients.add(websocket)
     logger.info(f"Client connected. Total clients: {len(connected_clients)}")
@@ -56,6 +109,13 @@ async def handle_client(websocket, *args):
             try:
                 msg = json.loads(message)
                 cmd_type = msg.get("type")
+
+                if board3400:
+                    responses = handle_board3400_message(msg)
+                    if responses is not None:
+                        for response in responses:
+                            await broadcast(response)
+                        continue
 
                 if cmd_type == "dispense":
                     dispenser.dispense(msg.get("count", 1))
@@ -122,11 +182,16 @@ async def main():
     global main_loop
     main_loop = asyncio.get_running_loop()
 
-    dispenser.connect()
-    dispenser.start(dispenser_callback)
-
-    acceptor.connect()
-    acceptor.start(acceptor_callback)
+    if board3400:
+        logger.info("Property4 selected: using Multi3400 board on %s", board3400.port)
+        board3400.connect()
+        board3400.start(board3400_callback)
+        asyncio.create_task(poll_board3400_payout())
+    else:
+        dispenser.connect()
+        dispenser.start(dispenser_callback)
+        acceptor.connect()
+        acceptor.start(acceptor_callback)
 
     printer.connect()
 
@@ -140,6 +205,9 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Server stopping...")
-        dispenser.stop()
-        acceptor.stop()
+        if board3400:
+            board3400.stop()
+        else:
+            dispenser.stop()
+            acceptor.stop()
         printer.disconnect()
