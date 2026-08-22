@@ -49,10 +49,19 @@ class Bac2400Test(unittest.TestCase):
         bill = self.board.handle_acceptor_command(bytes([0x24, 0x47, 0x42, 0x3F, 0]))[0]["packet"]
         self.assertEqual(bill[1:4], [0x67, 0x62, 0x0A])
 
-    def test_bv1_rejects_non_10000_won_in_software(self):
+    def test_bv1_accepts_10000_and_50000_won(self):
         self.board.control_acceptor(True, clear=True)
         messages = self.board.process_incoming(
-            multi_frame((0x18, [1, 0, 0, 0]), (0x1B, [0x09, 0, 0x13]))
+            multi_frame((0x18, [0, 0, 1, 1]), (0x1B, [0x09, 0, 0x13]))
+        )
+
+        self.assertTrue(any(message.get("event") == 0x0B for message in messages))
+        self.assertEqual(list(self.board.bill_codes), [0x0A, 0x32])
+
+    def test_bv1_rejects_1000_and_5000_won_in_software(self):
+        self.board.control_acceptor(True, clear=True)
+        messages = self.board.process_incoming(
+            multi_frame((0x18, [1, 1, 0, 0]), (0x1B, [0x09, 0, 0x13]))
         )
 
         self.assertTrue(any(message.get("event") == 0x0C for message in messages))

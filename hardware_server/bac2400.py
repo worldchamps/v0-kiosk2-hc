@@ -14,8 +14,7 @@ class Bac2400(SerialDevice):
     """Property4 BAC-2400 v1.3 adapter for BV1 and BD1."""
 
     BILL_AMOUNTS = (1000, 5000, 10000, 50000)
-    ACCEPTED_BILL_INDEX = 2
-    ACCEPTED_BILL_CODE = 0x0A
+    ACCEPTED_BILLS = {2: 0x0A, 3: 0x32}
     BD1 = 2
     MARKERS = (0x11, 0x22, 0x33, 0x44, 0xEE)
 
@@ -231,7 +230,7 @@ class Bac2400(SerialDevice):
                 unsupported = [
                     self.BILL_AMOUNTS[index]
                     for index, delta in enumerate(deltas)
-                    if index != self.ACCEPTED_BILL_INDEX and delta
+                    if index not in self.ACCEPTED_BILLS and delta
                 ]
                 if unsupported:
                     logger.critical("BV1 accepted unsupported denomination(s): %s", unsupported)
@@ -239,11 +238,12 @@ class Bac2400(SerialDevice):
                     self.acceptor_status = 0x0C
                     self.control_acceptor(False)
                     messages.append({"type": "acceptor_event", "event": 0x0C})
-                accepted_count = deltas[self.ACCEPTED_BILL_INDEX]
-                if accepted_count:
-                    self.bill_codes.extend([self.ACCEPTED_BILL_CODE] * accepted_count)
-                    self.acceptor_status = 0x0B
-                    messages.append({"type": "acceptor_event", "event": 0x0B})
+                else:
+                    for index, bill_code in self.ACCEPTED_BILLS.items():
+                        self.bill_codes.extend([bill_code] * deltas[index])
+                    if self.bill_codes:
+                        self.acceptor_status = 0x0B
+                        messages.append({"type": "acceptor_event", "event": 0x0B})
 
         validator = tlvs.get(0x1B)
         if validator:
