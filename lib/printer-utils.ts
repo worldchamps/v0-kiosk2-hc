@@ -2,6 +2,9 @@
  * Bixolon 프린터 제어 유틸리티 (Hardware Server 연동)
  */
 
+import { buildSam4sReceiptHtml } from "@/electron/sam4s-receipt"
+import { getKioskPropertyId } from "@/lib/property-utils"
+
 declare global {
   interface Window {
     electronAPI: any
@@ -109,6 +112,10 @@ export interface KioskReceiptData {
 }
 
 export async function printReceipt(data: KioskReceiptData): Promise<boolean> {
+  if (getKioskPropertyId() === "property4") {
+    return printSam4sReceipt(data)
+  }
+
   console.log("[Bixolon] Printing receipt...", data)
 
   const password = data.password
@@ -231,6 +238,38 @@ export async function printReceipt(data: KioskReceiptData): Promise<boolean> {
   return true
 }
 
+async function printSam4sReceipt(data: KioskReceiptData): Promise<boolean> {
+  const html = buildSam4sReceiptHtml(data)
+  const electronPrint = window.electronAPI?.printToSam4s
+
+  if (electronPrint) {
+    const result = await electronPrint(html)
+    if (!result.success) console.error("[SAM4S] Windows print failed:", result.error)
+    return result.success
+  }
+
+  if (typeof window.print !== "function") return false
+
+  return new Promise((resolve) => {
+    const frame = document.createElement("iframe")
+    frame.style.cssText = "position:fixed;left:-10000px;top:0;width:80mm;height:200mm;border:0"
+    frame.onload = () => {
+      try {
+        frame.contentWindow?.focus()
+        frame.contentWindow?.print()
+        resolve(true)
+      } catch (error) {
+        console.error("[SAM4S] Browser print failed:", error)
+        resolve(false)
+      } finally {
+        window.setTimeout(() => frame.remove(), 1000)
+      }
+    }
+    frame.srcdoc = html
+    document.body.appendChild(frame)
+  })
+}
+
 async function printSeparator() {
   await printText("------------------------------------------\n", {
     alignment: STYLE.ALIGN_CENTER,
@@ -280,6 +319,10 @@ function formatReceiptAmount(value: number): string {
 // --------------------------------------------------------
 
 export async function autoConnectPrinter(): Promise<boolean> {
+  if (getKioskPropertyId() === "property4") {
+    return typeof window !== "undefined" && (!!window.electronAPI?.printToSam4s || typeof window.print === "function")
+  }
+
   // New hardware server architecture handles connection automatically on startup.
   // We just return true here to allow the dependent components to proceed.
   console.log("[Bixolon] autoConnectPrinter called (shim): Connection managed by Hardware Server.")
@@ -287,6 +330,10 @@ export async function autoConnectPrinter(): Promise<boolean> {
 }
 
 export function isPrinterConnected(): boolean {
+  if (getKioskPropertyId() === "property4") {
+    return typeof window !== "undefined" && (!!window.electronAPI?.printToSam4s || typeof window.print === "function")
+  }
+
   // We can't synchronously check invalid hardware server status easily without an async call.
   // Ideally, we should check a cached status from the electron-IPC event listener.
   // For now, returning true is safe as the actual print call will fail gracefully if disconnected.
@@ -303,7 +350,7 @@ export async function printRoomInfoReceipt(data: {
   try {
     const now = new Date();
     await printReceipt({
-      hotelName: "THE BEACH STAY", // English Name
+      hotelName: getKioskPropertyId() === "property4" ? "THE CAMP STAY" : "THE BEACH STAY",
       roomNumber: data.roomNumber,
       password: data.password,
       checkInDate: now.toLocaleDateString(),
@@ -314,3 +361,5 @@ export async function printRoomInfoReceipt(data: {
     return false;
   }
 }
+
+export const connectPrinter = autoConnectPrinter

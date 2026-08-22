@@ -49,12 +49,16 @@ export function isPrinterConnected(): boolean {
 export async function printReceipt(receiptData: any): Promise<boolean> {
   if (!shouldUsePrinter()) return false
 
+  const property = getKioskPropertyId()
+
   // Map generic receipt data to RoomInfo if possible, otherwise print generic text
   // This depends on what receiptData looks like.
   // For now, assume it's Room Info or has similar fields.
   if (receiptData.roomNumber) {
     return HardwarePrinter.printReceipt({
-      hotelName: "THE BEACH STAY",
+      hotelName:
+        process.env.NEXT_PUBLIC_RECEIPT_HOTEL_NAME ||
+        (property === "property4" ? "THE CAMP STAY" : "THE BEACH STAY"),
       roomNumber: receiptData.roomNumber,
       password: receiptData.password || "",
       checkInDate: receiptData.checkInDate || "",
@@ -62,7 +66,9 @@ export async function printReceipt(receiptData: any): Promise<boolean> {
       reservationId: receiptData.reservationId || "",
       paymentReceipt: receiptData.paymentReceipt || null,
       business: {
-        name: process.env.NEXT_PUBLIC_RECEIPT_BUSINESS_NAME || "더 비치스테이",
+        name:
+          process.env.NEXT_PUBLIC_RECEIPT_BUSINESS_NAME ||
+          (property === "property4" ? "더캠프스테이" : "더 비치스테이"),
         registrationNumber: process.env.NEXT_PUBLIC_RECEIPT_BUSINESS_NUMBER || "",
         representative: process.env.NEXT_PUBLIC_RECEIPT_REPRESENTATIVE || "",
         address: process.env.NEXT_PUBLIC_RECEIPT_ADDRESS || "",
@@ -92,6 +98,15 @@ export async function printRoomInfoReceipt(roomData: any): Promise<boolean> {
  */
 export async function printTestPage(): Promise<boolean> {
   if (!shouldUsePrinter()) return false
+  if (getKioskPropertyId() === "property4") {
+    return HardwarePrinter.printReceipt({
+      hotelName: "THE CAMP STAY",
+      roomNumber: "Camp101",
+      password: "1234",
+      checkInDate: "2026-08-22",
+      checkOutDate: "2026-08-23",
+    })
+  }
   await HardwarePrinter.printText("[TEST PAGE]\nHardware Server Integration\n\nSUCCESS\n\n\n\n")
   await HardwarePrinter.cutPaper()
   return true
@@ -102,9 +117,15 @@ export async function printTestPage(): Promise<boolean> {
  */
 export function setSimplePrintMode(simple: boolean): void { }
 export function getSimplePrintMode(): boolean { return false }
-export function getPrinterModel(): string { return "Bixolon (HW Server)" }
+export function getPrinterModel(): string {
+  return getKioskPropertyId() === "property4" ? "SAM4S GCUBE (Windows)" : "Bixolon (HW Server)"
+}
 export function getPrinterStatus(): any {
-  return { connected: true, model: "HW_SERVER", simpleMode: false }
+  return {
+    connected: true,
+    model: getKioskPropertyId() === "property4" ? "SAM4S_GCUBE_WINDOWS" : "HW_SERVER",
+    simpleMode: false,
+  }
 }
 export function getPrinterDiagnostics(): any {
   return { connected: true, message: "Managed by Hardware Server" }

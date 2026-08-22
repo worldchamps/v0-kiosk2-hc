@@ -9,6 +9,7 @@ const overlayButtonModule = require("./overlay-button")
 const bixolonPrinter = require("./bixolon-printer")
 const hardwareBridge = require("./hardware-server-bridge")
 const tossFrontBridge = require("./toss-front-bridge")
+const { findSam4sPrinter, receiptHeightMicrons } = require("./sam4s-receipt")
 
 let mainWindow
 let billAcceptorPort = null // Now handled by hardware server bridge
@@ -649,6 +650,64 @@ ipcMain.handle("cut-bixolon-paper", async () => {
 ipcMain.handle("send-raw-to-bixolon", async (event, data) => {
   hardwareBridge.send({ type: "printer_raw", data })
   return true
+})
+
+ipcMain.handle("print-to-sam4s", async (_event, html) => {
+  if (KIOSK_PROPERTY_ID !== "property4") {
+    return { success: false, error: "SAM4S 인쇄는 property4에서만 사용할 수 있습니다." }
+  }
+
+  if (typeof html !== "string" || !html.trim() || html.length > 200_000) {
+    return { success: false, error: "인쇄할 SAM4S 영수증 데이터가 올바르지 않습니다." }
+  }
+
+  const printWindow = new BrowserWindow({
+    show: false,
+    webPreferences: { sandbox: true },
+  })
+
+  try {
+    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+    await printWindow.webContents.executeJavaScript("document.fonts ? document.fonts.ready : Promise.resolve()")
+
+    const printers = await printWindow.webContents.getPrintersAsync()
+    const printer = findSam4sPrinter(printers, process.env.SAM4S_PRINTER_NAME || "")
+    if (!printer) {
+      const available = printers.map((item) => item.displayName || item.name).filter(Boolean).join(", ")
+      return {
+        success: false,
+        error: `SAM4S GCUBE 프린터를 찾지 못했습니다. 설치된 프린터: ${available || "없음"}`,
+      }
+    }
+
+    const contentHeight = await printWindow.webContents.executeJavaScript(
+      "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)",
+    )
+    const pageSize = { width: 80_000, height: receiptHeightMicrons(contentHeight) }
+
+    return await new Promise((resolve) => {
+      printWindow.webContents.print(
+        {
+          silent: true,
+          printBackground: true,
+          deviceName: printer.name,
+          margins: { marginType: "none" },
+          pageSize,
+        },
+        (success, failureReason) => {
+          resolve(
+            success
+              ? { success: true, printer: printer.displayName || printer.name }
+              : { success: false, error: failureReason || "SAM4S 인쇄에 실패했습니다." },
+          )
+        },
+      )
+    })
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  } finally {
+    if (!printWindow.isDestroyed()) printWindow.destroy()
+  }
 })
 
 ipcMain.handle("reconnect-printer", async () => {

@@ -56,6 +56,7 @@ export interface ElectronAPI {
   onPrinterStatus: (callback: (status: { connected: boolean; port?: string; error?: string }) => void) => void
   reconnectPrinter: () => Promise<{ success: boolean }>
   getPrinterStatus: () => Promise<{ connected: boolean; port?: string }>
+  printToSam4s: (html: string) => Promise<{ success: boolean; printer?: string; error?: string }>
 
   // 유틸리티
   listSerialPorts: () => Promise<{ success: boolean; ports?: any[]; error?: string }>

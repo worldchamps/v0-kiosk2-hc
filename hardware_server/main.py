@@ -51,7 +51,7 @@ bac2400 = Bac2400(
 ) if USE_BAC2400 else None
 dispenser = None if USE_BAC2400 else OnePlusDispenser(DISPENSER_PORT)
 acceptor = None if USE_BAC2400 else OnePlusAcceptor(ACCEPTOR_PORT)
-printer = BixolonPrinter(PRINTER_PORT, baud_rate=115200)
+printer = None if USE_BAC2400 else BixolonPrinter(PRINTER_PORT, baud_rate=115200)
 
 connected_clients = set()
 
@@ -158,7 +158,7 @@ async def handle_client(websocket, *args):
                     acceptor.reset()
                 elif cmd_type == "acceptor_config":
                     acceptor.set_config(msg.get("value", 0x3C))
-                elif cmd_type == "printer_print":
+                elif cmd_type == "printer_print" and printer:
                     text = msg.get("text", "")
                     if text:
                         printer.print_text(
@@ -168,9 +168,9 @@ async def handle_client(websocket, *args):
                             text_size=msg.get("text_size", printer.TEXT_SIZE_NORMAL),
                             code_page=msg.get("code_page", printer.CODE_PAGE_KS5601),
                         )
-                elif cmd_type == "printer_cut":
+                elif cmd_type == "printer_cut" and printer:
                     printer.cut_paper()
-                elif cmd_type == "printer_raw":
+                elif cmd_type == "printer_raw" and printer:
                     raw_data = msg.get("data", "")
                     if raw_data:
                         if isinstance(raw_data, list):
@@ -214,7 +214,10 @@ async def main():
         acceptor.connect()
         acceptor.start(acceptor_callback)
 
-    printer.connect()
+    if printer:
+        printer.connect()
+    else:
+        logger.info("Property4 selected: SAM4S printer is managed by the Windows driver")
 
     logger.info("Starting WebSocket server on ws://localhost:8082")
     async with websockets.serve(handle_client, "localhost", 8082):
@@ -231,4 +234,5 @@ if __name__ == "__main__":
         else:
             dispenser.stop()
             acceptor.stop()
-        printer.disconnect()
+        if printer:
+            printer.disconnect()
