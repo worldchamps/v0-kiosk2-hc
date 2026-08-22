@@ -560,11 +560,13 @@ ipcMain.handle("list-serial-ports", async () => {
 })
 
 ipcMain.handle("reconnect-bill-acceptor", async () => {
+  startHardwareServer()
   hardwareBridge.connect()
   return { success: true }
 })
 
 ipcMain.handle("reconnect-bill-dispenser", async () => {
+  startHardwareServer()
   hardwareBridge.connect()
   return { success: true }
 })
