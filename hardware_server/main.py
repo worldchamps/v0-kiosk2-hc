@@ -24,7 +24,7 @@ def load_local_hardware_env():
         "BAC2400_PORT", "BOARD3400_PORT", "PRINTER_PORT", "DISPENSER_PORT", "ACCEPTOR_PORT",
     }
     try:
-        with open(env_path, encoding="utf-8-sig") as env_file:
+        with open(env_path, encoding="utf-8-sig", errors="ignore") as env_file:
             for raw_line in env_file:
                 key, separator, value = raw_line.strip().partition("=")
                 if separator and key in wanted and key not in os.environ:
