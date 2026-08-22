@@ -42,10 +42,17 @@ export default function PaymentScreen({
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string>("")
   const [statusMessage, setStatusMessage] = useState<string>("현금 결제를 준비하고 있습니다...")
+  const [tenThousandOnly, setTenThousandOnly] = useState(false)
   const paymentCompleteRef = useRef(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<"select" | "cash" | "card">("select")
   const requiredAmount = paymentMethod === "card" ? cardAmount : cashAmount
+
+  useEffect(() => {
+    window.electronAPI?.getPropertyId?.().then((propertyId: string) => {
+      setTenThousandOnly(propertyId.toLowerCase() === "property4")
+    })
+  }, [])
 
   // Polling Interval Ref
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
@@ -165,7 +172,13 @@ export default function PaymentScreen({
           console.log("[v0] Polling: Re-enabling acceptance for next bill...")
           await new Promise((resolve) => setTimeout(resolve, 500))
           await enableAcceptance()
-          setStatusMessage("추가 지폐를 투입해주세요...")
+          setStatusMessage(tenThousandOnly ? "1만원권만 추가로 투입해주세요..." : "추가 지폐를 투입해주세요...")
+
+        } else if (status === 0x0c) {
+          setIsProcessing(false)
+          setError(tenThousandOnly
+            ? "1만원권 이외의 지폐가 감지되었거나 인식기 오류가 발생했습니다. 관리자에게 문의해주세요."
+            : "지폐인식기 오류가 발생했습니다. 관리자에게 문의해주세요.")
 
         }
       } catch (e) {
@@ -175,7 +188,7 @@ export default function PaymentScreen({
         isPollingProcessingRef.current = false
       }
     },
-    [addBill, paymentSession.acceptedAmount, requiredAmount, handlePaymentCompletion],
+    [addBill, paymentSession.acceptedAmount, requiredAmount, handlePaymentCompletion, tenThousandOnly],
   )
 
   useEffect(() => {
@@ -205,7 +218,7 @@ export default function PaymentScreen({
         await enableAcceptance()
         console.log("[v0] Bill acceptance enabled")
 
-        setStatusMessage("지폐를 투입해주세요...")
+        setStatusMessage(tenThousandOnly ? "1만원권만 투입해주세요..." : "지폐를 투입해주세요...")
         setIsConnecting(false)
         setIsProcessing(true)
 
@@ -236,7 +249,7 @@ export default function PaymentScreen({
       }
       setConfig(0x1c) // Disable on exit
     }
-  }, [paymentMethod, pollDeviceStatus])
+  }, [paymentMethod, pollDeviceStatus, tenThousandOnly])
 
   const remainingAmount = requiredAmount - paymentSession.acceptedAmount
 

@@ -13,7 +13,9 @@ logger = logging.getLogger("BAC2400")
 class Bac2400(SerialDevice):
     """Property4 BAC-2400 v1.3 adapter for BV1 and BD1."""
 
-    BILL_CODES = (0x01, 0x05, 0x0A, 0x32)
+    BILL_AMOUNTS = (1000, 5000, 10000, 50000)
+    ACCEPTED_BILL_INDEX = 2
+    ACCEPTED_BILL_CODE = 0x0A
     BD1 = 2
     MARKERS = (0x11, 0x22, 0x33, 0x44, 0xEE)
 
@@ -26,6 +28,7 @@ class Bac2400(SerialDevice):
         self.dispenser_statuses = [0] * 4
         self.acceptor_enabled = False
         self.acceptor_status = 0x01
+        self.unsupported_bill_detected = False
         self.dispenser_running = False
         self.pending_acceptor_connection = False
         self.pending_acceptor_status = False
@@ -61,6 +64,7 @@ class Bac2400(SerialDevice):
             self.bill_codes.clear()
             self.last_bill_counts = [0] * 4
             self.acceptor_status = 0x01
+            self.unsupported_bill_detected = False
         return self.send(self._command(0x5B, 0xA4, [0x03, 0x10, flags, 0]))
 
     def query_acceptor(self):
@@ -222,28 +226,41 @@ class Bac2400(SerialDevice):
             if self.last_bill_counts is None:
                 self.last_bill_counts = current_counts
             else:
-                new_bill = False
-                for index, (current, previous) in enumerate(zip(current_counts, self.last_bill_counts)):
-                    if current > previous:
-                        self.bill_codes.extend([self.BILL_CODES[index]] * (current - previous))
-                        new_bill = True
+                deltas = [max(0, current - previous) for current, previous in zip(current_counts, self.last_bill_counts)]
                 self.last_bill_counts = current_counts
-                if new_bill:
+                unsupported = [
+                    self.BILL_AMOUNTS[index]
+                    for index, delta in enumerate(deltas)
+                    if index != self.ACCEPTED_BILL_INDEX and delta
+                ]
+                if unsupported:
+                    logger.critical("BV1 accepted unsupported denomination(s): %s", unsupported)
+                    self.unsupported_bill_detected = True
+                    self.acceptor_status = 0x0C
+                    self.control_acceptor(False)
+                    messages.append({"type": "acceptor_event", "event": 0x0C})
+                accepted_count = deltas[self.ACCEPTED_BILL_INDEX]
+                if accepted_count:
+                    self.bill_codes.extend([self.ACCEPTED_BILL_CODE] * accepted_count)
                     self.acceptor_status = 0x0B
                     messages.append({"type": "acceptor_event", "event": 0x0B})
 
         validator = tlvs.get(0x1B)
         if validator:
             flags = validator[0]
-            self.acceptor_enabled = bool(flags & 0x01)
-            if self.bill_codes:
-                self.acceptor_status = 0x0B
-            elif flags & 0x04:
+            if self.unsupported_bill_detected:
+                self.acceptor_enabled = False
                 self.acceptor_status = 0x0C
-            elif flags & 0x02:
-                self.acceptor_status = 0x02
             else:
-                self.acceptor_status = 0x01
+                self.acceptor_enabled = bool(flags & 0x01)
+                if self.bill_codes:
+                    self.acceptor_status = 0x0B
+                elif flags & 0x04:
+                    self.acceptor_status = 0x0C
+                elif flags & 0x02:
+                    self.acceptor_status = 0x02
+                else:
+                    self.acceptor_status = 0x01
 
         payout_counts = tlvs.get(0x15)
         if payout_counts and len(payout_counts) >= 4:

@@ -49,6 +49,18 @@ class Bac2400Test(unittest.TestCase):
         bill = self.board.handle_acceptor_command(bytes([0x24, 0x47, 0x42, 0x3F, 0]))[0]["packet"]
         self.assertEqual(bill[1:4], [0x67, 0x62, 0x0A])
 
+    def test_bv1_rejects_non_10000_won_in_software(self):
+        self.board.control_acceptor(True, clear=True)
+        messages = self.board.process_incoming(
+            multi_frame((0x18, [1, 0, 0, 0]), (0x1B, [0x09, 0, 0x13]))
+        )
+
+        self.assertTrue(any(message.get("event") == 0x0C for message in messages))
+        self.assertFalse(self.board.acceptor_enabled)
+        self.assertEqual(self.board.acceptor_status, 0x0C)
+        self.assertEqual(list(self.board.bill_codes), [])
+        self.assertEqual(self.sent[-1], bytes.fromhex("5B A4 03 10 00 00 13"))
+
     def test_bd1_payout_command_and_completion(self):
         self.assertTrue(self.board.dispense(2))
         self.assertEqual(self.sent[-1], bytes.fromhex("71 8E"))
