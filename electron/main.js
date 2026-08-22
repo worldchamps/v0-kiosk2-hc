@@ -113,10 +113,9 @@ function startHardwareServer() {
     return
   }
 
-  const command = `python -u "${mainPy}"`
   console.log("[HARDWARE_SERVER] Starting:", mainPy)
 
-  hardwareServerProcess = spawn("cmd.exe", ["/c", command], {
+  hardwareServerProcess = spawn("python", ["-u", mainPy], {
     cwd: hardwareServerDir,
     windowsHide: true,
     stdio: isDev ? "inherit" : "ignore",
