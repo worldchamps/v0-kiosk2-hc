@@ -107,14 +107,13 @@ function startHardwareServer() {
 
   const hardwareServerDir = getHardwareServerDir()
   const mainPy = path.join(hardwareServerDir, "main.py")
-  const requirements = path.join(hardwareServerDir, "requirements.txt")
 
   if (!require("fs").existsSync(mainPy)) {
     console.error("[HARDWARE_SERVER] main.py not found:", mainPy)
     return
   }
 
-  const command = `python -m pip install -r "${requirements}" && python "${mainPy}"`
+  const command = `python -u "${mainPy}"`
   console.log("[HARDWARE_SERVER] Starting:", mainPy)
 
   hardwareServerProcess = spawn("cmd.exe", ["/c", command], {
