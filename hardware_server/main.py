@@ -6,7 +6,7 @@ import os
 import websockets
 
 from acceptor import OnePlusAcceptor
-from board3400 import Board3400
+from bac2400 import Bac2400
 from dispenser import OnePlusDispenser
 from printer import BixolonPrinter
 
@@ -15,6 +15,25 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger("HardwareServer")
+
+
+def load_local_hardware_env():
+    env_path = os.path.join(os.path.dirname(__file__), "..", ".env.local")
+    wanted = {
+        "KIOSK_PROPERTY_ID", "KIOSK_PROPERTY", "NEXT_PUBLIC_KIOSK_PROPERTY_ID",
+        "BAC2400_PORT", "BOARD3400_PORT", "PRINTER_PORT", "DISPENSER_PORT", "ACCEPTOR_PORT",
+    }
+    try:
+        with open(env_path, encoding="utf-8-sig") as env_file:
+            for raw_line in env_file:
+                key, separator, value = raw_line.strip().partition("=")
+                if separator and key in wanted and key not in os.environ:
+                    os.environ[key] = value.strip().strip("\"'")
+    except FileNotFoundError:
+        pass
+
+
+load_local_hardware_env()
 
 DISPENSER_PORT = os.environ.get("DISPENSER_PORT", "COM5")
 ACCEPTOR_PORT = os.environ.get("ACCEPTOR_PORT", "COM4")
@@ -25,11 +44,13 @@ PROPERTY_ID = (
     or os.environ.get("NEXT_PUBLIC_KIOSK_PROPERTY_ID")
     or "property3"
 ).lower()
-USE_BOARD3400 = PROPERTY_ID == "property4"
+USE_BAC2400 = PROPERTY_ID == "property4"
 
-board3400 = Board3400(os.environ.get("BOARD3400_PORT", "COM1")) if USE_BOARD3400 else None
-dispenser = None if USE_BOARD3400 else OnePlusDispenser(DISPENSER_PORT)
-acceptor = None if USE_BOARD3400 else OnePlusAcceptor(ACCEPTOR_PORT)
+bac2400 = Bac2400(
+    os.environ.get("BAC2400_PORT") or os.environ.get("BOARD3400_PORT", "COM5")
+) if USE_BAC2400 else None
+dispenser = None if USE_BAC2400 else OnePlusDispenser(DISPENSER_PORT)
+acceptor = None if USE_BAC2400 else OnePlusAcceptor(ACCEPTOR_PORT)
 printer = BixolonPrinter(PRINTER_PORT, baud_rate=115200)
 
 connected_clients = set()
@@ -57,8 +78,8 @@ def acceptor_callback(data):
     )
 
 
-def board3400_callback(data):
-    for message in board3400.process_incoming(data):
+def bac2400_callback(data):
+    for message in bac2400.process_incoming(data):
         asyncio.run_coroutine_threadsafe(broadcast(message), main_loop)
 
 
@@ -66,12 +87,12 @@ def legacy_packet(command1, command2, data):
     return bytes([0x24, command1, command2, data, (command1 + command2 + data) & 0xFF])
 
 
-def handle_board3400_message(message):
+def handle_bac2400_message(message):
     command_type = message.get("type")
     if command_type == "raw_acceptor":
-        return board3400.handle_acceptor_command(bytes(message.get("data", [])))
+        return bac2400.handle_acceptor_command(bytes(message.get("data", [])))
     if command_type == "raw_dispenser":
-        return board3400.handle_dispenser_command(bytes(message.get("data", [])))
+        return bac2400.handle_dispenser_command(bytes(message.get("data", [])))
 
     acceptor_commands = {
         "acceptor_enable": (0x53, 0x41, 0x0D),
@@ -82,22 +103,22 @@ def handle_board3400_message(message):
         "acceptor_reset": (0x52, 0x53, 0x54),
     }
     if command_type in acceptor_commands:
-        return board3400.handle_acceptor_command(legacy_packet(*acceptor_commands[command_type]))
+        return bac2400.handle_acceptor_command(legacy_packet(*acceptor_commands[command_type]))
     if command_type == "acceptor_config":
-        return board3400.handle_acceptor_command(legacy_packet(0x53, 0x43, message.get("value", 0x3C)))
+        return bac2400.handle_acceptor_command(legacy_packet(0x53, 0x43, message.get("value", 0x3C)))
     if command_type == "dispense":
-        return board3400.handle_dispenser_command(legacy_packet(0x44, message.get("count", 1), 0x53))
+        return bac2400.handle_dispenser_command(legacy_packet(0x44, message.get("count", 1), 0x53))
     if command_type == "dispenser_status":
-        return board3400.handle_dispenser_command(legacy_packet(0x53, 0x74, 0x3F))
+        return bac2400.handle_dispenser_command(legacy_packet(0x53, 0x74, 0x3F))
     if command_type == "dispenser_init":
-        return board3400.handle_dispenser_command(legacy_packet(0x49, 0, 0))
+        return bac2400.handle_dispenser_command(legacy_packet(0x49, 0, 0))
     return None
 
 
-async def poll_board3400_payout():
+async def poll_bac2400_payout():
     while True:
-        if board3400.payout_in_progress:
-            board3400.query_status()
+        if bac2400.payout_in_progress:
+            bac2400.query_dispenser()
         await asyncio.sleep(0.25)
 
 
@@ -110,8 +131,8 @@ async def handle_client(websocket, *args):
                 msg = json.loads(message)
                 cmd_type = msg.get("type")
 
-                if board3400:
-                    responses = handle_board3400_message(msg)
+                if bac2400:
+                    responses = handle_bac2400_message(msg)
                     if responses is not None:
                         for response in responses:
                             await broadcast(response)
@@ -182,11 +203,11 @@ async def main():
     global main_loop
     main_loop = asyncio.get_running_loop()
 
-    if board3400:
-        logger.info("Property4 selected: using Multi3400 board on %s", board3400.port)
-        board3400.connect()
-        board3400.start(board3400_callback)
-        asyncio.create_task(poll_board3400_payout())
+    if bac2400:
+        logger.info("Property4 selected: using BAC-2400 V1.3 (BV1/BD1) on %s", bac2400.port)
+        bac2400.connect()
+        bac2400.start(bac2400_callback)
+        asyncio.create_task(poll_bac2400_payout())
     else:
         dispenser.connect()
         dispenser.start(dispenser_callback)
@@ -205,8 +226,8 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Server stopping...")
-        if board3400:
-            board3400.stop()
+        if bac2400:
+            bac2400.stop()
         else:
             dispenser.stop()
             acceptor.stop()

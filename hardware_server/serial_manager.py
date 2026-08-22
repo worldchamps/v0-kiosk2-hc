@@ -12,11 +12,12 @@ logger = logging.getLogger("SerialManager")
 
 
 class SerialDevice:
-    def __init__(self, name, port, baudrate=9600, timeout=1):
+    def __init__(self, name, port, baudrate=9600, timeout=1, parity=serial.PARITY_NONE):
         self.name = name
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
+        self.parity = parity
         self.ser = None
         self.running = False
         self.thread = None
@@ -28,9 +29,10 @@ class SerialDevice:
                 self.port,
                 self.baudrate,
                 timeout=self.timeout,
+                parity=self.parity,
             )
             logger.info(
-                f"[{self.name}] Connected to {self.port} at {self.baudrate}"
+                f"[{self.name}] Connected to {self.port} at {self.baudrate} (parity={self.parity})"
             )
             return True
         except Exception as exc:
