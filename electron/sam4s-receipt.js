@@ -85,7 +85,7 @@ function buildSam4sReceiptHtml(data = {}) {
   <meta charset="utf-8">
   <title>SAM4S 영수증</title>
   <style>
-    @page { margin: 0; }
+    @page { size: 80mm 297mm; margin: 0; }
     * { box-sizing: border-box; }
     html, body { width: 80mm; margin: 0; padding: 0; background: #fff; color: #000; }
     body { font-family: "Malgun Gothic", "맑은 고딕", sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }

@@ -687,6 +687,7 @@ ipcMain.handle("print-to-sam4s", async (_event, html) => {
           printBackground: true,
           deviceName: printer.name,
           margins: { marginType: "none" },
+          pageSize: { width: 80_000, height: 297_000 },
         },
         (success, failureReason) => {
           resolve(
