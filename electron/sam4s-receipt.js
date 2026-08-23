@@ -85,7 +85,7 @@ function buildSam4sReceiptHtml(data = {}) {
   <meta charset="utf-8">
   <title>SAM4S 영수증</title>
   <style>
-    @page { size: 80mm 200mm; margin: 0; }
+    @page { margin: 0; }
     * { box-sizing: border-box; }
     html, body { width: 80mm; margin: 0; padding: 0; background: #fff; color: #000; }
     body { font-family: "Malgun Gothic", "맑은 고딕", sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -150,17 +150,11 @@ function findSam4sPrinter(printers, configuredName = "") {
   }) || null
 }
 
-function receiptHeightMicrons(cssPixels) {
-  const contentHeight = Math.ceil((Number(cssPixels) || 0) * 25400 / 96) + 6000
-  return Math.min(3_276_000, Math.max(40_000, contentHeight))
-}
-
 if (typeof require !== "undefined" && require.main === module) {
   const html = buildSam4sReceiptHtml({ roomNumber: "Camp101", password: "12<34" })
   if (!html.includes("CAMP 101호") || !html.includes("12&lt;34*")) throw new Error("receipt HTML self-check failed")
   if (findSam4sPrinter([{ name: "SAM4S GCUBE-100" }])?.name !== "SAM4S GCUBE-100") throw new Error("printer selection self-check failed")
-  if (receiptHeightMicrons(0) !== 40_000) throw new Error("page height self-check failed")
   console.log("SAM4S receipt self-check passed")
 }
 
-module.exports = { buildSam4sReceiptHtml, findSam4sPrinter, receiptHeightMicrons }
+module.exports = { buildSam4sReceiptHtml, findSam4sPrinter }

@@ -9,7 +9,7 @@ const overlayButtonModule = require("./overlay-button")
 const bixolonPrinter = require("./bixolon-printer")
 const hardwareBridge = require("./hardware-server-bridge")
 const tossFrontBridge = require("./toss-front-bridge")
-const { findSam4sPrinter, receiptHeightMicrons } = require("./sam4s-receipt")
+const { findSam4sPrinter } = require("./sam4s-receipt")
 
 let mainWindow
 let billAcceptorPort = null // Now handled by hardware server bridge
@@ -680,11 +680,6 @@ ipcMain.handle("print-to-sam4s", async (_event, html) => {
       }
     }
 
-    const contentHeight = await printWindow.webContents.executeJavaScript(
-      "Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)",
-    )
-    const pageSize = { width: 80_000, height: receiptHeightMicrons(contentHeight) }
-
     return await new Promise((resolve) => {
       printWindow.webContents.print(
         {
@@ -692,7 +687,6 @@ ipcMain.handle("print-to-sam4s", async (_event, html) => {
           printBackground: true,
           deviceName: printer.name,
           margins: { marginType: "none" },
-          pageSize,
         },
         (success, failureReason) => {
           resolve(
