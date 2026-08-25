@@ -136,6 +136,27 @@ function buildSam4sReceiptHtml(data = {}) {
 </html>`
 }
 
+function buildSam4sRasterHtml(pngDataUrl) {
+  if (typeof pngDataUrl !== "string" || !pngDataUrl.startsWith("data:image/png;base64,")) {
+    throw new Error("SAM4S 영수증 이미지가 올바르지 않습니다.")
+  }
+
+  return `<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>SAM4S 영수증 이미지</title>
+  <style>
+    @page { size: 80mm 297mm; margin: 0; }
+    * { box-sizing: border-box; }
+    html, body { width: 80mm; margin: 0; padding: 0; background: #fff; }
+    img { display: block; width: 72mm; height: auto; margin: 0 auto; }
+  </style>
+</head>
+<body><img src="${pngDataUrl}" alt="SAM4S 영수증"></body>
+</html>`
+}
+
 function findSam4sPrinter(printers, configuredName = "") {
   const wanted = configuredName.trim().toLowerCase()
   if (wanted) {
@@ -153,8 +174,10 @@ function findSam4sPrinter(printers, configuredName = "") {
 if (typeof require !== "undefined" && require.main === module) {
   const html = buildSam4sReceiptHtml({ roomNumber: "Camp101", password: "12<34" })
   if (!html.includes("CAMP 101호") || !html.includes("12&lt;34*")) throw new Error("receipt HTML self-check failed")
+  const rasterHtml = buildSam4sRasterHtml("data:image/png;base64,dGVzdA==")
+  if (!rasterHtml.includes("width: 72mm") || !rasterHtml.includes("dGVzdA==")) throw new Error("raster HTML self-check failed")
   if (findSam4sPrinter([{ name: "SAM4S GCUBE-100" }])?.name !== "SAM4S GCUBE-100") throw new Error("printer selection self-check failed")
   console.log("SAM4S receipt self-check passed")
 }
 
-module.exports = { buildSam4sReceiptHtml, findSam4sPrinter }
+module.exports = { buildSam4sReceiptHtml, buildSam4sRasterHtml, findSam4sPrinter }

@@ -9,7 +9,7 @@ const overlayButtonModule = require("./overlay-button")
 const bixolonPrinter = require("./bixolon-printer")
 const hardwareBridge = require("./hardware-server-bridge")
 const tossFrontBridge = require("./toss-front-bridge")
-const { findSam4sPrinter } = require("./sam4s-receipt")
+const { buildSam4sRasterHtml, findSam4sPrinter } = require("./sam4s-receipt")
 
 let mainWindow
 let billAcceptorPort = null // Now handled by hardware server bridge
@@ -663,12 +663,58 @@ ipcMain.handle("print-to-sam4s", async (_event, html) => {
 
   const printWindow = new BrowserWindow({
     show: false,
-    webPreferences: { sandbox: true },
+    width: 400,
+    height: 1200,
+    webPreferences: { sandbox: true, backgroundThrottling: false },
   })
 
   try {
+    console.log(`[SAM4S] Print requested (${html.length} HTML characters)`)
     await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
     await printWindow.webContents.executeJavaScript("document.fonts ? document.fonts.ready : Promise.resolve()")
+
+    const documentSize = await printWindow.webContents.executeJavaScript(`(() => ({
+      width: Math.ceil(document.documentElement.scrollWidth),
+      height: Math.ceil(document.documentElement.scrollHeight)
+    }))()`)
+    if (!documentSize.width || !documentSize.height || documentSize.height > 20_000) {
+      throw new Error("SAM4S 영수증 화면 크기가 올바르지 않습니다.")
+    }
+
+    printWindow.setContentSize(Math.max(400, documentSize.width), Math.max(600, documentSize.height))
+    await printWindow.webContents.executeJavaScript(
+      "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+    )
+
+    const receiptBounds = await printWindow.webContents.executeJavaScript(`(() => {
+      const receipt = document.querySelector(".receipt")
+      if (!receipt) return null
+      const rect = receipt.getBoundingClientRect()
+      return {
+        x: Math.max(0, Math.floor(rect.left)),
+        y: Math.max(0, Math.floor(rect.top)),
+        width: Math.ceil(rect.width),
+        height: Math.ceil(rect.height)
+      }
+    })()`)
+    if (!receiptBounds?.width || !receiptBounds?.height) {
+      throw new Error("SAM4S 영수증 본문을 화면에서 찾지 못했습니다.")
+    }
+
+    const receiptImage = await printWindow.webContents.capturePage(receiptBounds, { stayHidden: true })
+    if (receiptImage.isEmpty()) throw new Error("SAM4S 영수증 이미지를 만들지 못했습니다.")
+
+    const pngDataUrl = receiptImage.toDataURL()
+    const pngBytes = receiptImage.toPNG().length
+    const imageSize = receiptImage.getSize()
+    console.log(`[SAM4S] Receipt rasterized: ${imageSize.width}x${imageSize.height}px, ${pngBytes} bytes`)
+
+    await printWindow.loadURL(
+      `data:text/html;charset=utf-8,${encodeURIComponent(buildSam4sRasterHtml(pngDataUrl))}`,
+    )
+    await printWindow.webContents.executeJavaScript(
+      "document.images[0] ? document.images[0].decode() : Promise.reject(new Error('receipt image missing'))",
+    )
 
     const printers = await printWindow.webContents.getPrintersAsync()
     const printer = findSam4sPrinter(printers, process.env.SAM4S_PRINTER_NAME || "")
@@ -679,6 +725,7 @@ ipcMain.handle("print-to-sam4s", async (_event, html) => {
         error: `SAM4S GCUBE 프린터를 찾지 못했습니다. 설치된 프린터: ${available || "없음"}`,
       }
     }
+    console.log(`[SAM4S] Printing raster receipt to ${printer.displayName || printer.name}`)
 
     return await new Promise((resolve) => {
       printWindow.webContents.print(
@@ -688,8 +735,10 @@ ipcMain.handle("print-to-sam4s", async (_event, html) => {
           deviceName: printer.name,
           margins: { marginType: "none" },
           pageSize: { width: 80_000, height: 297_000 },
+          dpi: { horizontal: 203, vertical: 203 },
         },
         (success, failureReason) => {
+          console.log(`[SAM4S] Windows print callback: ${success ? "success" : failureReason || "failed"}`)
           resolve(
             success
               ? { success: true, printer: printer.displayName || printer.name }
@@ -699,6 +748,7 @@ ipcMain.handle("print-to-sam4s", async (_event, html) => {
       )
     })
   } catch (error) {
+    console.error("[SAM4S] Print failed:", error)
     return { success: false, error: error instanceof Error ? error.message : String(error) }
   } finally {
     if (!printWindow.isDestroyed()) printWindow.destroy()
