@@ -29,9 +29,10 @@ function New-ReceiptFormat([string]$Alignment) {
   return $format
 }
 
-function Draw-Receipt($Graphics, $Commands) {
+function Draw-Receipt($Graphics, $Commands, [double]$OffsetXmm = 0, [double]$OffsetYmm = 0) {
   $Graphics.PageUnit = [System.Drawing.GraphicsUnit]::Millimeter
   $Graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::SingleBitPerPixelGridFit
+  $Graphics.TranslateTransform([single]$OffsetXmm, [single]$OffsetYmm)
   $y = 4.0
   $x = 4.0
   $width = 72.0
@@ -134,6 +135,12 @@ if ([string]::IsNullOrWhiteSpace($PrinterName)) { throw "PrinterName is required
 $encoded = [Console]::In.ReadToEnd().Trim()
 $commands = @(Convert-ReceiptCommands $encoded)
 if ($commands.Count -eq 0) { throw "Receipt commands are empty." }
+$offsetXmm = if ([string]::IsNullOrWhiteSpace($env:SAM4S_OFFSET_X_MM)) { 0.0 } else {
+  [double]::Parse($env:SAM4S_OFFSET_X_MM, [System.Globalization.CultureInfo]::InvariantCulture)
+}
+$offsetYmm = if ([string]::IsNullOrWhiteSpace($env:SAM4S_OFFSET_Y_MM)) { 0.0 } else {
+  [double]::Parse($env:SAM4S_OFFSET_Y_MM, [System.Globalization.CultureInfo]::InvariantCulture)
+}
 
 $document = [System.Drawing.Printing.PrintDocument]::new()
 try {
@@ -144,9 +151,16 @@ try {
   $document.DefaultPageSettings.Margins = [System.Drawing.Printing.Margins]::new(0, 0, 0, 0)
   $document.OriginAtMargins = $false
   $script:Sam4sCommands = $commands
+  $script:Sam4sOffsetXmm = $offsetXmm
+  $script:Sam4sOffsetYmm = $offsetYmm
   $document.add_PrintPage({
     param($sender, $eventArgs)
-    $null = Draw-Receipt $eventArgs.Graphics $script:Sam4sCommands
+    $hardMarginXmm = [double]$eventArgs.PageSettings.HardMarginX * 25.4 / 100
+    $hardMarginYmm = [double]$eventArgs.PageSettings.HardMarginY * 25.4 / 100
+    $printOffsetXmm = $script:Sam4sOffsetXmm - $hardMarginXmm
+    $printOffsetYmm = $script:Sam4sOffsetYmm - $hardMarginYmm
+    $null = Draw-Receipt $eventArgs.Graphics $script:Sam4sCommands $printOffsetXmm $printOffsetYmm
+    [Console]::Out.WriteLine("GDI origin corrected: X=$([Math]::Round($printOffsetXmm, 2))mm Y=$([Math]::Round($printOffsetYmm, 2))mm")
     $eventArgs.HasMorePages = $false
   })
   $document.Print()
