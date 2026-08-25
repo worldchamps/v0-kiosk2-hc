@@ -136,25 +136,77 @@ function buildSam4sReceiptHtml(data = {}) {
 </html>`
 }
 
-function buildSam4sRasterHtml(pngDataUrl) {
-  if (typeof pngDataUrl !== "string" || !pngDataUrl.startsWith("data:image/png;base64,")) {
-    throw new Error("SAM4S 영수증 이미지가 올바르지 않습니다.")
+function buildSam4sPrintLines(data = {}) {
+  const password = data.password ? `${String(data.password).replace(/\*+$/, "")}*` : ""
+  const payment = data.paymentReceipt
+  const business = data.business || {}
+  const lines = []
+  const text = (value, options = {}) => lines.push({ kind: "text", text: String(value), size: 10.5, ...options })
+  const row = (label, value) => {
+    if (value !== undefined && value !== null && value !== "") {
+      lines.push({ kind: "columns", left: String(label), right: String(value), size: 9.5, gapAfter: 0.8 })
+    }
+  }
+  const separator = () => lines.push({ kind: "separator", gapBefore: 1.5, gapAfter: 1.5 })
+
+  text(data.hotelName || "THE CAMP STAY", { size: 22, bold: true, align: "center", gapAfter: 3 })
+
+  if (payment) {
+    text("카드 결제 영수증", { size: 16, bold: true, align: "center", gapAfter: 2 })
+    row("상호", business.name)
+    row("사업자번호", business.registrationNumber)
+    row("대표자", business.representative)
+    row("주소", business.address)
+    row("전화", business.phone)
+    separator()
+    row("승인일시", formatPaymentDate(payment.timestamp))
+    row("승인번호", payment.approvalNumber)
+    row("카드사", payment.issuerName)
+    row("카드번호", payment.maskedCardNumber)
+    row("할부", Number(payment.installment) > 0 ? `${payment.installment}개월` : "일시불")
+    row("예약번호", data.reservationId)
+    separator()
+    row("공급가액", formatAmount(payment.supplyValue))
+    row("부가세", formatAmount(payment.tax))
+    text("결제금액", { size: 12, bold: true, align: "center", gapBefore: 1 })
+    text(formatAmount(payment.amount), { size: 24, bold: true, align: "center", gapAfter: 1 })
+    text("카드 승인 완료", { size: 12, bold: true, align: "center", gapAfter: 2 })
   }
 
-  return `<!doctype html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8">
-  <title>SAM4S 영수증 이미지</title>
-  <style>
-    @page { size: 80mm 297mm; margin: 0; }
-    * { box-sizing: border-box; }
-    html, body { width: 80mm; margin: 0; padding: 0; background: #fff; }
-    img { display: block; width: 72mm; height: auto; margin: 0 auto; }
-  </style>
-</head>
-<body><img src="${pngDataUrl}" alt="SAM4S 영수증"></body>
-</html>`
+  separator()
+  text("입실 안내", { size: 16, bold: true, align: "center", gapAfter: 2 })
+  text("아래 비밀번호를 도어락에 입력하세요.", { size: 10.5, bold: true, align: "center", gapAfter: 2 })
+  text(formatRoomNumber(data.roomNumber), { size: 28, bold: true, align: "center", gapAfter: 2 })
+  if (password) {
+    text("객실 비밀번호", { size: 12, align: "center" })
+    text(password, { size: 30, bold: true, underline: true, align: "center", gapAfter: 2 })
+  }
+
+  separator()
+  text("도어락 이용 방법", { size: 16, bold: true, align: "center", gapAfter: 1 })
+  const steps = [
+    "도어락 화면을 손으로 터치하세요.",
+    "숫자 자판이 나타날 때까지 기다리세요.",
+    ...(password ? [`비밀번호 ${password}를 입력하세요.`] : []),
+    "문이 열리면 입실하세요.",
+  ]
+  steps.forEach((step, index) => text(`${index + 1}. ${step}`, { gapAfter: 0.5 }))
+
+  const checkInDate = formatDate(data.checkInDate)
+  const checkOutDate = formatDate(data.checkOutDate)
+  if (checkInDate || checkOutDate) {
+    separator()
+    if (checkInDate) text(`체크인    ${checkInDate}`, { size: 11, gapAfter: 0.5 })
+    if (checkOutDate) text(`체크아웃 ${checkOutDate}`, { size: 11, gapAfter: 0.5 })
+  }
+  text("즐거운 시간 보내시기 바랍니다.\n감사합니다.", {
+    size: 12,
+    bold: true,
+    align: "center",
+    gapBefore: 3,
+    gapAfter: 5,
+  })
+  return lines
 }
 
 function findSam4sPrinter(printers, configuredName = "") {
@@ -174,10 +226,12 @@ function findSam4sPrinter(printers, configuredName = "") {
 if (typeof require !== "undefined" && require.main === module) {
   const html = buildSam4sReceiptHtml({ roomNumber: "Camp101", password: "12<34" })
   if (!html.includes("CAMP 101호") || !html.includes("12&lt;34*")) throw new Error("receipt HTML self-check failed")
-  const rasterHtml = buildSam4sRasterHtml("data:image/png;base64,dGVzdA==")
-  if (!rasterHtml.includes("width: 72mm") || !rasterHtml.includes("dGVzdA==")) throw new Error("raster HTML self-check failed")
+  const lines = buildSam4sPrintLines({ roomNumber: "Camp101", password: "12<34" })
+  if (!lines.some((line) => line.text === "CAMP 101호") || !lines.some((line) => line.text === "12<34*" && line.size === 30)) {
+    throw new Error("native print lines self-check failed")
+  }
   if (findSam4sPrinter([{ name: "SAM4S GCUBE-100" }])?.name !== "SAM4S GCUBE-100") throw new Error("printer selection self-check failed")
   console.log("SAM4S receipt self-check passed")
 }
 
-module.exports = { buildSam4sReceiptHtml, buildSam4sRasterHtml, findSam4sPrinter }
+module.exports = { buildSam4sReceiptHtml, buildSam4sPrintLines, findSam4sPrinter }

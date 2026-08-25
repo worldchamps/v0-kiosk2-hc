@@ -239,16 +239,16 @@ export async function printReceipt(data: KioskReceiptData): Promise<boolean> {
 }
 
 async function printSam4sReceipt(data: KioskReceiptData): Promise<boolean> {
-  const html = buildSam4sReceiptHtml(data)
   const electronPrint = window.electronAPI?.printToSam4s
 
   if (electronPrint) {
-    const result = await electronPrint(html)
+    const result = await electronPrint(data)
     if (!result.success) console.error("[SAM4S] Windows print failed:", result.error)
     return result.success
   }
 
   if (typeof window.print !== "function") return false
+  const html = buildSam4sReceiptHtml(data)
 
   return new Promise((resolve) => {
     const frame = document.createElement("iframe")

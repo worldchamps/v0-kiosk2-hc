@@ -29,7 +29,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   printToBixolon: (text, options = {}) => ipcRenderer.invoke("print-to-bixolon", text, options),
   cutBixolonPaper: () => ipcRenderer.invoke("cut-bixolon-paper"),
   sendRawToBixolon: (data) => ipcRenderer.invoke("send-raw-to-bixolon", data),
-  printToSam4s: (html) => ipcRenderer.invoke("print-to-sam4s", html),
+  printToSam4s: (receipt) => ipcRenderer.invoke("print-to-sam4s", receipt),
 
   onBillAcceptorData: (callback) => {
     ipcRenderer.removeAllListeners("bill-acceptor-data")
