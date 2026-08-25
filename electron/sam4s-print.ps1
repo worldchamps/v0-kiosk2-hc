@@ -4,7 +4,16 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 Add-Type -AssemblyName System.Drawing
+
+function Convert-ReceiptCommands([string]$Encoded) {
+  if ([string]::IsNullOrWhiteSpace($Encoded)) { throw "Receipt payload is empty." }
+  $json = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Encoded))
+  $parsedCommands = $json | ConvertFrom-Json
+  foreach ($command in $parsedCommands) { $command }
+}
 
 function New-ReceiptFormat([string]$Alignment) {
   $format = [System.Drawing.StringFormat]::new()
@@ -91,11 +100,15 @@ function Draw-Receipt($Graphics, $Commands) {
 
 if ($CheckOnly) {
   $sample = ([string][char]0xD55C) + ([string][char]0xAE00) + " SAM4S 1234"
-  $commands = @(
+  $sampleCommands = @(
     [pscustomobject]@{ kind = "text"; text = $sample; size = 22; bold = $true; align = "center"; gapAfter = 2 },
     [pscustomobject]@{ kind = "columns"; left = "ROOM"; right = "CAMP 101"; size = 11 },
     [pscustomobject]@{ kind = "separator"; gapBefore = 1; gapAfter = 1 }
   )
+  $sampleJson = ConvertTo-Json -InputObject $sampleCommands -Depth 5 -Compress
+  $sampleEncoded = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($sampleJson))
+  $commands = @(Convert-ReceiptCommands $sampleEncoded)
+  if ($commands.Count -ne 3) { throw "Receipt command array was not flattened." }
   $bitmap = [System.Drawing.Bitmap]::new(640, 1000)
   $bitmap.SetResolution(203, 203)
   $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
@@ -119,9 +132,7 @@ if ($CheckOnly) {
 
 if ([string]::IsNullOrWhiteSpace($PrinterName)) { throw "PrinterName is required." }
 $encoded = [Console]::In.ReadToEnd().Trim()
-if ([string]::IsNullOrWhiteSpace($encoded)) { throw "Receipt payload is empty." }
-$json = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($encoded))
-$commands = @($json | ConvertFrom-Json)
+$commands = @(Convert-ReceiptCommands $encoded)
 if ($commands.Count -eq 0) { throw "Receipt commands are empty." }
 
 $document = [System.Drawing.Printing.PrintDocument]::new()
