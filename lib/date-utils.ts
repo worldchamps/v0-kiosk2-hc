@@ -66,10 +66,7 @@ export function formatDateEnglish(dateString: string): string {
 export function normalizeDate(dateString: string): string {
   if (!dateString) return ""
 
-  // 디버깅을 위한 로그
-  console.log(`Normalizing date: "${dateString}"`)
-
-  const cleaned = dateString.replace(/^'/, "").trim()
+  const cleaned = String(dateString).replace(/^'/, "").trim()
 
   // 이미 YYYY-MM-DD 형식인 경우
   if (cleaned.match(/^\d{4}-\d{2}-\d{2}$/)) {
@@ -81,10 +78,12 @@ export function normalizeDate(dateString: string): string {
     return cleaned.replace(/\./g, "-")
   }
 
-  const spreadsheetMatch = cleaned.match(/^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})$/)
+  // Google Sheets 날짜/날짜시간: 2026. 9. 5 오전 11:00:00, 26.09.05/11:00
+  const spreadsheetMatch = cleaned.match(/^(\d{2}|\d{4})[.-]\s*(\d{1,2})[.-]\s*(\d{1,2})(?:\.?(?:\s|\/|T|$))/)
   if (spreadsheetMatch) {
     const [_, year, month, day] = spreadsheetMatch
-    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`
+    const fullYear = year.length === 2 ? `20${year}` : year
+    return `${fullYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`
   }
 
   // MM/DD/YYYY 형식인 경우
@@ -110,4 +109,55 @@ export function normalizeDate(dateString: string): string {
   // 정규화 실패 시 원본 반환
   console.warn(`Failed to normalize date: "${cleaned}"`)
   return cleaned
+}
+
+const getTime = (value: string, fallback: string) => {
+  const match = value.match(/(\d{1,2}):(\d{2})/)
+  if (!match) return fallback
+
+  let hour = Number(match[1])
+  if (/(오후|pm)/i.test(value) && hour < 12) hour += 12
+  if (/(오전|am)/i.test(value) && hour === 12) hour = 0
+  return `${String(hour).padStart(2, "0")}:${match[2]}`
+}
+
+const buildScheduledAt = (date: string, time: string) => {
+  const match = normalizeDate(date).match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  return match ? `${match[1].slice(-2)}.${match[2]}.${match[3]}/${time}` : ""
+}
+
+export const formatCurrentSheetDateTime = (now = new Date()) => {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Seoul",
+    year: "2-digit",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now).map(({ type, value }) => [type, value]))
+  return `${parts.year}.${parts.month}.${parts.day}/${parts.hour}:${parts.minute}`
+}
+
+export const buildOnSiteSheetDateTimes = (
+  checkInDate: string,
+  checkOutDate: string,
+  stayType: "overnight" | "shortStay",
+  now = new Date(),
+) => {
+  const currentTime = getTime(formatCurrentSheetDateTime(now), "00:00")
+  const checkInAt = buildScheduledAt(checkInDate, currentTime)
+  let checkOutAt = buildScheduledAt(checkOutDate, "11:00")
+
+  if (stayType === "shortStay") {
+    const start = new Date(`${normalizeDate(checkInDate)}T${currentTime}:00+09:00`)
+    checkOutAt = formatCurrentSheetDateTime(new Date(start.getTime() + 3 * 60 * 60 * 1000))
+  }
+
+  return {
+    checkInDate: checkInAt,
+    checkOutDate: checkOutAt,
+    scheduledCheckInAt: checkInAt,
+    scheduledCheckOutAt: checkOutAt,
+  }
 }

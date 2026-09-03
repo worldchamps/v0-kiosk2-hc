@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
-import { createSheetsClient } from "@/lib/google-sheets"
+import { createSheetsClient, SHEET_COLUMNS } from "@/lib/google-sheets"
 import { addToPMSQueue, claimPayment, releasePaymentClaim } from "@/lib/firebase-admin"
 import { sendAligoSMS, formatBookingMessage } from "@/lib/aligo-sms"
 import { getRoomInfoByMatchingNumber, updateRoomStatusInFirebase } from "@/lib/firebase-beach-rooms"
@@ -9,6 +9,7 @@ import { isShortStayAvailable, isShortStayRestrictedProperty } from "@/lib/short
 import { getPmsRateAmount } from "@/lib/pms-rates"
 import { verifyCompletedCardPayment } from "@/lib/toss-pay"
 import { verifyTossFrontPaymentProof } from "@/lib/toss-front"
+import { buildOnSiteSheetDateTimes } from "@/lib/date-utils"
 
 export async function POST(request: NextRequest) {
   let claimedPayment: { provider: "toss_pay" | "toss_front"; id: string } | null = null
@@ -164,8 +165,11 @@ export async function POST(request: NextRequest) {
       roomCodeToUse: roomCode,
     })
 
-    // Prepare reservation data
-    const reservationData = [
+    const stayDateTimes = buildOnSiteSheetDateTimes(checkInDate, checkOutDate, stayType)
+
+    // Keep H/I and the legacy schedule columns in the same sheet datetime format.
+    const reservationData = new Array(SHEET_COLUMNS.SCHEDULED_CHECK_OUT_AT + 1).fill("")
+    const coreReservationData = [
       "경주 더 비치스테이", // Place
       guestName, // Guest Name
       reservationId, // Reservation ID
@@ -173,15 +177,17 @@ export async function POST(request: NextRequest) {
       roomType, // Room Type
       price, // Price
       phoneNumber, // Phone Number
-      checkInDate, // Check-in Date
-      checkOutDate, // Check-out Date
+      stayDateTimes.checkInDate, // Check-in Date
+      stayDateTimes.checkOutDate, // Check-out Date
       roomCode, // Use roomCode (matchingRoomNumber)
       password || roomInfo.password, // Use password from Firebase if not provided
       "Checked In", // Check-in Status - 현장예약은 즉시 체크인
-      new Date().toISOString(), // Check-in Time - 현재 시간
+      stayDateTimes.checkInDate, // Check-in Time - 현재 시간
       roomInfo.floor, // Floor from Firebase
     ]
-    reservationData[3] = "키오스크"
+    coreReservationData.forEach((value, index) => { reservationData[index] = value })
+    reservationData[SHEET_COLUMNS.SCHEDULED_CHECK_IN_AT] = stayDateTimes.scheduledCheckInAt
+    reservationData[SHEET_COLUMNS.SCHEDULED_CHECK_OUT_AT] = stayDateTimes.scheduledCheckOutAt
 
     console.log("[v0] Writing to Reservations sheet - Room Number (column J):", roomCode)
 
@@ -189,7 +195,7 @@ export async function POST(request: NextRequest) {
     // Append to Reservations sheet
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: "Reservations!A:N",
+      range: "Reservations!A:AA",
       valueInputOption: "USER_ENTERED",
       requestBody: {
         values: [reservationData],
@@ -258,8 +264,8 @@ export async function POST(request: NextRequest) {
         guestName,
         roomNumber,
         roomCode,
-        checkInDate,
-        checkOutDate,
+        checkInDate: stayDateTimes.checkInDate,
+        checkOutDate: stayDateTimes.checkOutDate,
         password: password || roomInfo.password,
         roomType,
         price,

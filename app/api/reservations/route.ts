@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "Reservations!A2:N",
+      range: "Reservations!A2:AA",
     })
 
     const rows = response.data.values
@@ -122,6 +122,8 @@ export async function GET(request: NextRequest) {
         checkInStatus: checkInStatus,
         checkInTime: row[SHEET_COLUMNS.CHECK_IN_TIME] || "",
         floor: row[SHEET_COLUMNS.FLOOR] || "",
+        scheduledCheckInAt: row[SHEET_COLUMNS.SCHEDULED_CHECK_IN_AT] || "",
+        scheduledCheckOutAt: row[SHEET_COLUMNS.SCHEDULED_CHECK_OUT_AT] || "",
         property: detectedProperty,
       })
     }
