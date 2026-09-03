@@ -1,6 +1,6 @@
 # AGAIN Kiosk 최신 통합 운영 가이드
 
-> 최종 확인일: 2026-09-03 · 배포 기준 브랜치: `codex/integrate-kiosk-hardware`
+> 최종 확인일: 2026-09-03 · 운영 브랜치: `main`
 
 이 문서는 AGAIN Kiosk의 현재 운영 구조, 새 PC 설치, 환경설정, 실행, 업데이트,
 프린터와 결제 장비 설정, 테스트 및 장애 대응을 한곳에 모은 기준 문서입니다.
@@ -94,7 +94,7 @@ PowerShell에서 `npm` 실행 정책 오류가 나면 항상 `npm.cmd`를 사용
 새 PC에서는 운영할 폴더에서 다음 브랜치를 clone합니다.
 
 ```powershell
-git clone --branch codex/integrate-kiosk-hardware https://github.com/worldchamps/v0-kiosk2-hc.git
+git clone --branch main https://github.com/worldchamps/v0-kiosk2-hc.git
 cd v0-kiosk2-hc
 ```
 
@@ -105,7 +105,7 @@ git branch --show-current
 git status --short
 ```
 
-브랜치는 `codex/integrate-kiosk-hardware`여야 합니다. 키오스크 PC에서 수정 파일이 보이면
+브랜치는 `main`이어야 합니다. 키오스크 PC에서 수정 파일이 보이면
 임의로 reset하거나 덮어쓰지 말고 먼저 변경 내용을 확인합니다.
 
 ### 5.3 의존성 설치와 최초 빌드
@@ -287,7 +287,7 @@ Electron 창과 Next.js 명령창을 정상 종료합니다. 전용 키오스크
 2. 작업 전 기존 변경을 확인합니다.
 3. 한 기능만 수정하고 관련 테스트와 운영 빌드를 실행합니다.
 4. 해당 파일만 스테이징하여 한 커밋으로 만듭니다.
-5. `origin/codex/integrate-kiosk-hardware`에 push합니다.
+5. `origin/main`에 push합니다.
 
 ### 키오스크 PC
 
@@ -301,7 +301,7 @@ git status --short
 브랜치가 맞고 추적 파일 변경이 없을 때만 진행합니다.
 
 ```powershell
-git pull --ff-only origin codex/integrate-kiosk-hardware
+git pull --ff-only origin main
 npm.cmd install
 npm.cmd run build
 .\run_kiosk_auto.bat

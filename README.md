@@ -15,7 +15,7 @@ property4 SAM4S는 Windows 프린터 드라이버로 출력합니다.
 ## 현재 배포 기준
 
 - 저장소: `worldchamps/v0-kiosk2-hc`
-- 브랜치: `codex/integrate-kiosk-hardware`
+- 운영 브랜치: `main`
 - 개발 PC 기준 폴더: `C:\AGAIN_kiosk\v0-kiosk2-hc`
 - 키오스크별 로컬 설정: `.env.local`
 
@@ -36,7 +36,7 @@ property4 SAM4S는 Windows 프린터 드라이버로 출력합니다.
 Git pull 후에는 기존 빌드가 남아 있어도 다시 빌드합니다.
 
 ```powershell
-git pull --ff-only origin codex/integrate-kiosk-hardware
+git pull --ff-only origin main
 npm.cmd run build
 .\run_kiosk_auto.bat
 ```

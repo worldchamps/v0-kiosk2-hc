@@ -3,7 +3,7 @@
 ## 운영 구조
 
 - 저장소: `worldchamps/v0-kiosk2-hc`
-- 현재 배포 기준 브랜치: `codex/integrate-kiosk-hardware`
+- 운영 브랜치: `main`
 - 개발 작업 폴더: `C:\AGAIN_kiosk\v0-kiosk2-hc`
 - 배포는 개발 PC에서 GitHub의 배포 기준 브랜치로 push한 뒤, 각 키오스크 PC의 기존 clone에서 `git pull --ff-only`로 반영한다.
 - 이 저장소에는 Vercel 배포 절차를 적용하지 않는다.
@@ -20,21 +20,21 @@
 
 모든 구현 작업 전에 다음을 확인한다.
 
-1. `git fetch origin codex/integrate-kiosk-hardware`
+1. `git fetch origin main`
 2. 현재 작업 폴더의 절대경로
 3. 현재 브랜치
-4. `HEAD`와 `origin/codex/integrate-kiosk-hardware`
+4. `HEAD`, 로컬 `main`, `origin/main`
 5. 변경 파일
 6. 전체 worktree 목록
 
-- fetch 후의 `origin/codex/integrate-kiosk-hardware`를 작업 기준 커밋으로 기록한다.
+- fetch 후의 `origin/main`을 작업 기준 커밋으로 기록한다.
 - 로컬 브랜치가 뒤에 있고 작업 폴더가 깨끗하면 fast-forward 방식으로만 갱신한다.
 - 로컬 브랜치가 앞서 있거나 분기됐으면 자동으로 reset, rebase, force-push하지 말고 상태를 보고한다.
 - 기존 미커밋 파일은 사용자 작업으로 간주해 보존한다. 요청 범위와 안전하게 분리할 수 있을 때만 진행하고, 해당 파일을 수정·스테이징·커밋하지 않는다.
 
 ## 구현 규칙
 
-- 새 변경은 최신 원격 배포 기준 브랜치 위에서 구현한다.
+- 새 변경은 최신 `origin/main` 위에서 구현한다.
 - 한 요구사항은 한 커밋으로 만들고 서로 다른 기능을 섞지 않는다.
 - 이전 커밋이나 다른 브랜치의 파일을 현재 파일 전체에 덮어쓰지 않는다.
 - 사용자 요청과 무관한 파일, 빌드 결과물, 임시 폴더, ZIP 파일을 수정하거나 커밋하지 않는다.
@@ -53,7 +53,7 @@
 2. 코드 변경이면 `npm.cmd run build`를 실행한다. 문서만 변경한 경우에는 생략할 수 있다.
 3. diff와 Git 상태를 확인하고 요청 범위 파일만 명시적으로 스테이징한다.
 4. 요구사항 하나에 해당하는 커밋 하나를 만든다.
-5. `origin/codex/integrate-kiosk-hardware`에 push한다.
+5. `origin/main`에 push한다.
 6. 최종 보고에 커밋 번호, push한 브랜치, 실행한 검증, 건드리지 않은 기존 변경을 포함한다.
 
 검증에 실패하면 자동으로 reset하거나 기존 기능을 되돌리지 말고 원인을 보고한다.
@@ -63,7 +63,7 @@
 - 사용자가 명시적으로 요청하거나 지정한 키오스크 PC에서만 pull, 재시작, 하드웨어 테스트를 수행한다.
 - 각 키오스크의 저장소 경로를 추측하지 말고 실제 clone의 절대경로를 먼저 확인한다.
 - pull 전에 현재 브랜치, `HEAD`, 변경 파일을 확인한다. 변경 파일이 있거나 브랜치가 다르면 pull하지 말고 보고한다.
-- 상태가 깨끗하고 브랜치가 맞을 때만 `git pull --ff-only origin codex/integrate-kiosk-hardware`를 실행한다.
+- 상태가 깨끗하고 `main` 브랜치일 때만 `git pull --ff-only origin main`을 실행한다.
 - 소스 실행형 키오스크는 의존성이 바뀐 경우에만 `npm.cmd install`을 실행하고, 이후 기존 프로세스를 정상 종료한 뒤 `npm.cmd run kiosk:prod`로 재시작한다.
 - 인쇄 변경은 빌드 성공만으로 완료 처리하지 않는다. 해당 키오스크에서 실제 객실 영수증의 한글, 글자 크기, 정렬, 용지 공급, 절단을 물리적으로 확인한다.
 - 실제 고객 데이터가 바뀌는 검사는 승인된 안전한 테스트 예약이 있을 때만 수행한다.
