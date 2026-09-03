@@ -1,235 +1,57 @@
-# Kiosk2
+# AGAIN Kiosk
 
-*Automatically synced with your [v0.dev](https://v0.dev) deployments*
+숙소별 예약 조회, 체크인, 현장예약, 결제, 영수증 인쇄와 PMS 연동을 처리하는
+Windows Electron 키오스크입니다.
 
-[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/worldclasskiosks-projects/v0-kiosk2)
-[![Built with v0](https://img.shields.io/badge/Built%20with-v0.dev-black?style=for-the-badge)](https://v0.dev/chat/projects/9LbpiNXZJ3s)
+## 최신 기준 문서
 
-## Overview
+설치, 환경변수, 실행, GitHub 업데이트, property별 장비 구성, SAM4S/Bixolon 프린터,
+Toss Front 및 장애 대응은 [최신 통합 운영 가이드](docs/KIOSK_OPERATIONS_GUIDE.md)를 따릅니다.
 
-This repository will stay in sync with your deployed chats on [v0.dev](https://v0.dev).
-Any changes you make to your deployed app will be automatically pushed to this repository from [v0.dev](https://v0.dev).
+기존 문서에 Vercel 자동 배포 또는 property4 Web Serial 방식이 적혀 있더라도 현재 운영에는
+적용하지 않습니다. 현재 배포는 GitHub push 후 각 키오스크 PC에서 pull하는 방식이며,
+property4 SAM4S는 Windows 프린터 드라이버로 출력합니다.
 
-## Deployment
+## 현재 배포 기준
 
-Your project is live at:
+- 저장소: `worldchamps/v0-kiosk2-hc`
+- 브랜치: `codex/integrate-kiosk-hardware`
+- 개발 PC 기준 폴더: `C:\AGAIN_kiosk\v0-kiosk2-hc`
+- 키오스크별 로컬 설정: `.env.local`
 
-**[https://vercel.com/worldclasskiosks-projects/v0-kiosk2](https://vercel.com/worldclasskiosks-projects/v0-kiosk2)**
+## 빠른 실행
 
-## Build your app
+최초 설치와 빌드:
 
-Continue building your app on:
+```powershell
+.\build_all.bat
+```
 
-**[https://v0.dev/chat/projects/9LbpiNXZJ3s](https://v0.dev/chat/projects/9LbpiNXZJ3s)**
+일반 실행:
 
-## How It Works
+```powershell
+.\run_kiosk_auto.bat
+```
 
-1. Create and modify your project using [v0.dev](https://v0.dev)
-2. Deploy your chats from the v0 interface
-3. Changes are automatically pushed to this repository
-4. Vercel deploys the latest version from this repository
+Git pull 후에는 기존 빌드가 남아 있어도 다시 빌드합니다.
 
----
+```powershell
+git pull --ff-only origin codex/integrate-kiosk-hardware
+npm.cmd run build
+.\run_kiosk_auto.bat
+```
 
-## Features
+키오스크 PC에 추적 파일 변경이 있으면 pull 전에 원인을 확인하고 자동 reset하지 않습니다.
 
-### Multi-Property Support
+## 주요 문서
 
-- ✅ **Property1 (C동, D동)** - Electron overlay mode
-- ✅ **Property2 (Kariv)** - Electron overlay mode
-- ✅ **Property3 (A동, B동)** - Web browser (Chrome/Edge) with subdomain
-- ✅ **Property4 (Camp)** - Web browser (Chrome/Edge) with subdomain
+- [최신 통합 운영 가이드](docs/KIOSK_OPERATIONS_GUIDE.md)
+- [Codex 작업 규칙](AGENTS.md)
+- [Toss Front 플러그인 설명](toss-front-plugin/README.md)
 
-### Property3 & Property4 - Subdomain Access
+그 밖의 `docs` 문서는 과거 구성 또는 기능별 참고 자료입니다. 내용이 충돌하면 최신 통합
+운영 가이드를 우선합니다.
 
-Property3 and Property4 run as pure web apps (no Electron) and use subdomains for automatic property detection:
-
-**Property 3 Access:**
-- `property3.yourdomain.com`
-- `a3.yourdomain.com`
-- `ab.yourdomain.com`
-
-**Property 4 Access:**
-- `property4.yourdomain.com`
-- `camp.yourdomain.com`
-
-No environment variables needed - property is automatically detected from subdomain!
-
-### Overlay Button System (Property1 & Property2)
-
-- 🔘 Always-on-top button over existing EXE kiosk program
-- 🪟 Popup window for reservation check-in
-- 🔄 Automatic focus restoration to PMS program after check-in
-- ⚡ Seamless integration with legacy systems
-
-### PMS Integration
-
-- ✅ Real-time check-in notifications via Firebase
-- ✅ Automatic PMS room status updates via AutoHotkey
-- ✅ No API rate limits
-- ✅ Free Firebase tier sufficient for small properties
-- ✅ **Remote printing from external web apps**
-
-### Hardware Integration
-
-- 🖨️ **Web Serial Port printer support (Property3, 4)** - Direct browser connection
-- 💵 Bill acceptor integration
-- 💸 Bill dispenser support
-- 🔌 Serial port communication
-
----
-
-## Quick Setup
-
-### Property1 & Property2 (Electron)
-
-#### 1. Environment Variables
-
-Copy `.env.local.template` to `.env.local` and configure:
-
-\`\`\`env
-# Property Configuration
-NEXT_PUBLIC_KIOSK_PROPERTY_ID=property1  # or property2
-OVERLAY_MODE=true
-PMS_WINDOW_TITLE=Property1 PMS
-
-# Firebase & Google Sheets
-FIREBASE_PROJECT_ID=your-project-id
-GOOGLE_SHEETS_SPREADSHEET_ID=your-sheet-id
-# ... see .env.local.template for full list
-\`\`\`
-
-#### 2. Development Mode
-
-\`\`\`bash
-npm install
-npm run electron:dev
-\`\`\`
-
-#### 3. Production Build
-
-\`\`\`bash
-npm run electron:build
-\`\`\`
-
-Output: `dist/TheBeachStay Kiosk Setup 1.0.0.exe`
-
-### Property3 & Property4 (Web Browser)
-
-#### 1. Subdomain Setup
-
-Configure DNS CNAME records:
-
-| Type | Name | Value |
-|------|------|-------|
-| CNAME | property3 | cname.vercel-dns.com |
-| CNAME | camp | cname.vercel-dns.com |
-
-#### 2. Access via Browser
-
-\`\`\`
-https://property3.yourdomain.com
-https://camp.yourdomain.com
-\`\`\`
-
-#### 3. Kiosk Mode (Recommended)
-
-\`\`\`bash
-chrome.exe --kiosk --app=https://property3.yourdomain.com
-\`\`\`
-
-**No environment variables needed!** Property is auto-detected from subdomain.
-
----
-
-## Documentation
-
-- 📘 [Overlay Button System](docs/OVERLAY_BUTTON_SYSTEM.md) - Property1/2 overlay mode
-- 🏨 [Property Configuration](docs/PROPERTY_CONFIGURATION.md) - Multi-property setup
-- 🌐 [Subdomain Setup](docs/SUBDOMAIN_SETUP.md) - Property3/4 subdomain configuration
-- 🖨️ [Web Serial Setup](docs/WEB_SERIAL_SETUP.md) - Property3/4 printer setup
-- 🚀 [Deployment Guide](docs/DEPLOYMENT_GUIDE.md) - Production deployment
-- 🔧 [Electron Setup](ELECTRON_SETUP.md) - Hardware integration
-- 🌐 [Environment Setup](ENV_SETUP_GUIDE.md) - Environment variables
-- 🔥 [Firebase Setup](docs/FIREBASE_SETUP.md) - Firebase configuration
-- 🖨️ [Remote Printing](docs/REMOTE_PRINTING.md) - Print API documentation
-
----
-
-## Architecture
-
-### Property1 & Property2 (Electron Overlay Mode)
-
-\`\`\`
-┌─────────────────────────────────┐
-│  Existing EXE Kiosk Program     │
-│  ┌──────────────────┐           │
-│  │ Overlay Button   │ ← Electron│
-│  └──────────────────┘           │
-└─────────────────────────────────┘
-         ↓ Click
-┌─────────────────────────────────┐
-│  Popup Window (Web Kiosk)       │
-│  - Reservation Check            │
-│  - Check-in Process             │
-└─────────────────────────────────┘
-         ↓ Complete
-┌─────────────────────────────────┐
-│  Focus restored to EXE Program  │
-└─────────────────────────────────┘
-\`\`\`
-
-### Property3 & Property4 (Web Browser Fullscreen)
-
-\`\`\`
-┌─────────────────────────────────┐
-│  Chrome/Edge Browser            │
-│  https://property3.yourdomain.com│
-│  ┌───────────────────────────┐  │
-│  │  Fullscreen Kiosk App     │  │
-│  │  - Idle Screen            │  │
-│  │  - Standby Screen         │  │
-│  │  - Reservation Flow       │  │
-│  │  - Check-in Complete      │  │
-│  │  - Web Serial Printer     │  │
-│  └───────────────────────────┘  │
-└─────────────────────────────────┘
-\`\`\`
-
----
-
-## Remote Printing API
-
-Send print jobs to kiosk printers from any external web application.
-
-### Quick Example
-
-\`\`\`bash
-curl -X POST https://your-kiosk-app.vercel.app/api/remote-print \
-  -H "x-api-key: YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"roomNumber":"A101","password":"1234"}'
-\`\`\`
-
-### Features
-
-- 🖨️ Print room number and password remotely
-- 🔒 Secure API key authentication
-- 🔥 Real-time Firebase synchronization
-- 🏨 Automatic property routing
-- 🚫 No guest names printed (privacy protection)
-
----
-
-## Support
-
-For issues or questions:
-1. Check documentation in `/docs` folder
-2. Review troubleshooting sections
-3. Contact development team
-
----
-
-## License
+## 라이선스
 
 Private - All rights reserved
