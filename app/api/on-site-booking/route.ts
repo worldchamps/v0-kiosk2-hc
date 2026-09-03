@@ -166,10 +166,10 @@ export async function POST(request: NextRequest) {
 
     // Prepare reservation data
     const reservationData = [
-      "더 비치스테이", // Place
+      "경주 더 비치스테이", // Place
       guestName, // Guest Name
       reservationId, // Reservation ID
-      "현장예약", // Booking Platform
+      "키오스크", // Booking Platform
       roomType, // Room Type
       price, // Price
       phoneNumber, // Phone Number
@@ -181,7 +181,7 @@ export async function POST(request: NextRequest) {
       new Date().toISOString(), // Check-in Time - 현재 시간
       roomInfo.floor, // Floor from Firebase
     ]
-    reservationData[3] = normalizedStayTypeLabel ? `현장예약-${normalizedStayTypeLabel}` : "현장예약"
+    reservationData[3] = "키오스크"
 
     console.log("[v0] Writing to Reservations sheet - Room Number (column J):", roomCode)
 
