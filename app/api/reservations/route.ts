@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { createSheetsClient, SHEET_COLUMNS } from "@/lib/google-sheets"
-import { getCurrentDateKST, normalizeDate } from "@/lib/date-utils"
+import { getCurrentDateKST, normalizeDate, resolveReservationSheetDateTime } from "@/lib/date-utils"
 import { getPropertyFromReservation } from "@/lib/property-utils"
 
 export async function GET(request: NextRequest) {
@@ -59,8 +59,18 @@ export async function GET(request: NextRequest) {
         continue
       }
 
-      const checkInDate = row[SHEET_COLUMNS.CHECK_IN_DATE] ? normalizeDate(row[SHEET_COLUMNS.CHECK_IN_DATE]) : ""
-      const checkOutDate = row[SHEET_COLUMNS.CHECK_OUT_DATE] ? normalizeDate(row[SHEET_COLUMNS.CHECK_OUT_DATE]) : ""
+      const scheduledCheckInAt = resolveReservationSheetDateTime(
+        row[SHEET_COLUMNS.CHECK_IN_DATE],
+        row[SHEET_COLUMNS.SCHEDULED_CHECK_IN_AT],
+        "15:00",
+      )
+      const scheduledCheckOutAt = resolveReservationSheetDateTime(
+        row[SHEET_COLUMNS.CHECK_OUT_DATE],
+        row[SHEET_COLUMNS.SCHEDULED_CHECK_OUT_AT],
+        "11:00",
+      )
+      const checkInDate = normalizeDate(scheduledCheckInAt)
+      const checkOutDate = normalizeDate(scheduledCheckOutAt)
 
       // Filter 3: if todayOnly, skip if check-in date is before today
       if (todayOnly && checkInDate < today) {
@@ -122,8 +132,8 @@ export async function GET(request: NextRequest) {
         checkInStatus: checkInStatus,
         checkInTime: row[SHEET_COLUMNS.CHECK_IN_TIME] || "",
         floor: row[SHEET_COLUMNS.FLOOR] || "",
-        scheduledCheckInAt: row[SHEET_COLUMNS.SCHEDULED_CHECK_IN_AT] || "",
-        scheduledCheckOutAt: row[SHEET_COLUMNS.SCHEDULED_CHECK_OUT_AT] || "",
+        scheduledCheckInAt,
+        scheduledCheckOutAt,
         property: detectedProperty,
       })
     }

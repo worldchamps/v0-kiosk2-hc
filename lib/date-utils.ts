@@ -126,6 +126,23 @@ const buildScheduledAt = (date: string, time: string) => {
   return match ? `${match[1].slice(-2)}.${match[2]}.${match[3]}/${time}` : ""
 }
 
+export const resolveReservationSheetDateTime = (
+  dateValue: string | undefined,
+  scheduledValue: string | undefined,
+  fallbackTime: string,
+) => {
+  const primaryDate = normalizeDate(String(dateValue || ""))
+  if (/^\d{4}-\d{2}-\d{2}$/.test(primaryDate)) {
+    const timeSource = /\d{1,2}:\d{2}/.test(String(dateValue || "")) ? String(dateValue) : String(scheduledValue || "")
+    return buildScheduledAt(primaryDate, getTime(timeSource, fallbackTime))
+  }
+
+  const legacyDate = normalizeDate(String(scheduledValue || ""))
+  return /^\d{4}-\d{2}-\d{2}$/.test(legacyDate)
+    ? buildScheduledAt(legacyDate, getTime(String(scheduledValue), fallbackTime))
+    : ""
+}
+
 export const formatCurrentSheetDateTime = (now = new Date()) => {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en", {
     timeZone: "Asia/Seoul",
