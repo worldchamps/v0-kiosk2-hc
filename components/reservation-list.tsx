@@ -7,6 +7,7 @@ import { playAudio } from "@/lib/audio-utils"
 import { useEffect } from "react"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { getKioskPropertyId, propertyUsesElectron } from "@/lib/property-utils"
+import { formatDateTimeKorean } from "@/lib/date-utils"
 
 interface Reservation {
   place: string
@@ -18,6 +19,8 @@ interface Reservation {
   phoneNumber: string
   checkInDate: string
   checkOutDate: string
+  checkInDateTime?: string
+  checkOutDateTime?: string
   roomNumber: string
   password: string
   checkInStatus: string
@@ -106,11 +109,11 @@ export default function ReservationList({
                   </div>
                   <div className="space-y-2">
                     <div className="text-xl font-semibold text-gray-700">체크인</div>
-                    <div className="text-2xl">{reservation.checkInDate}</div>
+                    <div className="text-2xl">{formatDateTimeKorean(reservation.checkInDateTime || reservation.checkInDate)}</div>
                   </div>
                   <div className="space-y-2">
                     <div className="text-xl font-semibold text-gray-700">체크아웃</div>
-                    <div className="text-2xl">{reservation.checkOutDate}</div>
+                    <div className="text-2xl">{formatDateTimeKorean(reservation.checkOutDateTime || reservation.checkOutDate)}</div>
                   </div>
                   <div className="space-y-2">
                     <div className="text-xl font-semibold text-gray-700">예약 플랫폼</div>

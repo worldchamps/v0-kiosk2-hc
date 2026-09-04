@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import Image from "next/image"
 import { Loader2, Eye, EyeOff } from "lucide-react"
-import { formatDateKorean } from "@/lib/date-utils"
+import { formatDateTimeKorean } from "@/lib/date-utils"
 import { getRoomImagePath, checkImageExists } from "@/lib/room-utils"
 import { playAudio } from "@/lib/audio-utils"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
@@ -23,6 +23,8 @@ interface Reservation {
   phoneNumber?: string
   checkInDate: string
   checkOutDate: string
+  checkInDateTime?: string
+  checkOutDateTime?: string
   roomNumber: string
   password: string
 }
@@ -247,7 +249,7 @@ export default function ReservationDetails({
                           isPopupMode ? "text-xl" : "text-[30px]"
                         }`}
                       >
-                        {formatDateKorean(reservation.checkInDate)}
+                        {formatDateTimeKorean(reservation.checkInDateTime || reservation.checkInDate)}
                       </p>
                     </div>
 
@@ -260,7 +262,7 @@ export default function ReservationDetails({
                           isPopupMode ? "text-xl" : "text-[30px]"
                         }`}
                       >
-                        {formatDateKorean(reservation.checkOutDate)}
+                        {formatDateTimeKorean(reservation.checkOutDateTime || reservation.checkOutDate)}
                       </p>
                     </div>
 

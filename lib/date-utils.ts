@@ -143,6 +143,12 @@ export const resolveReservationSheetDateTime = (
     : ""
 }
 
+export const formatDateTimeKorean = (value: string) => {
+  const date = formatDateKorean(value)
+  const time = getTime(value, "")
+  return `${date}${time ? ` ${time}` : ""}`
+}
+
 export const formatCurrentSheetDateTime = (now = new Date()) => {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en", {
     timeZone: "Asia/Seoul",

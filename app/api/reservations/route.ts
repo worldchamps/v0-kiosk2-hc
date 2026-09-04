@@ -59,18 +59,18 @@ export async function GET(request: NextRequest) {
         continue
       }
 
-      const scheduledCheckInAt = resolveReservationSheetDateTime(
+      const checkInDateTime = resolveReservationSheetDateTime(
         row[SHEET_COLUMNS.CHECK_IN_DATE],
         row[SHEET_COLUMNS.SCHEDULED_CHECK_IN_AT],
         "15:00",
       )
-      const scheduledCheckOutAt = resolveReservationSheetDateTime(
+      const checkOutDateTime = resolveReservationSheetDateTime(
         row[SHEET_COLUMNS.CHECK_OUT_DATE],
         row[SHEET_COLUMNS.SCHEDULED_CHECK_OUT_AT],
         "11:00",
       )
-      const checkInDate = normalizeDate(scheduledCheckInAt)
-      const checkOutDate = normalizeDate(scheduledCheckOutAt)
+      const checkInDate = normalizeDate(checkInDateTime)
+      const checkOutDate = normalizeDate(checkOutDateTime)
 
       // Filter 3: if todayOnly, skip if check-in date is before today
       if (todayOnly && checkInDate < today) {
@@ -127,13 +127,15 @@ export async function GET(request: NextRequest) {
         phoneNumber: row[SHEET_COLUMNS.PHONE_NUMBER] || "",
         checkInDate: checkInDate,
         checkOutDate: checkOutDate,
+        checkInDateTime,
+        checkOutDateTime,
         roomNumber: roomNumber,
         password: row[SHEET_COLUMNS.PASSWORD] || "",
         checkInStatus: checkInStatus,
         checkInTime: row[SHEET_COLUMNS.CHECK_IN_TIME] || "",
         floor: row[SHEET_COLUMNS.FLOOR] || "",
-        scheduledCheckInAt,
-        scheduledCheckOutAt,
+        scheduledCheckInAt: checkInDateTime,
+        scheduledCheckOutAt: checkOutDateTime,
         property: detectedProperty,
       })
     }
