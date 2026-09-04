@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "Reservations!A2:AA",
+      range: "Reservations!A2:N",
     })
 
     const rows = response.data.values
@@ -61,12 +61,10 @@ export async function GET(request: NextRequest) {
 
       const checkInDateTime = resolveReservationSheetDateTime(
         row[SHEET_COLUMNS.CHECK_IN_DATE],
-        row[SHEET_COLUMNS.SCHEDULED_CHECK_IN_AT],
         "15:00",
       )
       const checkOutDateTime = resolveReservationSheetDateTime(
         row[SHEET_COLUMNS.CHECK_OUT_DATE],
-        row[SHEET_COLUMNS.SCHEDULED_CHECK_OUT_AT],
         "11:00",
       )
       const checkInDate = normalizeDate(checkInDateTime)
@@ -134,8 +132,6 @@ export async function GET(request: NextRequest) {
         checkInStatus: checkInStatus,
         checkInTime: row[SHEET_COLUMNS.CHECK_IN_TIME] || "",
         floor: row[SHEET_COLUMNS.FLOOR] || "",
-        scheduledCheckInAt: checkInDateTime,
-        scheduledCheckOutAt: checkOutDateTime,
         property: detectedProperty,
       })
     }

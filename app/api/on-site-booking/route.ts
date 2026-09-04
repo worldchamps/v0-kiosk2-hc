@@ -167,9 +167,7 @@ export async function POST(request: NextRequest) {
 
     const stayDateTimes = buildOnSiteSheetDateTimes(checkInDate, checkOutDate, stayType)
 
-    // Keep H/I and the legacy schedule columns in the same sheet datetime format.
-    const reservationData = new Array(SHEET_COLUMNS.SCHEDULED_CHECK_OUT_AT + 1).fill("")
-    const coreReservationData = [
+    const reservationData = [
       "경주 더 비치스테이", // Place
       guestName, // Guest Name
       reservationId, // Reservation ID
@@ -185,17 +183,13 @@ export async function POST(request: NextRequest) {
       stayDateTimes.checkInDate, // Check-in Time - 현재 시간
       roomInfo.floor, // Floor from Firebase
     ]
-    coreReservationData.forEach((value, index) => { reservationData[index] = value })
-    reservationData[SHEET_COLUMNS.SCHEDULED_CHECK_IN_AT] = stayDateTimes.scheduledCheckInAt
-    reservationData[SHEET_COLUMNS.SCHEDULED_CHECK_OUT_AT] = stayDateTimes.scheduledCheckOutAt
-
     console.log("[v0] Writing to Reservations sheet - Room Number (column J):", roomCode)
 
     console.log("[v0] Adding reservation to Google Sheets...")
     // Append to Reservations sheet
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: "Reservations!A:AA",
+      range: "Reservations!A:N",
       valueInputOption: "USER_ENTERED",
       requestBody: {
         values: [reservationData],

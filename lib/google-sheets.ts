@@ -19,8 +19,6 @@ export const SHEET_COLUMNS = {
   CHECK_IN_STATUS: 11,
   CHECK_IN_TIME: 12,
   FLOOR: 13, // 14번째 열에 층수 정보 추가
-  SCHEDULED_CHECK_IN_AT: 25, // Z열
-  SCHEDULED_CHECK_OUT_AT: 26, // AA열
 }
 
 /**

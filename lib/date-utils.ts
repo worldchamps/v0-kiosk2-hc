@@ -128,18 +128,11 @@ const buildScheduledAt = (date: string, time: string) => {
 
 export const resolveReservationSheetDateTime = (
   dateValue: string | undefined,
-  scheduledValue: string | undefined,
   fallbackTime: string,
 ) => {
-  const primaryDate = normalizeDate(String(dateValue || ""))
-  if (/^\d{4}-\d{2}-\d{2}$/.test(primaryDate)) {
-    const timeSource = /\d{1,2}:\d{2}/.test(String(dateValue || "")) ? String(dateValue) : String(scheduledValue || "")
-    return buildScheduledAt(primaryDate, getTime(timeSource, fallbackTime))
-  }
-
-  const legacyDate = normalizeDate(String(scheduledValue || ""))
-  return /^\d{4}-\d{2}-\d{2}$/.test(legacyDate)
-    ? buildScheduledAt(legacyDate, getTime(String(scheduledValue), fallbackTime))
+  const date = normalizeDate(String(dateValue || ""))
+  return /^\d{4}-\d{2}-\d{2}$/.test(date)
+    ? buildScheduledAt(date, getTime(String(dateValue || ""), fallbackTime))
     : ""
 }
 
@@ -180,7 +173,5 @@ export const buildOnSiteSheetDateTimes = (
   return {
     checkInDate: checkInAt,
     checkOutDate: checkOutAt,
-    scheduledCheckInAt: checkInAt,
-    scheduledCheckOutAt: checkOutAt,
   }
 }

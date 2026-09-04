@@ -7,10 +7,10 @@ test("normalizes Google Sheets date-time values", () => {
   assert.equal(normalizeDate("26.09.05/11:00"), "2026-09-05")
 })
 
-test("reservation reads prefer date-column times and fall back to legacy schedule columns", () => {
-  assert.equal(resolveReservationSheetDateTime("26.09.05/12:10", "26.09.05/15:00", "15:00"), "26.09.05/12:10")
-  assert.equal(resolveReservationSheetDateTime("2026-09-05", "26.09.05/16:20", "15:00"), "26.09.05/16:20")
-  assert.equal(resolveReservationSheetDateTime("", "26.09.05/16:20", "15:00"), "26.09.05/16:20")
+test("reservation reads use the date columns", () => {
+  assert.equal(resolveReservationSheetDateTime("26.09.05/12:10", "15:00"), "26.09.05/12:10")
+  assert.equal(resolveReservationSheetDateTime("2026-09-05", "15:00"), "26.09.05/15:00")
+  assert.equal(resolveReservationSheetDateTime("", "15:00"), "")
 })
 
 test("formats reservation date-column values with their recorded time", () => {
@@ -24,8 +24,6 @@ test("uses the current check-in time and a three-hour short-stay checkout", () =
     {
       checkInDate: "26.09.05/11:00",
       checkOutDate: "26.09.05/14:00",
-      scheduledCheckInAt: "26.09.05/11:00",
-      scheduledCheckOutAt: "26.09.05/14:00",
     },
   )
 
@@ -34,8 +32,6 @@ test("uses the current check-in time and a three-hour short-stay checkout", () =
     {
       checkInDate: "26.09.05/11:00",
       checkOutDate: "26.09.06/11:00",
-      scheduledCheckInAt: "26.09.05/11:00",
-      scheduledCheckOutAt: "26.09.06/11:00",
     },
   )
 })
