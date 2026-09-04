@@ -160,14 +160,16 @@ export const buildOnSiteSheetDateTimes = (
   checkOutDate: string,
   stayType: "overnight" | "shortStay",
   now = new Date(),
+  options: { shortStayDurationMinutes?: number; overnightCheckoutTime?: string } = {},
 ) => {
   const currentTime = getTime(formatCurrentSheetDateTime(now), "00:00")
   const checkInAt = buildScheduledAt(checkInDate, currentTime)
-  let checkOutAt = buildScheduledAt(checkOutDate, "11:00")
+  let checkOutAt = buildScheduledAt(checkOutDate, options.overnightCheckoutTime || "11:00")
 
   if (stayType === "shortStay") {
     const start = new Date(`${normalizeDate(checkInDate)}T${currentTime}:00+09:00`)
-    checkOutAt = formatCurrentSheetDateTime(new Date(start.getTime() + 3 * 60 * 60 * 1000))
+    const durationMinutes = options.shortStayDurationMinutes || 180
+    checkOutAt = formatCurrentSheetDateTime(new Date(start.getTime() + durationMinutes * 60 * 1000))
   }
 
   return {

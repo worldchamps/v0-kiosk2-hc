@@ -11,6 +11,9 @@ export interface BeachRoomData {
   status: string // Status (공실, 사용 중)
   floor: string // Floor number
   matchingRoomNumber: string // Room number for reservation sheet (G열)
+  unavailable?: string
+  unavailableReason?: string
+  vendingAvailable?: string | boolean
   rowIndex?: number // Original sheet row index
 }
 
@@ -122,7 +125,14 @@ export async function getAvailableRooms(location?: string): Promise<BeachRoomDat
   try {
     const allRooms = await getBeachRoomStatusFromFirebase()
 
-    let filteredRooms = allRooms.filter((room) => room.status === "공실")
+    let filteredRooms = allRooms.filter((room) => {
+      const vending = typeof room.vendingAvailable === "string"
+        ? room.vendingAvailable.trim().toUpperCase()
+        : room.vendingAvailable
+      return room.status === "공실"
+        && String(room.unavailable || "").trim().toUpperCase() !== "X"
+        && ![false, "X", "N", "FALSE", "0"].includes(vending as any)
+    })
 
     // Location 필터링
     // Location 필터링

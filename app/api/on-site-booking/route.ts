@@ -10,6 +10,11 @@ import { getPmsRateAmount } from "@/lib/pms-rates"
 import { verifyCompletedCardPayment } from "@/lib/toss-pay"
 import { verifyTossFrontPaymentProof } from "@/lib/toss-front"
 import { buildOnSiteSheetDateTimes } from "@/lib/date-utils"
+import {
+  findKioskRoomSalesConfig,
+  getKioskSalesConfig,
+  isKioskSalesWindowOpen,
+} from "@/lib/kiosk-sales-config"
 
 export async function POST(request: NextRequest) {
   let claimedPayment: { provider: "toss_pay" | "toss_front"; id: string } | null = null
@@ -32,7 +37,8 @@ export async function POST(request: NextRequest) {
       stayTypeLabel,
       payment,
     } = body
-    const rateStayType = stayType === "overnight" || stayType === "shortStay" ? stayType : undefined
+    const rateStayType: "overnight" | "shortStay" | undefined =
+      stayType === "overnight" || stayType === "shortStay" ? stayType : undefined
     const normalizedStayTypeLabel = stayType === "overnight" ? "숙박" : stayType === "shortStay" ? "대실" : ""
     const propertyId = getPropertyFromRoomNumber(roomCode || roomNumber || "")
 
@@ -40,17 +46,41 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "올바른 결제수단 정보가 필요합니다." }, { status: 400 })
     }
 
-    const price = rateStayType
-      ? await getPmsRateAmount({
-          roomCode: roomCode || roomNumber || "",
-          stayType: rateStayType,
-          paymentMethod: payment.method,
-        })
-      : null
+    const salesConfig = propertyId ? await getKioskSalesConfig(propertyId) : null
+    const configuredRoom = findKioskRoomSalesConfig(salesConfig, roomCode || roomNumber || "")
 
-    if (stayType === "shortStay" && isShortStayRestrictedProperty(propertyId) && !isShortStayAvailable()) {
+    if (salesConfig && rateStayType) {
+      const stayEnabled = rateStayType === "overnight"
+        ? configuredRoom?.overnightEnabled
+        : configuredRoom?.shortStayEnabled
+      if (
+        !configuredRoom?.enabled ||
+        !stayEnabled ||
+        !isKioskSalesWindowOpen(salesConfig.policy, rateStayType)
+      ) {
+        return NextResponse.json({ error: "현재 PMS 설정에서 판매 중지된 객실 또는 이용 유형입니다." }, { status: 403 })
+      }
+    } else if (
+      stayType === "shortStay" &&
+      isShortStayRestrictedProperty(propertyId) &&
+      !isShortStayAvailable()
+    ) {
       return NextResponse.json({ error: "대실 예약은 오후 9시 이전에만 가능합니다." }, { status: 403 })
     }
+
+    const configuredRates = rateStayType ? configuredRoom?.rates[rateStayType] : null
+    const configuredPrice = configuredRates
+      ? payment.method === "CARD" ? configuredRates.card : configuredRates.cash
+      : 0
+    const price = salesConfig
+      ? configuredPrice > 0 ? configuredPrice : null
+      : rateStayType
+        ? await getPmsRateAmount({
+            roomCode: roomCode || roomNumber || "",
+            stayType: rateStayType,
+            paymentMethod: payment.method,
+          })
+        : null
 
     console.log("[v0] On-site booking request:", { guestName, phoneNumber, roomNumber, roomCode, roomType })
     console.log("[v0] roomCode received from frontend:", roomCode)
@@ -108,7 +138,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "객실을 찾을 수 없습니다." }, { status: 404 })
     }
 
-    if (roomInfo.status !== "공실") {
+    const vending = typeof roomInfo.vendingAvailable === "string"
+      ? roomInfo.vendingAvailable.trim().toUpperCase()
+      : roomInfo.vendingAvailable
+    if (
+      roomInfo.status !== "공실" ||
+      String(roomInfo.unavailable || "").trim().toUpperCase() === "X" ||
+      [false, "X", "N", "FALSE", "0"].includes(vending as any)
+    ) {
       console.log("[v0] Room is no longer available:", roomCode, "Status:", roomInfo.status)
       return NextResponse.json(
         { error: "이 객실은 방금 예약이 완료되었습니다. 다른 객실을 선택해주세요." },
@@ -165,7 +202,10 @@ export async function POST(request: NextRequest) {
       roomCodeToUse: roomCode,
     })
 
-    const stayDateTimes = buildOnSiteSheetDateTimes(checkInDate, checkOutDate, stayType)
+    const stayDateTimes = buildOnSiteSheetDateTimes(checkInDate, checkOutDate, stayType, new Date(), {
+      shortStayDurationMinutes: salesConfig?.policy.shortStayDurationMinutes,
+      overnightCheckoutTime: salesConfig?.policy.overnightCheckoutTime,
+    })
 
     const reservationData = [
       "경주 더 비치스테이", // Place

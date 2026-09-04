@@ -2,6 +2,13 @@ import { NextResponse } from "next/server"
 import { getAvailableRooms } from "@/lib/firebase-beach-rooms"
 import { findPmsRateRoom, getPmsRateProperties } from "@/lib/pms-rates"
 import { getPropertyFromRoomNumber, type PropertyId } from "@/lib/property-utils"
+import {
+  defaultKioskSalesPolicy,
+  findKioskRoomSalesConfig,
+  getKioskSalesConfig,
+  hasPositiveRate,
+  isKioskSalesWindowOpen,
+} from "@/lib/kiosk-sales-config"
 
 export const dynamic = "force-dynamic"
 export const revalidate = 0
@@ -35,11 +42,21 @@ export async function GET(request: Request) {
           .filter((property): property is PropertyId => Boolean(property)),
       ),
     ]
-    const pmsProperties = properties.length > 0 ? await getPmsRateProperties(properties) : []
+    const [pmsProperties, configs] = await Promise.all([
+      properties.length > 0 ? getPmsRateProperties(properties) : [],
+      Promise.all(properties.map(async (property) => [property, await getKioskSalesConfig(property)] as const)),
+    ])
+    const configByProperty = new Map(configs)
 
     const mappedRooms = availableRooms.map((room) => {
+      const property = getPropertyFromRoomNumber(room.matchingRoomNumber)
       const pmsRoom = findPmsRateRoom(pmsProperties, room.matchingRoomNumber, room.roomNumber)
       const pmsProperty = pmsProperties.find((item) => item.property === pmsRoom?.property)
+      const config = property ? configByProperty.get(property) ?? null : null
+      const configuredRoom = findKioskRoomSalesConfig(config, room.matchingRoomNumber)
+      const policy = property && config ? config.policy : property ? defaultKioskSalesPolicy(property) : null
+      const rates = configuredRoom?.rates ?? pmsRoom?.rates ?? null
+      const roomEnabled = config ? configuredRoom?.enabled === true : true
 
       return {
         building: room.category,
@@ -49,11 +66,28 @@ export async function GET(request: Request) {
         status: room.status,
         floor: room.floor,
         roomCode: room.matchingRoomNumber,
-        rates: pmsRoom?.rates ?? null,
-        ratesSource: pmsRoom ? "pms_status" : null,
-        ratesUpdatedAt: pmsProperty?.timestamp ?? null,
+        rates,
+        stayEnabled: {
+          overnight: Boolean(
+            roomEnabled &&
+              (configuredRoom?.overnightEnabled ?? true) &&
+              policy &&
+              isKioskSalesWindowOpen(policy, "overnight"),
+          ),
+          shortStay: Boolean(
+            roomEnabled &&
+              (configuredRoom?.shortStayEnabled ?? true) &&
+              policy &&
+              isKioskSalesWindowOpen(policy, "shortStay"),
+          ),
+        },
+        ratesSource: configuredRoom ? "kiosk_sales_config" : pmsRoom ? "pms_status" : null,
+        ratesUpdatedAt: config?.updatedAt ?? pmsProperty?.timestamp ?? null,
       }
-    })
+    }).filter((room) =>
+      (room.stayEnabled.overnight && hasPositiveRate(room.rates?.overnight)) ||
+      (room.stayEnabled.shortStay && hasPositiveRate(room.rates?.shortStay)),
+    )
 
     console.log("[v0] Sample room data from Firebase:")
     if (mappedRooms.length > 0) {
@@ -82,7 +116,7 @@ export async function GET(request: Request) {
       total: mappedRooms.length,
       location: location || "ALL",
       source: "firebase",
-      ratesSource: "pms_status",
+      ratesSource: "kiosk_sales_config",
     })
   } catch (error) {
     console.error("Error fetching available rooms:", error)

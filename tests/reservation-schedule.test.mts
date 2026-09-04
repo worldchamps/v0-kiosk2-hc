@@ -35,3 +35,26 @@ test("uses the current check-in time and a three-hour short-stay checkout", () =
     },
   )
 })
+
+test("uses PMS-managed stay duration and overnight checkout time", () => {
+  assert.deepEqual(
+    buildOnSiteSheetDateTimes(
+      "2026-09-05",
+      "2026-09-05",
+      "shortStay",
+      new Date("2026-09-05T02:00:00Z"),
+      { shortStayDurationMinutes: 240 },
+    ),
+    { checkInDate: "26.09.05/11:00", checkOutDate: "26.09.05/15:00" },
+  )
+  assert.deepEqual(
+    buildOnSiteSheetDateTimes(
+      "2026-09-05",
+      "2026-09-06",
+      "overnight",
+      new Date("2026-09-05T02:00:00Z"),
+      { overnightCheckoutTime: "12:30" },
+    ),
+    { checkInDate: "26.09.05/11:00", checkOutDate: "26.09.06/12:30" },
+  )
+})

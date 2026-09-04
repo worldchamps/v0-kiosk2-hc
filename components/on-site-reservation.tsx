@@ -28,8 +28,6 @@ import PaymentScreen from "@/components/payment-screen"
 import type { CompletedPayment } from "@/lib/payment-types"
 import CheckInComplete from "@/components/check-in-complete"
 import { KioskProgressScreen, ON_SITE_PROGRESS_STEPS } from "@/components/kiosk-progress"
-import { getPropertyFromRoomNumber } from "@/lib/property-utils"
-import { isShortStayAvailable, isShortStayRestrictedProperty } from "@/lib/short-stay-policy"
 import type { PmsPaymentRates, PmsRoomRates } from "@/lib/pms-rates"
 
 interface OnSiteReservationProps {
@@ -46,7 +44,8 @@ interface AvailableRoom {
   floor: string
   roomCode: string
   rates: PmsRoomRates | null
-  ratesSource: "pms_status" | null
+  stayEnabled: Record<StayType, boolean>
+  ratesSource: "kiosk_sales_config" | "pms_status" | null
   ratesUpdatedAt: string | null
 }
 
@@ -58,16 +57,16 @@ interface StaySelection {
   label: "숙박" | "대실"
 }
 
-function getRoomTypePrices(rooms: AvailableRoom[]) {
-  return rooms.find(
-    (room) =>
-      room.rates &&
-      (hasAvailableRate(room.rates.overnight) || hasAvailableRate(room.rates.shortStay)),
-  )?.rates
+function getRoomTypePrices(rooms: AvailableRoom[], stayType: StayType) {
+  return rooms.find((room) => hasAvailableStay(room, stayType))?.rates
 }
 
 function hasAvailableRate(rates: PmsPaymentRates | undefined) {
   return Boolean(rates && (rates.card > 0 || rates.cash > 0))
+}
+
+function hasAvailableStay(room: AvailableRoom, stayType: StayType) {
+  return room.stayEnabled?.[stayType] === true && hasAvailableRate(room.rates?.[stayType])
 }
 
 function formatPaymentRates(rates: PmsPaymentRates) {
@@ -117,26 +116,10 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   const [reservationData, setReservationData] = useState<any>(null)
   const [roomsError, setRoomsError] = useState("")
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-  const [shortStayAvailable, setShortStayAvailable] = useState(() => isShortStayAvailable())
   const { paymentSession, startPayment, completePayment, cancelPayment } = usePayment()
   const selectedRates = selectedRoom && selectedStay ? selectedRoom.rates?.[selectedStay.type] : undefined
 
   const locationName = location === "CAMP" ? "캠프" : location ? `${location}동` : ""
-  const kioskProperty =
-    location === "A" || location === "B"
-      ? "property3"
-      : location === "C" || location === "D"
-        ? "property1"
-        : null
-  const shouldRestrictShortStay = isShortStayRestrictedProperty(kioskProperty)
-  const showShortStay = !shouldRestrictShortStay || shortStayAvailable
-
-  useEffect(() => {
-    const updateShortStayAvailability = () => setShortStayAvailable(isShortStayAvailable())
-    updateShortStayAvailability()
-    const interval = window.setInterval(updateShortStayAvailability, 30000)
-    return () => window.clearInterval(interval)
-  }, [])
 
   const fetchAvailableRooms = useCallback(
     async (showLoading = true) => {
@@ -220,8 +203,9 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   }, [fetchAvailableRooms, step])
 
   const handleStayTypeSelect = (stay: StaySelection) => {
-    if (stay.type === "shortStay" && shouldRestrictShortStay && !isShortStayAvailable()) {
-      alert("대실 예약은 오후 9시 이전에만 가능합니다.")
+    const available = Object.values(roomsByType).some((rooms) => rooms.some((room) => hasAvailableStay(room, stay.type)))
+    if (!available) {
+      alert(`현재 ${stay.label}으로 판매 가능한 객실이 없습니다.`)
       return
     }
     const dates = getBookingDates(stay.type)
@@ -238,18 +222,6 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
 
   const startRoomPayment = (room: AvailableRoom) => {
     if (!selectedStay) return
-
-    const roomProperty = getPropertyFromRoomNumber(room.roomCode)
-    if (
-      selectedStay.type === "shortStay" &&
-      isShortStayRestrictedProperty(roomProperty) &&
-      !isShortStayAvailable()
-    ) {
-      alert("대실 예약은 오후 9시 이전에만 가능합니다.")
-      setSelectedStay(null)
-      setStep("stayType")
-      return
-    }
 
     setSelectedRoom(room)
 
@@ -275,7 +247,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
     }
 
     const roomRates = room.rates?.[selectedStay.type]
-    if (!hasAvailableRate(roomRates)) {
+    if (!hasAvailableStay(room, selectedStay.type)) {
       alert("이 객실의 이용금액을 확인할 수 없습니다. 다른 객실을 선택해주세요.")
       return
     }
@@ -313,7 +285,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
     }
 
     const roomRates = selectedRoom.rates?.[selectedStay.type]
-    if (!hasAvailableRate(roomRates)) {
+    if (!hasAvailableStay(selectedRoom, selectedStay.type)) {
       alert("이 객실의 이용금액을 확인할 수 없습니다. 다른 객실을 선택해주세요.")
       return
     }
@@ -338,20 +310,6 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
         console.error("[Toss Front] Automatic approval cancellation failed:", frontCancelError)
         alert("카드 승인취소에 실패했습니다. 관리자에게 문의해주세요.")
       }
-    }
-
-    const roomProperty = getPropertyFromRoomNumber(selectedRoom?.roomCode || "")
-    if (
-      selectedStay?.type === "shortStay" &&
-      isShortStayRestrictedProperty(roomProperty) &&
-      !isShortStayAvailable()
-    ) {
-      alert("오후 9시가 지나 대실 예약을 진행할 수 없습니다.")
-      await cancelApprovedFrontPayment()
-      await cancelPayment()
-      setSelectedStay(null)
-      setStep("stayType")
-      return
     }
 
     try {
@@ -410,6 +368,9 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   // Step 1: Stay type selection
   if (step === "stayType") {
     const availableRoomTypes = sortRoomTypes(Object.keys(roomsByType))
+    const allRooms = Object.values(roomsByType).flat()
+    const showOvernight = allRooms.some((room) => hasAvailableStay(room, "overnight"))
+    const showShortStay = allRooms.some((room) => hasAvailableStay(room, "shortStay"))
 
     return (
       <div className="kiosk-home-screen">
@@ -473,17 +434,19 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
 
           {!roomsError && availableRoomTypes.length > 0 && (
             <div className="kiosk-stay-type-options">
-              <button
-                type="button"
-                className="kiosk-stay-type-option is-overnight"
-                onClick={() => handleStayTypeSelect({ type: "overnight", label: "숙박" })}
-              >
-                <Moon aria-hidden="true" />
-                <span>
-                  <strong>숙박</strong>
-                  <small>오늘 입실 · 내일 퇴실</small>
-                </span>
-              </button>
+              {showOvernight && (
+                <button
+                  type="button"
+                  className="kiosk-stay-type-option is-overnight"
+                  onClick={() => handleStayTypeSelect({ type: "overnight", label: "숙박" })}
+                >
+                  <Moon aria-hidden="true" />
+                  <span>
+                    <strong>숙박</strong>
+                    <small>오늘 입실 · 내일 퇴실</small>
+                  </span>
+                </button>
+              )}
 
               {showShortStay && (
                 <button
@@ -519,7 +482,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   // Step 2: Room type selection
   if (step === "roomType" && selectedStay) {
     const availableRoomTypes = sortRoomTypes(Object.keys(roomsByType)).filter((roomType) =>
-      (roomsByType[roomType] || []).some((room) => hasAvailableRate(room.rates?.[selectedStay.type])),
+      (roomsByType[roomType] || []).some((room) => hasAvailableStay(room, selectedStay.type)),
     )
 
     return (
@@ -548,7 +511,7 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
             const rooms = roomsByType[roomType]
             const sampleRoom = rooms[0]
             const imagePath = getRoomImagePath(roomType, sampleRoom.roomCode)
-            const prices = getRoomTypePrices(rooms)?.[selectedStay.type]
+            const prices = getRoomTypePrices(rooms, selectedStay.type)?.[selectedStay.type]
 
             return (
               <article key={roomType} className="kiosk-room-type-card">
@@ -587,9 +550,9 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   // Step 3: Room number selection
   if (step === "roomSelect" && selectedRoomType && selectedStay) {
     const rooms = (roomsByType[selectedRoomType] || []).filter((room) =>
-      hasAvailableRate(room.rates?.[selectedStay.type]),
+      hasAvailableStay(room, selectedStay.type),
     )
-    const roomTypeRates = getRoomTypePrices(rooms)?.[selectedStay.type]
+    const roomTypeRates = getRoomTypePrices(rooms, selectedStay.type)?.[selectedStay.type]
 
     return (
       <KioskProgressScreen steps={ON_SITE_PROGRESS_STEPS} currentStep={0}>
