@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import Image from "next/image"
 import { Loader2, Eye, EyeOff } from "lucide-react"
-import { formatDateTimeKorean } from "@/lib/date-utils"
+import { formatDateTimeKorean, getReservationCheckInEligibility } from "@/lib/date-utils"
 import { getRoomImagePath, checkImageExists } from "@/lib/room-utils"
 import { playAudio } from "@/lib/audio-utils"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
@@ -31,7 +31,7 @@ interface Reservation {
 
 interface ReservationDetailsProps {
   reservation: Reservation
-  onCheckIn: () => void
+  onCheckIn: () => Promise<boolean>
   onNavigate: (screen: string) => void
   loading?: boolean
   revealedInfo?: {
@@ -56,6 +56,12 @@ export default function ReservationDetails({
   const [imageExists, setImageExists] = useState(true)
   const [showPassword, setShowPassword] = useState(false)
   const [showSmokingPolicy, setShowSmokingPolicy] = useState(false)
+  const [now, setNow] = useState(() => new Date())
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   const locationTitle = getLocationTitle(kioskLocation)
 
@@ -110,9 +116,11 @@ export default function ReservationDetails({
 
   if (!reservation) return null
 
+  const eligibility = getReservationCheckInEligibility(reservation.checkInDateTime ?? reservation.checkInDate, now)
+
   const completeCheckIn = async () => {
     try {
-      await onCheckIn()
+      if (!eligibility.allowed || !(await onCheckIn())) return
 
       if (isPopupMode) {
         const property = getKioskPropertyId()
@@ -131,22 +139,11 @@ export default function ReservationDetails({
       }
     } catch (error) {
       console.error("[v0] Check-in error:", error)
-      if (isPopupMode) {
-        const property = getKioskPropertyId()
-        setTimeout(() => {
-          if (propertyUsesElectron(property)) {
-            if (typeof window !== "undefined" && window.electronAPI) {
-              window.electronAPI.send("checkin-complete")
-            }
-          } else {
-            window.close()
-          }
-        }, 500)
-      }
     }
   }
 
   const handleCheckIn = () => {
+    if (!eligibility.allowed) return
     setShowSmokingPolicy(true)
   }
 
@@ -312,9 +309,14 @@ export default function ReservationDetails({
         </div>
 
         <div className="grid grid-cols-2 gap-8 w-full mt-auto">
+          {!eligibility.allowed && !hasRevealedInfo && (
+            <p role="status" className="col-span-2 rounded-xl bg-amber-50 p-4 text-2xl font-bold text-amber-900">
+              {eligibility.message}
+            </p>
+          )}
           <Button
             onClick={handleCheckIn}
-            disabled={loading || checkInComplete || hasRevealedInfo}
+            disabled={loading || checkInComplete || hasRevealedInfo || !eligibility.allowed}
             className="h-20 text-2xl text-black bg-[#42c0ff] hover:bg-[#3ab0e8] shadow-md font-bold rounded-xl"
           >
             {loading ? (
@@ -324,6 +326,8 @@ export default function ReservationDetails({
               </>
             ) : checkInComplete || hasRevealedInfo ? (
               "체크인 완료"
+            ) : !eligibility.allowed ? (
+              eligibility.code === "CHECK_IN_NOT_OPEN" ? "입실 시간 전" : "직원 확인 필요"
             ) : (
               "체크인"
             )}

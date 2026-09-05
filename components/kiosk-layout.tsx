@@ -349,7 +349,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   }
 
   const handleCheckIn = async () => {
-    if (!reservationData || !reservationData.reservationId) return
+    if (!reservationData || !reservationData.reservationId) return false
 
     setLoading(true)
     setError("")
@@ -385,11 +385,12 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         })
         setShowPropertyMismatch(true)
         setLoading(false)
-        return
+        return false
       }
 
       if (!response.ok) {
-        throw new Error(`API error: ${response.status}`)
+        const errorData = await response.json()
+        throw new Error(errorData.message || "체크인 중 오류가 발생했습니다. 다시 시도해 주세요.")
       }
 
       const data = await response.json()
@@ -407,13 +408,16 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       if (!isPopupMode) {
         setCurrentScreen("checkInComplete")
       }
+      return true
     } catch (err) {
       console.error("[v0] Check-in error:", err)
-      setError("체크인 중 오류가 발생했습니다. 다시 시도해 주세요.")
+      const message = err instanceof Error ? err.message : "체크인 중 오류가 발생했습니다. 다시 시도해 주세요."
+      setError(message)
 
       if (isPopupMode) {
-        alert("체크인 중 오류가 발생했습니다. 다시 시도해 주세요.")
+        alert(message)
       }
+      return false
     } finally {
       setLoading(false)
     }

@@ -130,10 +130,46 @@ export const resolveReservationSheetDateTime = (
   dateValue: string | undefined,
   fallbackTime: string,
 ) => {
-  const date = normalizeDate(String(dateValue || ""))
-  return /^\d{4}-\d{2}-\d{2}$/.test(date)
-    ? buildScheduledAt(date, getTime(String(dateValue || ""), fallbackTime))
-    : ""
+  const value = String(dateValue || "").trim().replace(/^'/, "").trim()
+  // Only a genuinely date-only value may use the legacy default time.
+  const parts = value.match(/^((?:\d{2}|\d{4})[.-]\s*\d{1,2}[.-]\s*\d{1,2}\.?|\d{1,2}\/\d{1,2}\/\d{4})(?:[T/\s]+(.+))?$/)
+  if (!parts) return ""
+
+  const date = normalizeDate(parts[1])
+  const timeValue = parts[2] ?? fallbackTime
+  const clock = timeValue.match(/^(?:(오전|오후|am|pm)\s*)?(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(am|pm))?$/i)
+  if (!clock || (clock[1] && clock[5])) return ""
+  const hour = Number(clock[2])
+  const hasMeridiem = !!(clock[1] || clock[5])
+  if (hour > (hasMeridiem ? 12 : 23) || (hasMeridiem && hour < 1) || Number(clock[3]) > 59 || Number(clock[4] || 0) > 59) return ""
+
+  const time = getTime(timeValue, fallbackTime)
+  const at = new Date(`${date}T${time}:00+09:00`)
+  if (!Number.isFinite(at.getTime())) return ""
+  // Date accepts February 30 by rolling into March; a reservation must not.
+  if (new Date(at.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10) !== date) return ""
+  return buildScheduledAt(date, time)
+}
+
+export const getReservationCheckInEligibility = (dateValue: string | undefined, now = new Date()) => {
+  const checkInDateTime = resolveReservationSheetDateTime(dateValue, "15:00")
+  if (!checkInDateTime || !Number.isFinite(now.getTime())) {
+    return {
+      allowed: false,
+      code: "INVALID_CHECK_IN_TIME",
+      message: "예약 입실 일시를 확인할 수 없습니다. 직원에게 문의해 주세요.",
+      checkInDateTime,
+    }
+  }
+
+  const scheduledAt = new Date(`${normalizeDate(checkInDateTime)}T${getTime(checkInDateTime, "15:00")}:00+09:00`)
+  const allowed = now.getTime() >= scheduledAt.getTime()
+  return {
+    allowed,
+    code: allowed ? "" : "CHECK_IN_NOT_OPEN",
+    message: allowed ? "" : `${formatDateTimeKorean(checkInDateTime)}부터 체크인할 수 있습니다. (한국시간 기준)`,
+    checkInDateTime,
+  }
 }
 
 export const formatDateTimeKorean = (value: string) => {

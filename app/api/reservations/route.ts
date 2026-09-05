@@ -128,7 +128,8 @@ export async function GET(request: NextRequest) {
         checkInDateTime,
         checkOutDateTime,
         roomNumber: roomNumber,
-        password: row[SHEET_COLUMNS.PASSWORD] || "",
+        // The check-in API releases the password only after validating entry time.
+        password: "",
         checkInStatus: checkInStatus,
         checkInTime: row[SHEET_COLUMNS.CHECK_IN_TIME] || "",
         floor: row[SHEET_COLUMNS.FLOOR] || "",

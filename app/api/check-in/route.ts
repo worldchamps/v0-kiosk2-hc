@@ -6,6 +6,7 @@ import { addToPMSQueue } from "@/lib/firebase-admin"
 import { getPropertyFromReservation, canCheckInAtKiosk } from "@/lib/property-utils"
 import type { PropertyId } from "@/lib/property-utils"
 import { sendAligoSMS, formatCheckInMessage } from "@/lib/aligo-sms"
+import { getReservationCheckInEligibility } from "@/lib/date-utils"
 
 // API Key for authentication
 const API_KEY = process.env.API_KEY || ""
@@ -79,6 +80,16 @@ export async function POST(request: NextRequest) {
     const password = reservationData[SHEET_COLUMNS.PASSWORD] || ""
     const floor = reservationData[SHEET_COLUMNS.FLOOR] || ""
     const phoneNumber = reservationData[SHEET_COLUMNS.PHONE_NUMBER] || ""
+
+    // Read the current H-column value, not the schedule cached by the kiosk UI.
+    // Property overrides do not bypass the reservation's scheduled entry time.
+    const eligibility = getReservationCheckInEligibility(checkInDate)
+    if (!eligibility.allowed) {
+      return NextResponse.json(
+        { error: eligibility.code, ...eligibility },
+        { status: 409 },
+      )
+    }
 
     console.log("[v0] 📋 Reservation Data:")
     console.log("[v0]   Room Number:", roomNumber)
