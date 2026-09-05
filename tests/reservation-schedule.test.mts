@@ -2,6 +2,21 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { buildOnSiteSheetDateTimes, formatDateTimeKorean, normalizeDate, resolveReservationSheetDateTime } from "../lib/date-utils.ts"
 
+test("a new on-site checkout uses PMS policy, while saved reservations retain their own time", () => {
+  const now = new Date("2026-09-05T06:20:00Z")
+  const initial = buildOnSiteSheetDateTimes("2026-09-05", "2026-09-06", "overnight", now)
+  assert.equal(initial.checkOutDate, "26.09.06/11:00")
+  const configured = buildOnSiteSheetDateTimes("2026-09-05", "2026-09-06", "overnight", now, {
+    overnightCheckoutTime: "12:30",
+  })
+  assert.equal(configured.checkOutDate, "26.09.06/12:30")
+  assert.equal(configured.checkInDate, initial.checkInDate)
+  assert.equal(resolveReservationSheetDateTime(initial.checkOutDate, "11:00"), "26.09.06/11:00")
+  assert.equal(resolveReservationSheetDateTime(configured.checkOutDate, "11:00"), "26.09.06/12:30")
+  assert.equal(resolveReservationSheetDateTime("26.09.06/14:40", "11:00"), "26.09.06/14:40")
+  assert.equal(resolveReservationSheetDateTime("2026. 9. 6 오후 2:40:00", "11:00"), "26.09.06/14:40")
+})
+
 test("normalizes Google Sheets date-time values", () => {
   assert.equal(normalizeDate("2026. 9. 5 오전 11:00:00"), "2026-09-05")
   assert.equal(normalizeDate("26.09.05/11:00"), "2026-09-05")
