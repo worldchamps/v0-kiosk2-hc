@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 
 import websockets
 
@@ -15,6 +16,11 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger("HardwareServer")
+
+# Packaging check only: import all hardware adapters without opening COM ports.
+if "--self-test" in sys.argv:
+    print("KioskHardware imports OK (no device connection)")
+    sys.exit(0)
 
 
 def load_local_hardware_env():

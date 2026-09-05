@@ -33,6 +33,7 @@ import type { PmsPaymentRates, PmsRoomRates } from "@/lib/pms-rates"
 interface OnSiteReservationProps {
   onNavigate: (screen: string) => void
   location?: string
+  onUpdateSafeChange?: (safe: boolean) => void
 }
 
 interface AvailableRoom {
@@ -101,7 +102,7 @@ function getBookingDates(stayType: StayType) {
   }
 }
 
-export default function OnSiteReservation({ onNavigate, location }: OnSiteReservationProps) {
+export default function OnSiteReservation({ onNavigate, location, onUpdateSafeChange }: OnSiteReservationProps) {
   const [step, setStep] = useState<BookingStep>("stayType")
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -117,6 +118,10 @@ export default function OnSiteReservation({ onNavigate, location }: OnSiteReserv
   const [roomsError, setRoomsError] = useState("")
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const { paymentSession, startPayment, completePayment, cancelPayment } = usePayment()
+  useEffect(() => {
+    onUpdateSafeChange?.(step === "stayType" && !loading && !submitting && !paymentSession.isActive && !roomsError)
+    return () => onUpdateSafeChange?.(false)
+  }, [step, loading, submitting, paymentSession.isActive, roomsError, onUpdateSafeChange])
   const selectedRates = selectedRoom && selectedStay ? selectedRoom.rates?.[selectedStay.type] : undefined
 
   const locationName = location === "CAMP" ? "캠프" : location ? `${location}동` : ""

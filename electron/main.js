@@ -1,6 +1,11 @@
-require("dotenv").config({ path: require("path").join(__dirname, "..", ".env.local") })
+if (!require("electron").app.isPackaged) {
+  require("dotenv").config({ path: require("path").join(__dirname, "..", ".env.local") })
+}
 
 const { app, BrowserWindow, ipcMain, Menu } = require("electron")
+if (!app.isPackaged) {
+  ipcMain.on("kiosk:public-config", (event) => { event.returnValue = null })
+}
 const { spawn } = require("child_process")
 const http = require("http")
 const path = require("path")
@@ -32,7 +37,7 @@ const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
 const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"
 const KIOSK_START_LOCATION = process.env.KIOSK_START_LOCATION || ""
 const KIOSK_WINDOW_MODE = process.env.KIOSK_WINDOW_MODE === "true"
-const isDev = process.env.NODE_ENV !== "production"
+const isDev = !app.isPackaged && process.env.NODE_ENV !== "production"
 const useKioskChrome = KIOSK_WINDOW_MODE || !isDev
 
 if (isDev) {
@@ -74,15 +79,27 @@ async function startNextServer() {
   await nextApp.prepare()
 
   nextServer = http.createServer((req, res) => {
+    if (global.kioskMaintenance) {
+      res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" })
+      res.end("키오스크 프로그램을 업데이트하고 있습니다.")
+      return
+    }
+    global.kioskHttpActive = (global.kioskHttpActive || 0) + 1
+    let finished = false
+    const release = () => {
+      if (!finished) { finished = true; global.kioskHttpActive-- }
+    }
+    res.once("finish", release)
+    res.once("close", release)
     handle(req, res)
   })
 
   await new Promise((resolve, reject) => {
     nextServer.once("error", (error) => {
       if (error && error.code === "EADDRINUSE") {
-        console.warn("[NEXT_SERVER] Port 3000 already in use; using existing server")
+        console.error("[NEXT_SERVER] Port 3000 is in use; refusing an unknown or old kiosk server")
         nextServer = null
-        resolve()
+        reject(new Error("기존 키오스크 프로그램이 실행 중입니다. 기존 프로그램을 정상 종료한 뒤 다시 실행해 주세요."))
         return
       }
       reject(error)
@@ -97,7 +114,7 @@ async function startNextServer() {
 
 function getHardwareServerDir() {
   return app.isPackaged
-    ? path.join(process.resourcesPath, "hardware_server")
+    ? path.join(process.resourcesPath, "hardware")
     : path.join(__dirname, "..", "hardware_server")
 }
 
@@ -107,7 +124,7 @@ function startHardwareServer() {
   }
 
   const hardwareServerDir = getHardwareServerDir()
-  const mainPy = path.join(hardwareServerDir, "main.py")
+  const mainPy = path.join(hardwareServerDir, app.isPackaged ? "KioskHardware.exe" : "main.py")
 
   if (!require("fs").existsSync(mainPy)) {
     console.error("[HARDWARE_SERVER] main.py not found:", mainPy)
@@ -116,7 +133,7 @@ function startHardwareServer() {
 
   console.log("[HARDWARE_SERVER] Starting:", mainPy)
 
-  hardwareServerProcess = spawn("python", ["-u", mainPy], {
+  hardwareServerProcess = spawn(app.isPackaged ? mainPy : "python", app.isPackaged ? [] : ["-u", mainPy], {
     cwd: hardwareServerDir,
     windowsHide: true,
     stdio: isDev ? "inherit" : "ignore",
@@ -247,6 +264,7 @@ function createWindow() {
     })
 
     mainWindow.webContents.on("did-finish-load", () => {
+      if (app.isPackaged) return // supplied synchronously by preload before React starts
       mainWindow.webContents.executeJavaScript(`
         window.__KIOSK_PROPERTY_ID__ = "${KIOSK_PROPERTY_ID}";
         window.__OVERLAY_MODE__ = ${OVERLAY_MODE};
@@ -1081,11 +1099,33 @@ ipcMain.handle("printer:print-test", async () => {
   }
 })
 
+global.kioskHardwareReady = () => hardwareBridge.isConnected && !!hardwareServerProcess &&
+  tossFrontBridge.pending.size === 0 && (!tossFrontBridge.configured || tossFrontBridge.authenticated)
+
+global.shutdownKiosk = async () => {
+  tossFrontBridge.close()
+  if (hardwareServerProcess && !hardwareServerProcess.killed) {
+    const child = hardwareServerProcess
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("장비 제어 프로그램 종료를 확인하지 못했습니다.")), 10000)
+      child.once("exit", () => { clearTimeout(timer); resolve() })
+      child.kill()
+    })
+  }
+  if (nextServer) {
+    await new Promise((resolve, reject) => nextServer.close((error) => error ? reject(error) : resolve()))
+    nextServer = null
+  }
+}
+
 app.whenReady().then(async () => {
   if (!OVERLAY_MODE) {
     await startNextServer()
   }
   createWindow()
+}).catch((error) => {
+  require("electron").dialog.showErrorBox("키오스크 실행 오류", error.message)
+  app.quit()
 })
 
 app.on("window-all-closed", () => {

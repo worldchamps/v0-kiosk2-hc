@@ -1,0 +1,25 @@
+const fs = require("node:fs")
+const path = require("node:path")
+const assert = require("node:assert/strict")
+const { spawnSync } = require("node:child_process")
+const resources = path.resolve(__dirname, "../dist/win-unpacked/resources")
+const appDir = path.join(resources, "app")
+const pkg = JSON.parse(fs.readFileSync(path.join(appDir, "package.json"), "utf8"))
+assert.equal(pkg.main, "electron/bootstrap.js")
+assert.equal(pkg.version, require("../package.json").version)
+for (const name of [".env.local", ".env", ".local", "ops", "scripts"]) assert.equal(fs.existsSync(path.join(appDir, name)), false, name)
+for (const name of ["electron/bootstrap.js", "electron/setup.html", ".next/BUILD_ID", "next.config.mjs"]) assert.ok(fs.existsSync(path.join(appDir, name)), name)
+assert.ok(fs.existsSync(path.join(resources, "app-update.yml")))
+const key = fs.readFileSync(path.join(resources, "update-public.pem"), "utf8")
+assert.match(key, /BEGIN PUBLIC KEY/)
+assert.doesNotMatch(key, /PRIVATE KEY/)
+const run = (command, args, env) => {
+  const result = spawnSync(command, args, { env, encoding: "utf8", windowsHide: true })
+  if (result.status !== 0) throw new Error(result.error?.message || result.stderr || "Packaged runtime verification failed")
+  console.log(result.stdout.trim())
+}
+run(path.join(resources, "hardware/KioskHardware.exe"), ["--self-test"])
+run(path.resolve(resources, "../TheBeachStay Kiosk.exe"), ["-e",
+  "for (const name of ['next','serialport','electron-updater','firebase-admin','googleapis']) require(require.resolve(name,{paths:[process.argv[1]]})); console.log('Packaged Node/native dependencies OK (no device connection)')",
+  appDir], { ...process.env, ELECTRON_RUN_AS_NODE: "1" })
+console.log("Installer resources verified; no cloud or kiosk hardware accessed.")

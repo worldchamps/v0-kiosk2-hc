@@ -1,13 +1,15 @@
 {
   "name": "thebeachstay-kiosk",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "main": "electron/main.js",
+  "main": "electron/bootstrap.js",
   "scripts": {
     "build": "next build",
     "dev": "next dev",
     "electron": "electron .",
-    "electron:build": "next build && electron-builder",
+    "electron:build": "node scripts/build-kiosk.cjs",
+    "kiosk:deploy": "node scripts/kiosk-deploy.cjs",
+    "test:updates": "node --test tests/kiosk-updates.test.cjs",
     "electron:dev": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
     "electron:overlay": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && cross-env OVERLAY_MODE=true electron .\"",
     "electron:overlay:aggressive": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && cross-env OVERLAY_MODE=true AGGRESSIVE_TOPMOST=true electron .\"",
@@ -32,6 +34,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^16.4.7",
+    "electron-updater": "6.6.2",
     "firebase": "12.4.0",
     "firebase-admin": "13.5.0",
     "googleapis": "latest",
@@ -67,37 +70,49 @@
     "appId": "com.thebeachstay.kiosk",
     "productName": "TheBeachStay Kiosk",
     "asar": false,
+    "publish": [{ "provider": "generic", "url": "https://updates.invalid/" }],
     "directories": {
       "output": "dist"
     },
     "files": [
       ".next/**/*",
+      "!.next/cache/**/*",
+      "!**/*.map",
       "public/**/*",
       "electron/**/*",
       "electron-config.json",
       "package.json",
       "node_modules/**/*",
-      ".env.local"
+      "next.config.mjs",
+      "!.env*",
+      "!.local/**/*",
+      "!ops/**/*",
+      "!scripts/**/*"
     ],
     "extraResources": [
       {
-        "from": "hardware_server",
-        "to": "hardware_server",
+        "from": ".local/hardware/KioskHardware",
+        "to": "hardware",
         "filter": [
           "**/*"
         ]
-      }
+      },
+      { "from": ".local/update-public.pem", "to": "update-public.pem" }
     ],
     "win": {
-      "target": "nsis",
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
       "icon": "public/icon.ico"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true
     },
     "extraMetadata": {
-      "main": "electron/main.js"
+      "main": "electron/bootstrap.js"
     }
   }
 }

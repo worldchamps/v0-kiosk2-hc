@@ -2,14 +2,15 @@ import { initializeApp, getApps } from "firebase/app"
 import { getDatabase, type Database } from "firebase/database"
 
 // Firebase client configuration
+const runtime = typeof window !== "undefined" ? window.__KIOSK_FIREBASE_CONFIG__ : undefined
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  apiKey: runtime?.API_KEY || process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: runtime?.AUTH_DOMAIN || process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  databaseURL: runtime?.DATABASE_URL || process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL,
+  projectId: runtime?.PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: runtime?.STORAGE_BUCKET || process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: runtime?.MESSAGING_SENDER_ID || process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: runtime?.APP_ID || process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 }
 
 let app: any = null

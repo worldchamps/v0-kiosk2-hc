@@ -41,6 +41,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   const [reservationsList, setReservationsList] = useState([])
   const [guestName, setGuestName] = useState("")
   const [loading, setLoading] = useState(false)
+  const [onSiteUpdateSafe, setOnSiteUpdateSafe] = useState(false)
   const [error, setError] = useState("")
   const [revealedInfo, setRevealedInfo] = useState({
     roomNumber: "",
@@ -72,6 +73,14 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   const adminPassword = "KIM1334**"
 
   const { paymentSession, cancelPayment } = usePayment()
+
+  useEffect(() => {
+    window.electronAPI?.setUpdateSafe?.(
+      currentScreen === "onSiteReservation" && onSiteUpdateSafe && !loading &&
+      !paymentSession.isActive && !showAdminKeypad && !showPropertyMismatch && !showPropertyRedirect,
+    )
+    return () => window.electronAPI?.setUpdateSafe?.(false)
+  }, [currentScreen, onSiteUpdateSafe, loading, paymentSession.isActive, showAdminKeypad, showPropertyMismatch, showPropertyRedirect])
 
   useEffect(() => {
     const savedLocation = initialLocation || getKioskLocation()
@@ -478,7 +487,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         )}
 
         {currentScreen === "onSiteReservation" && (
-          <OnSiteReservation key={homeSessionKey} onNavigate={handleNavigate} location={kioskLocation} />
+          <OnSiteReservation key={homeSessionKey} onNavigate={handleNavigate} location={kioskLocation} onUpdateSafeChange={setOnSiteUpdateSafe} />
         )}
 
         {currentScreen === "reservationDetails" && (

@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'">
+<title>키오스크 최초 등록</title>
+<style>body{font:20px system-ui;padding:42px;background:#f7fafc;color:#172b3a}h1{font-size:30px}p{line-height:1.7}button{padding:18px 28px;font:inherit;border:0;border-radius:10px;background:#0078b5;color:white}#status{color:#a02626;white-space:pre-wrap}</style>
+</head><body><h1>키오스크 최초 등록</h1>
+<p>배포 PC에서 받은 <b>장비 등록 파일</b>과<br>이 키오스크의 기존 <b>.env.local 설정 파일</b>을 준비해 주세요.</p>
+<p>PC별 설정은 Windows 계정에 암호화해 보관하며<br>프로그램 업데이트 후에도 유지됩니다.</p>
+<button id="register">파일 선택 및 장비 등록</button>
+<button id="restart" style="margin-top:12px;background:#526777">새 등록 파일로 다시 시작</button><p id="status" role="status"></p>
+<script src="setup-renderer.js"></script></body></html>

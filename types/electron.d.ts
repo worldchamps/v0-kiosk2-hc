@@ -26,6 +26,7 @@ export interface TossFrontQrResult {
 }
 
 export interface ElectronAPI {
+  setUpdateSafe: (safe: boolean) => void
   // 환경 설정
   getPropertyId: () => Promise<string>
   getOverlayMode: () => Promise<boolean>
@@ -69,5 +70,6 @@ declare global {
     electronAPI?: ElectronAPI
     __KIOSK_PROPERTY_ID__?: string
     __OVERLAY_MODE__?: boolean
+    __KIOSK_FIREBASE_CONFIG__?: Record<string, string>
   }
 }

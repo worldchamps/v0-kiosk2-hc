@@ -1,0 +1,9 @@
+{
+  "name": "kiosk-update-server",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "firebase-admin": "13.5.0",
+    "thebeachstay-kiosk": "file:../.."
+  }
+}

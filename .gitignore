@@ -28,6 +28,7 @@ next-env.d.ts
 
 /dist
 /dist-electron
+/.local/
 *.exe
 *.dmg
 *.AppImage

@@ -1,7 +1,42 @@
 const { contextBridge, ipcRenderer } = require("electron")
 
+let updateSafe = false, lastActivity = Date.now(), maintenance = false
+const reportUpdateState = () => ipcRenderer.send("kiosk:update-heartbeat", { safe: updateSafe, lastActivity })
+// A packaged launch supplies only public configuration; no device token or
+// server/service-account credential is exposed to the renderer.
+const publicConfig = ipcRenderer.sendSync("kiosk:public-config")
+if (publicConfig?.propertyId) {
+  contextBridge.exposeInMainWorld("__KIOSK_PROPERTY_ID__", publicConfig.propertyId)
+  contextBridge.exposeInMainWorld("__KIOSK_FIREBASE_CONFIG__", publicConfig.firebase)
+  const timer = setInterval(reportUpdateState, 2000)
+  window.addEventListener("unload", () => clearInterval(timer))
+  for (const type of ["pointerdown", "keydown", "click", "touchstart"]) {
+    window.addEventListener(type, (event) => {
+      if (maintenance) { event.preventDefault(); event.stopImmediatePropagation(); return }
+      lastActivity = Date.now()
+      reportUpdateState()
+    }, true)
+  }
+  ipcRenderer.on("kiosk:update-prepare", (_event, nonce) => {
+    if (!updateSafe || Date.now() - lastActivity < 60000) return
+    maintenance = true
+    const overlay = document.createElement("div")
+    overlay.id = "kiosk-update-maintenance"
+    overlay.setAttribute("role", "alert")
+    overlay.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:#102a43;color:white;display:grid;place-items:center;font:32px system-ui;text-align:center"
+    overlay.textContent = "프로그램 업데이트 중입니다. 잠시 후 자동으로 다시 시작합니다."
+    document.body.appendChild(overlay)
+    ipcRenderer.send("kiosk:update-ready", nonce)
+  })
+  ipcRenderer.on("kiosk:update-resume", () => {
+    maintenance = false
+    document.getElementById("kiosk-update-maintenance")?.remove()
+  })
+}
+
 // Renderer 프로세스에서 사용할 수 있는 안전한 API 노출
 contextBridge.exposeInMainWorld("electronAPI", {
+  setUpdateSafe: (safe) => { updateSafe = safe === true; reportUpdateState() },
   // 환경 설정
   getPropertyId: () => ipcRenderer.invoke("get-property-id"),
   getOverlayMode: () => ipcRenderer.invoke("get-overlay-mode"),
