@@ -1,0 +1,6 @@
+{
+  "projectId": "beachstay-kiosk-updates",
+  "apiKey": "AIzaSyBWJQdXHIrwNTJMzJybm3OKZbwjVOqXS6k",
+  "databaseURL": "https://beachstay-kiosk-updates-default-rtdb.asia-southeast1.firebasedatabase.app",
+  "githubRepo": "worldchamps/kiosk-private-releases"
+}

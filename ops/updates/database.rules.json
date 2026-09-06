@@ -1,0 +1,35 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "bindings": {
+      "$device": {
+        ".read": "auth != null && data.child('uid').val() === auth.uid",
+        ".write": "auth != null && !data.exists() && newData.exists() && root.child('registry').child($device).child('revoked').val() === false && root.child('registry').child($device).child('kind').val() === 'kiosk' && root.child('pairings').child(newData.child('code').val()).child('deviceId').val() === $device && root.child('registry').child($device).child('code').val() === newData.child('code').val() && root.child('pairings').child(newData.child('code').val()).child('expiresAt').val() > now",
+        ".validate": "newData.hasChildren(['uid', 'property', 'code'])",
+        "uid": { ".validate": "newData.val() === auth.uid" },
+        "property": { ".validate": "newData.val() === root.child('registry').child($device).child('property').val()" },
+        "code": { ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)" },
+        "$other": { ".validate": false }
+      }
+    },
+    "requests": {
+      "$device": {
+        ".read": "auth != null && root.child('bindings').child($device).child('uid').val() === auth.uid && root.child('registry').child($device).child('revoked').val() === false"
+      }
+    },
+    "status": {
+      "$device": {
+        ".read": "auth != null && root.child('bindings').child($device).child('uid').val() === auth.uid && root.child('registry').child($device).child('revoked').val() === false",
+        ".write": "auth != null && newData.exists() && root.child('bindings').child($device).child('uid').val() === auth.uid && root.child('registry').child($device).child('revoked').val() === false",
+        ".validate": "newData.hasChildren(['version', 'state', 'lastSeen'])",
+        "version": { ".validate": "newData.isString() && newData.val().length < 40" },
+        "state": { ".validate": "newData.isString() && newData.val().length < 40" },
+        "requestId": { ".validate": "newData.isString() && newData.val().matches(/^[a-zA-Z0-9_-]{8,80}$/)" },
+        "message": { ".validate": "newData.isString() && newData.val().length <= 250" },
+        "lastSeen": { ".validate": "newData.val() === now" },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}

@@ -1,7 +1,9 @@
 const { app, BrowserWindow, ipcMain, safeStorage, dialog } = require("electron")
 const fs = require("node:fs")
 const path = require("node:path")
-const { deviceFiles, ensureDevice, postJson } = require("./device-setup")
+const { deviceFiles, ensureDevice } = require("./device-setup")
+const { createDeviceConnection } = require("./firebase-updates")
+const { PrivateReleaseProvider } = require("./private-release-provider")
 const { createKioskUpdater } = require("./kiosk-updater")
 const { safeToInstall } = require("./update-protocol")
 
@@ -69,14 +71,15 @@ if (!app.isPackaged) {
     require("./main")
     const publicKey = fs.readFileSync(path.join(process.resourcesPath, "update-public.pem"), "utf8")
     const updater = createKioskUpdater({
-      config, publicKey, version: app.getVersion(), stateFile: files.stateFile, fetchJson: postJson,
-      createUpdater: (options) => new (require("electron-updater").NsisUpdater)(options),
+      deviceId: config.deviceId, publicKey, version: app.getVersion(), stateFile: files.stateFile,
+      pollStatus: createDeviceConnection(config, files.write).pollStatus,
+      createUpdater: (options) => new (require("electron-updater").NsisUpdater)({ provider: "custom", updateProvider: PrivateReleaseProvider, ...options }),
       prepare, resume,
       ready: () => heartbeat.at > 0 && Date.now() - heartbeat.at < 10000,
       shutdown: async () => { if (global.shutdownKiosk) await global.shutdownKiosk() },
       recover: () => { app.relaunch(); app.quit() },
     })
-    const timer = setInterval(() => updater.tick(), 15000)
+    const timer = setInterval(() => updater.tick(), 60000)
     app.on("before-quit", () => clearInterval(timer))
     app.on("second-instance", () => { const win = BrowserWindow.getAllWindows()[0]; win?.show(); win?.focus() })
     updater.tick()

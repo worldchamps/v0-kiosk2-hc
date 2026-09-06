@@ -1,9 +1,9 @@
 const fs = require("node:fs")
-const { httpsBase, check, releaseOf, requestOf, newer } = require("./update-protocol")
+const { check, releaseOf, requestOf, newer } = require("./update-protocol")
+const safeError = (error) => String(error.message).replace(/https?:\/\/\S+/g, "[주소 숨김]").slice(0, 250)
 
 // No update discovery on launch/quit: only an explicit signed device request.
-function createKioskUpdater({ config, publicKey, version, stateFile, fetchJson, createUpdater, prepare, resume, shutdown, ready, recover = () => {} }) {
-  const base = httpsBase(config.server)
+function createKioskUpdater({ deviceId, publicKey, version, stateFile, pollStatus, createUpdater, prepare, resume, shutdown, ready, recover = () => {} }) {
   let running = false, exiting = false, shutdownStarted = false, downloaded = null, state = { state: "online" }
   if (fs.existsSync(stateFile)) state = JSON.parse(fs.readFileSync(stateFile, "utf8"))
   const save = (value) => {
@@ -11,8 +11,7 @@ function createKioskUpdater({ config, publicKey, version, stateFile, fetchJson, 
     fs.writeFileSync(stateFile + ".tmp", JSON.stringify(value), { mode: 0o600 })
     fs.renameSync(stateFile + ".tmp", stateFile)
   }
-  const headers = { "x-kiosk-device": config.deviceId, Authorization: `Bearer ${config.token}` }
-  const poll = () => fetchJson(base + "/poll", { version, ...state }, headers)
+  const poll = () => pollStatus({ version, ...state })
   async function tick() {
     if (running || exiting) return
     running = true
@@ -27,7 +26,8 @@ function createKioskUpdater({ config, publicKey, version, stateFile, fetchJson, 
       let received
       try { received = await poll() } catch { return }
       if (!received.request) { downloaded = null; return }
-      const command = requestOf(received.request, publicKey, config.deviceId)
+      let command
+      try { command = requestOf(received.request, publicKey, deviceId) } catch { downloaded = null; return }
       if (state.requestId === command.id && ["completed", "failed"].includes(state.state)) return
       if (state.requestId !== command.id) save({ state: "validating", requestId: command.id, targetVersion: command.version })
       check(command.fromVersion === version && newer(command.version, version), "현재 버전과 배포 요청이 일치하지 않습니다.")
@@ -36,7 +36,8 @@ function createKioskUpdater({ config, publicKey, version, stateFile, fetchJson, 
       if (downloaded?.id !== command.id) {
         save({ state: "downloading", requestId: command.id, targetVersion: command.version })
         await poll()
-        const updater = createUpdater({ provider: "generic", url: `${base}/feed/${command.id}/`, requestHeaders: headers, useMultipleRangeRequest: false })
+        const updater = createUpdater({ command, release })
+        updater.logger = null // private, expiring download URLs must not reach logs
         updater.autoDownload = false
         updater.autoInstallOnAppQuit = false
         updater.allowDowngrade = false
@@ -44,7 +45,7 @@ function createKioskUpdater({ config, publicKey, version, stateFile, fetchJson, 
         updater.on("error", (error) => {
           if (!exiting) return // awaited download/check calls handle these errors
           exiting = false
-          save({ ...state, state: "failed", message: String(error.message).slice(0, 250) })
+          save({ ...state, state: "failed", message: safeError(error) })
           resume()
           poll().catch(() => {}).finally(recover)
         })
@@ -60,7 +61,7 @@ function createKioskUpdater({ config, publicKey, version, stateFile, fetchJson, 
       try {
         // Revalidate after download and AFTER locking out new guest activity.
         const latest = await poll()
-        const confirmed = requestOf(latest.request, publicKey, config.deviceId)
+        const confirmed = requestOf(latest.request, publicKey, deviceId)
         check(confirmed.id === command.id, "요청이 취소되거나 변경되었습니다.")
         save({ state: "installing", requestId: command.id, targetVersion: command.version })
         await poll()
@@ -71,7 +72,7 @@ function createKioskUpdater({ config, publicKey, version, stateFile, fetchJson, 
       } catch (error) { exiting = false; resume(); throw error }
     } catch (error) {
       if (state.requestId) {
-        save({ ...state, state: "failed", message: String(error.message).slice(0, 250) })
+        save({ ...state, state: "failed", message: safeError(error) })
         await poll().catch(() => {})
       }
       if (shutdownStarted) recover()

@@ -8,7 +8,22 @@ const pkg = JSON.parse(fs.readFileSync(path.join(appDir, "package.json"), "utf8"
 assert.equal(pkg.main, "electron/bootstrap.js")
 assert.equal(pkg.version, require("../package.json").version)
 for (const name of [".env.local", ".env", ".local", "ops", "scripts"]) assert.equal(fs.existsSync(path.join(appDir, name)), false, name)
-for (const name of ["electron/bootstrap.js", "electron/setup.html", ".next/BUILD_ID", "next.config.mjs"]) assert.ok(fs.existsSync(path.join(appDir, name)), name)
+for (const name of ["electron/bootstrap.js", "electron/setup.html", "electron/firebase-updates.js", "electron/private-release-provider.js", "electron/update-cloud.json", ".next/BUILD_ID", "next.config.mjs"]) assert.ok(fs.existsSync(path.join(appDir, name)), name)
+assert.equal(require(path.join(appDir, "electron/update-cloud.json")).projectId, "beachstay-kiosk-updates")
+function inspectSecrets(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === "node_modules") continue
+    const file = path.join(dir, entry.name)
+    assert.ok(!entry.name.startsWith(".env") && entry.name !== "kiosk-device.bin", "Local configuration must not be packaged")
+    if (entry.isDirectory()) inspectSecrets(file)
+    else if (/\.(js|json|html|pem|txt)$/.test(entry.name)) {
+      const text = fs.readFileSync(file, "utf8")
+      assert.doesNotMatch(text, /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----[\s\S]+?-----END (?:RSA |EC )?PRIVATE KEY-----/)
+      assert.doesNotMatch(text, /(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,})/)
+    }
+  }
+}
+inspectSecrets(appDir)
 assert.ok(fs.existsSync(path.join(resources, "app-update.yml")))
 const key = fs.readFileSync(path.join(resources, "update-public.pem"), "utf8")
 assert.match(key, /BEGIN PUBLIC KEY/)

@@ -4,11 +4,8 @@ const crypto = require("node:crypto")
 const fs = require("node:fs")
 const os = require("node:os")
 const path = require("node:path")
-const http = require("node:http")
-const { Readable } = require("node:stream")
 const { APP_ID, digest, sign, verify, releaseOf, requestOf, newer, safeToInstall, httpsBase } = require("../electron/update-protocol")
 const { createKioskUpdater } = require("../electron/kiosk-updater")
-const { createHandler } = require("../ops/update-server/server")
 const keys = crypto.generateKeyPairSync("ed25519")
 const device = "kiosk-test-01", token = "a".repeat(64)
 const installer = Buffer.from("mock installer; never executed")
@@ -45,9 +42,9 @@ function updaterHarness(t, overrides = {}) {
   const native = { on() {}, async checkForUpdates() { return { updateInfo: { version: release.version, files: [release] } } },
     async downloadUpdate() { calls.downloads++ }, quitAndInstall() { calls.installs++ } }
   const options = {
-    config: { server: "https://updates.example.test", deviceId: device, token },
+    deviceId: device,
     publicKey: keys.publicKey, version: "1.1.0", stateFile,
-    fetchJson: async (_url, body, headers) => { assert.equal(headers["x-kiosk-device"], device); calls.reports.push(body); return remote },
+    pollStatus: async (body) => { calls.reports.push(body); return remote },
     createUpdater: () => native, prepare: async () => safe, resume: () => calls.resumes++,
     shutdown: async () => calls.shutdowns++, ready: () => true,
     ...overrides,
@@ -128,52 +125,12 @@ test("hash mismatch and downgrade/wrong source version fail before download", as
 })
 test("offline polling preserves the pending request and resumes on reconnect", async (t) => {
   let offline = true
-  const h = updaterHarness(t, { fetchJson: async () => { if (offline) throw new Error("offline"); return h.remote } })
+  const h = updaterHarness(t, { pollStatus: async () => { if (offline) throw new Error("offline"); return h.remote } })
   await h.client.tick()
   assert.equal(h.client.status().state, "online")
   offline = false
   await h.client.tick()
   assert.equal(h.client.status().state, "waiting-idle")
-})
-function memoryStore() {
-  const values = new Map()
-  return {
-    values, bucket: { file: () => ({ createReadStream: () => Readable.from(installer) }) },
-    async get(key) { return structuredClone(values.get(key) || { value: null, generation: 0 }) },
-    async put(key, value, generation) {
-      if ((values.get(key)?.generation || 0) !== generation) throw Object.assign(new Error("Conflict"), { code: 412 })
-      values.set(key, { value: structuredClone(value), generation: generation + 1 })
-    },
-  }
-}
-test("registration, authentication, private feed, revocation and expiry run end to end without cloud writes", async (t) => {
-  const store = memoryStore(), code = "b".repeat(32), pending = command()
-  await store.put(`devices/${device}.json`, { kind: "kiosk", property: "property3", pairingHash: digest(code) }, 0)
-  await store.put(`pairings/${digest(code)}.json`, { deviceId: device, expiresAt: Date.now() + 60000 }, 0)
-  const server = http.createServer(createHandler(store, keys.publicKey))
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
-  t.after(() => { server.closeAllConnections(); server.close() })
-  const base = `http://127.0.0.1:${server.address().port}`
-  const post = (path, body, headers = {}) => fetch(base + path, { method: "POST", body: JSON.stringify(body), headers })
-  assert.equal((await post("/pair", { code, token })).status, 200)
-  assert.equal((await post("/pair", { code, token })).status, 200)
-  assert.equal((await post("/pair", { code, token: "c".repeat(64) })).status, 400)
-  assert.equal((await post("/poll", { version: "1.1.0" })).status, 401)
-  const headers = { "x-kiosk-device": device, authorization: `Bearer ${token}` }
-  assert.equal((await post("/poll", { version: "1.1.0" }, headers)).status, 200)
-  await store.put(`requests/${device}.json`, sign(pending, keys.privateKey), 0)
-  await store.put("releases/1.2.0.json", sign(release, keys.privateKey), 0)
-  const status = await (await post("/poll", { version: "1.1.0" }, headers)).json()
-  assert.ok(status.request)
-  assert.equal((await fetch(base + `/feed/${pending.id}/latest.yml`)).status, 401)
-  const feed = await (await fetch(base + `/feed/${pending.id}/latest.yml`, { headers })).text()
-  assert.match(feed, /version: 1.2.0/)
-  const downloaded = Buffer.from(await (await fetch(base + `/feed/${pending.id}/installer.exe`, { headers })).arrayBuffer())
-  assert.deepEqual(downloaded, installer)
-  assert.equal((await fetch(base + "/feed/wrong-request/latest.yml", { headers })).status, 404)
-  const current = await store.get(`devices/${device}.json`)
-  await store.put(`devices/${device}.json`, { ...current.value, revoked: true }, current.generation)
-  assert.equal((await post("/poll", { version: "1.1.0" }, headers)).status, 401)
 })
 test("packaging excludes local secrets and includes bundled hardware and public trust", () => {
   const pkg = require("../package.json")

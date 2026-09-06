@@ -1,9 +1,0 @@
-**
-!ops/
-!ops/update-server/
-!ops/update-server/package.json
-!ops/update-server/package-lock.json
-!ops/update-server/server.js
-!ops/update-server/store.js
-!electron/
-!electron/update-protocol.js

@@ -11,6 +11,8 @@
   Codex 배포 PC에서 설치파일을 생성하고, 운영자 요청 시 명시한 단일 장비에만 배포한다.
   Git push 및 설치파일 업로드만으로 장비 업데이트를 요청하지 않는다.
   PMS 화면/로컬 객실관리 PC는 이 원격 업데이트 대상이 아니다.
+  무료 연결은 beachstay-kiosk-updates Firebase와 worldchamps/kiosk-private-releases PRIVATE 저장소만 사용한다.
+  기존 kiosk-pms의 보안 규칙/요금제를 변경하지 않는다. GitHub 토큰은 배포 PC에만 둔다.
 - 키오스크별 `.env.local`, 프린터 이름, COM 포트 등 장비 설정은 각 PC의 로컬 운영 설정이며 Git에 커밋하지 않는다.
 - 배포 기준 브랜치를 변경하면 이 파일의 브랜치명과 키오스크 pull 절차도 같은 커밋에서 갱신한다.
 

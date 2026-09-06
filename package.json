@@ -1,6 +1,6 @@
 {
   "name": "thebeachstay-kiosk",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "main": "electron/bootstrap.js",
   "scripts": {
@@ -9,7 +9,7 @@
     "electron": "electron .",
     "electron:build": "node scripts/build-kiosk.cjs",
     "kiosk:deploy": "node scripts/kiosk-deploy.cjs",
-    "test:updates": "node --test tests/kiosk-updates.test.cjs",
+    "test:updates": "node --test tests/kiosk-updates.test.cjs tests/private-updates.test.cjs",
     "electron:dev": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
     "electron:overlay": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && cross-env OVERLAY_MODE=true electron .\"",
     "electron:overlay:aggressive": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && cross-env OVERLAY_MODE=true AGGRESSIVE_TOPMOST=true electron .\"",

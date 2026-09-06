@@ -1,16 +1,8 @@
 const fs = require("node:fs")
 const path = require("node:path")
-const { randomBytes } = require("node:crypto")
-const { check, httpsBase, ID } = require("./update-protocol")
-
-async function postJson(url, body, headers = {}) {
-  const response = await fetch(url, {
-    method: "POST", headers: { "Content-Type": "application/json", ...headers },
-    body: JSON.stringify(body), signal: AbortSignal.timeout(20000), redirect: "error",
-  })
-  if (!response.ok) throw new Error(`업데이트 서버 응답 오류 (${response.status})`)
-  return response.json()
-}
+const { check, ID } = require("./update-protocol")
+const { createDeviceConnection } = require("./firebase-updates")
+const cloud = require("./update-cloud.json")
 function deviceFiles(app, safeStorage) {
   const dir = app.getPath("userData")
   fs.mkdirSync(dir, { recursive: true })
@@ -42,21 +34,20 @@ async function ensureDevice({ app, BrowserWindow, ipcMain, dialog, files }) {
       busy = true
       try {
         if (restart === true && !config?.registered) { config = null; files.write({}) }
-        if (!config?.token) {
+        if (!config?.code) {
           const registration = await dialog.showOpenDialog(win, { title: "배포 PC에서 받은 장비 등록 JSON 선택", properties: ["openFile"], filters: [{ name: "장비 등록", extensions: ["json"] }] })
           if (registration.canceled) return { error: "등록 파일을 선택해 주세요." }
           const parsed = JSON.parse(fs.readFileSync(registration.filePaths[0], "utf8"))
-          check(ID.test(parsed.deviceId || "") && /^property[1-4]$/.test(parsed.property || "") && /^[a-f0-9]{32}$/.test(parsed.code || ""), "잘못된 등록 파일입니다.")
+          check(parsed.projectId === cloud.projectId && ID.test(parsed.deviceId || "") && /^property[1-4]$/.test(parsed.property || "") && /^[a-f0-9]{32}$/.test(parsed.code || ""), "잘못된 등록 파일입니다.")
           const envFile = await dialog.showOpenDialog(win, { title: "이 키오스크의 기존 .env.local 설정 파일 선택", properties: ["openFile"], filters: [{ name: "PC 설정 파일", extensions: ["*"] }] })
           if (envFile.canceled) return { error: "기존 PC 설정 파일을 선택해 주세요." }
           const env = require("dotenv").parse(fs.readFileSync(envFile.filePaths[0]))
           check((env.KIOSK_PROPERTY_ID || env.NEXT_PUBLIC_KIOSK_PROPERTY_ID) === parsed.property, "등록 숙소와 PC 설정의 숙소가 다릅니다.")
           for (const key of Object.keys(env)) check(!/^(NODE_OPTIONS|ELECTRON_|KIOSK_UPDATE_|PATH$|NODE_PATH$)/.test(key), "실행기 제어 설정은 가져올 수 없습니다.")
-          config = { ...parsed, server: httpsBase(parsed.server), env, token: randomBytes(32).toString("hex") }
+          config = { projectId: parsed.projectId, deviceId: parsed.deviceId, property: parsed.property, code: parsed.code, env }
           files.write(config) // enables safe retry if the pairing response is lost
         }
-        const paired = await postJson(config.server + "/pair", { code: config.code, token: config.token })
-        check(paired.deviceId === config.deviceId && paired.property === config.property, "장비 등록 응답이 일치하지 않습니다.")
+        await createDeviceConnection(config, files.write).pair()
         delete config.code
         config.registered = true
         files.write(config)
@@ -73,4 +64,4 @@ async function ensureDevice({ app, BrowserWindow, ipcMain, dialog, files }) {
     win.loadURL(setupUrl)
   })
 }
-module.exports = { postJson, deviceFiles, ensureDevice }
+module.exports = { deviceFiles, ensureDevice }
