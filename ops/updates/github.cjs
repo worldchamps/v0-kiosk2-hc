@@ -1,7 +1,7 @@
 const fs = require("node:fs")
 const crypto = require("node:crypto")
 const { cliToken } = require("./admin.cjs")
-const { check, sign } = require("../../electron/update-protocol")
+const { check, sign, releaseTag } = require("../../electron/update-protocol")
 const { downloadUrl } = require("../../electron/private-release-provider")
 
 async function github(repo, suffix = "", method = "GET", body) {
@@ -14,10 +14,10 @@ async function github(repo, suffix = "", method = "GET", body) {
   return response.json()
 }
 async function privateRepo(repo) { check((await github(repo)).private === true, "Release repository must remain PRIVATE") }
-async function publishInstaller(config, file, version, privateKey) {
+async function publishInstaller(config, file, version, privateKey, arch = "x64") {
+  const tag = releaseTag(version, arch)
   const repo = config.githubRepo
   await privateRepo(repo)
-  const tag = "v" + version
   let existing
   try { existing = await github(repo, "/releases/tags/" + tag) } catch (error) { if (error.status !== 404) throw error }
   check(!existing, "Release version already exists; do not overwrite an installer")
@@ -25,7 +25,7 @@ async function publishInstaller(config, file, version, privateKey) {
   for await (const chunk of fs.createReadStream(file)) { sha512.update(chunk); sha256.update(chunk) }
   const size = fs.statSync(file).size
   check(size > 0 && size < 2 * 1024 ** 3, "Installer must be below 2 GiB")
-  const draft = await github(repo, "/releases", "POST", { tag_name: tag, name: "Kiosk " + version, draft: true, body: "Private installer. Publishing does not request an update on any device." })
+  const draft = await github(repo, "/releases", "POST", { tag_name: tag, name: "Kiosk " + version + " (" + arch + ")", draft: true, body: "Private installer. Publishing does not request an update on any device." })
   const url = new URL(draft.upload_url.split("{")[0])
   check(url.origin === "https://uploads.github.com", "Unexpected upload host")
   async function upload(name, body, length, contentType) {
@@ -40,7 +40,7 @@ async function publishInstaller(config, file, version, privateKey) {
   const asset = await upload("installer.exe", fs.createReadStream(file), size, "application/octet-stream")
   const expected256 = "sha256:" + sha256.digest("hex")
   check(asset.size === size && asset.digest === expected256, "GitHub uploaded file verification failed")
-  const signed = sign({ appId: "com.thebeachstay.kiosk", platform: "win32", arch: "x64", version,
+  const signed = sign({ appId: "com.thebeachstay.kiosk", platform: "win32", arch, version,
     sha512: sha512.digest("base64"), size, createdAt: Date.now(), repository: repo, assetId: asset.id }, privateKey)
   const metadata = Buffer.from(JSON.stringify(signed))
   await upload("release.json", metadata, metadata.length, "application/json")

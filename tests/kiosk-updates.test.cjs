@@ -123,6 +123,30 @@ test("hash mismatch and downgrade/wrong source version fail before download", as
   assert.equal(h2.client.status().state, "failed")
   assert.equal(h2.client.status().requestId, h2.request.id)
 })
+
+test("ia32 updates install only on ia32; architecture mismatch is rejected before download", async (t) => {
+  const h = updaterHarness(t, { arch: "ia32" })
+  h.remote.release = sign({ ...release, arch: "ia32" }, keys.privateKey)
+  h.remote.request = sign({ ...h.request, arch: "ia32" }, keys.privateKey)
+  h.idle()
+  await h.client.tick()
+  assert.equal(h.calls.downloads, 1)
+  assert.equal(h.calls.installs, 1)
+  for (const arch of ["x64", "ia32"]) {
+    const other = arch === "x64" ? "ia32" : "x64"
+    const blocked = updaterHarness(t, { arch })
+    blocked.remote.release = sign({ ...release, arch: other }, keys.privateKey)
+    await blocked.client.tick()
+    assert.equal(blocked.calls.downloads, 0)
+    assert.equal(blocked.calls.installs, 0)
+    assert.equal(blocked.client.status().state, "failed")
+    const wrongCommand = updaterHarness(t, { arch })
+    wrongCommand.remote.release = sign({ ...release, arch }, keys.privateKey)
+    wrongCommand.remote.request = sign({ ...wrongCommand.request, arch: other }, keys.privateKey)
+    await wrongCommand.client.tick()
+    assert.equal(wrongCommand.calls.downloads, 0)
+  }
+})
 test("offline polling preserves the pending request and resumes on reconnect", async (t) => {
   let offline = true
   const h = updaterHarness(t, { pollStatus: async () => { if (offline) throw new Error("offline"); return h.remote } })

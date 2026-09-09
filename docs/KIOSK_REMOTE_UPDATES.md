@@ -43,6 +43,7 @@ PowerShell, 키오스크 저장소 루트에서:
 
 ```powershell
 npm.cmd ci
+# 아래 python은 64비트 Python이어야 한다.
 python -m venv .local/build-python
 .local/build-python/Scripts/python.exe -m pip install -r hardware_server/requirements-build.txt
 # 최초 한 번만 생성. 기존 개인키를 재생성하거나 덮어쓰지 않는다.
@@ -56,6 +57,46 @@ package.json/package-lock.json 버전을 함께 올린다. 같은 버전 덮어�
 공용 설치파일은 PC별 .env 없이 깨끗한 빌드 폴더에서 생성한다.
 Windows Authenticode 인증서가 없으면 SmartScreen 경고가 있을 수 있다. Ed25519와 Windows 코드 서명은 다른 기능이다.
 기존 장비 진단 화면의 import 경고와 기존 타입/린트 검사 생략 설정은 이 작업에서 변경하지 않았다.
+
+### Windows 32비트 빌드 (1.3.0부터)
+
+CPU가 x64여도 **Windows가 32비트이면 ia32 설치파일**을 사용한다.
+`electron:build`는 기존처럼 x64만, `electron:build:ia32`는 ia32만 빌드한다.
+Node.js 개발 도구는 64비트를 사용해도 되지만 내장 장비 프로그램을 만드는 Python은 대상 비트수와 같아야 한다.
+공식 [Python Windows 배포](https://docs.python.org/3/using/windows.html#the-nuget-org-packages)의
+32비트 Python을 별도 폴더에 준비한 후 다음 명령을 실행한다. 기존 Python/Windows를 교체하지 않는다.
+
+```powershell
+# <32비트 Python 경로>를 실제 준비한 경로로 바꾼다.
+& '<32비트 Python 경로>/python.exe' -m venv .local/build-python-ia32
+.local/build-python-ia32/Scripts/python.exe -m pip install -r hardware_server/requirements-build.txt
+# 기존 장비가 신뢰하는 공개키를 사용한다. keygen을 다시 실행하지 않는다.
+$env:KIOSK_UPDATE_PUBLIC_KEY_FILE = (Resolve-Path .local/update-signing/public.pem).Path
+npm.cmd run electron:build:ia32
+```
+
+다른 위치의 빌드용 Python은 `KIOSK_BUILD_PYTHON`으로 지정한다. 이 변수가 설정되어 있으면 기본 경로보다 우선하므로
+32/64비트 빌드를 전환할 때 맞는 Python으로 변경하거나 해당 변수만 해제한다.
+빌드는 Python 실행파일과 실제 런타임 비트수를 확인하며, 다르면 패키징 전에 중단한다.
+[PyInstaller도 Python의 비트수에 따라 실행파일을 생성한다.](https://pyinstaller.org/en/v6.16.0/operating-mode.html)
+
+| Windows | 빌드 명령 | 설치파일 |
+| --- | --- | --- |
+| 64비트 | `npm.cmd run electron:build` | `dist/x64/TheBeachStay Kiosk Setup 1.3.0-x64.exe` |
+| 32비트 | `npm.cmd run electron:build:ia32` | `dist/ia32/TheBeachStay Kiosk Setup 1.3.0-ia32.exe` |
+
+두 빌드는 순서대로 실행한다. 같은 `.next` 빌드 폴더를 사용하므로 병렬 실행하지 않는다.
+검증은 NSIS 외부 실행파일(항상 32비트일 수 있음)이 아닌 내부 페이로드와 Electron/장비 EXE의 비트수를 검사한다.
+패키지의 장비 프로그램은 `--self-test`로, Electron은 Node 모드로 의존성 로딩과 임시 loopback 웹서버의 설정 응답을 확인한다.
+예약/운영 DB 및 장비에는 연결하지 않는다.
+[SerialPort가 제공하는 N-API 바이너리](https://serialport.io/docs/guide-installation/)를 사용한다.
+빌드 래퍼는 대상 비트수의 바이너리를 확인한 뒤 재컴파일을 생략하고, 최종 Electron에서 실제 로딩을 검증한다.
+제조사 Bixolon DLL을 포함해야 하면 같은 비트수의 DLL 경로를 `KIOSK_BIXOLON_SDK_FILE`로 지정한다.
+지정하지 않으면 제조사 DLL을 새로 포함하지 않으므로 실제 프린터의 드라이버/SDK 준비 여부를 별도로 확인한다.
+
+기존 Electron 28.3.3을 유지한 호환성 확장이다. 최신 런타임으로 교체한 보안 업데이트는 아니다.
+[Electron 43은 마지막 32비트 지원 계열](https://www.electronjs.org/blog/electron-43-0)이므로 추후 런타임 업그레이드 시 지원 범위를 다시 확인한다.
+Windows 10 Enterprise 2016 LTSB 32비트 실기기에서의 화면/결제/인쇄/재부팅/원격 업데이트 검증은 별도로 필요하다.
 
 ## Firebase 초기 설정
 
@@ -74,7 +115,13 @@ property3의 A동/B동 PC는 각각 해당 동 객실만 판매·체크인한다
 
 ```powershell
 node scripts/kiosk-deploy.cjs register --device property3-kiosk-01 --property property3 --out .local/property3-registration.json
+# 새 32비트 PC 등록 예시. 실제 승인된 장비 ID로 변경한다.
+node scripts/kiosk-deploy.cjs register --device property3-kiosk-a-32 --property property3 --arch ia32 --out .local/property3-a-32-registration.json
 ```
+
+`--arch` 생략 시 x64이다. 등록 JSON과 장비 등록 목록에 비트수를 기록하며, 앱의 비트수와 다르면 초기 등록을 중단한다.
+비트수 필드가 없는 기존 등록은 x64로 해석한다. 기존 장비의 비트수를 재등록으로 덮어쓰거나 자동 전환하지 않는다.
+32비트 OS용 신규 장비는 새 ID와 `--arch ia32`로 등록한다. A/B동 설정과 등록 ID는 비트수와 별도로 관리한다.
 
 지정한 키오스크에서 기존 BAT 프로그램을 정상 종료하고 새 설치파일을 실행한다.
 등록 화면에서 받은 JSON과 **그 PC의 기존 .env.local**을 선택한다.
@@ -88,25 +135,35 @@ node scripts/kiosk-deploy.cjs register --device property3-kiosk-01 --property pr
 ## 배포 PC에서 요청
 
 ```powershell
-node scripts/kiosk-deploy.cjs publish --file "dist/TheBeachStay Kiosk Setup 1.2.0.exe" --version 1.2.0 --key .local/update-signing/private.pem
+node scripts/kiosk-deploy.cjs publish --file "dist/x64/TheBeachStay Kiosk Setup 1.3.0-x64.exe" --version 1.3.0 --arch x64 --key .local/update-signing/private.pem
+node scripts/kiosk-deploy.cjs publish --file "dist/ia32/TheBeachStay Kiosk Setup 1.3.0-ia32.exe" --version 1.3.0 --arch ia32 --key .local/update-signing/private.pem
 node scripts/kiosk-deploy.cjs status --device property3-kiosk-01
-node scripts/kiosk-deploy.cjs request --device property3-kiosk-01 --version 1.2.0 --from-version 1.1.0 --key .local/update-signing/private.pem
+node scripts/kiosk-deploy.cjs request --device property3-kiosk-01 --version 1.3.0 --from-version 1.2.0 --key .local/update-signing/private.pem
 node scripts/kiosk-deploy.cjs status --device property3-kiosk-01
 node scripts/kiosk-deploy.cjs cancel --device property3-kiosk-01
 ```
 
 request는 운영자가 명시적으로 지정한 장비와 버전에만 실행한다.
-publish는 실제 EXE 버전/이름/업로드 SHA-256을 확인하고 SHA-512 서명 메타데이터를 저장한다.
+publish는 실제 EXE 버전/이름/내부 비트수/업로드 SHA-256을 확인하고 SHA-512 서명 메타데이터를 저장한다.
+x64는 기존 태그/DB 경로(`v1.3.0`, `releases/v1_3_0`)를 유지하고 ia32는 별도 경로(`v1.3.0-ia32`, `releases/v1_3_0-ia32`)를 사용한다.
+request는 장비 등록의 비트수로 릴리스를 선택한다. 앱에서도 서명된 비트수를 확인해 잘못된 파일은 다운로드 전에 거부한다.
+32비트 지원을 위해 Firebase 보안 규칙이나 PMS를 변경할 필요는 없다.
 업로드 도중 실패하면 비공개 draft를 확인한다. 임의 덮어쓰기 대신 원인 확인 후 새 버전을 사용한다.
 취소/접근 차단은 이미 시작된 설치 또는 이미 전달된 만료형 URL을 회수하지 못한다.
 초기 무료 연결 버전은 1.2.0이며, 최초 설치한 장비의 다음 원격 업데이트는 더 높은 버전이어야 한다.
 
 ## 검증
 
+1.3.0 개발 PC 검증 (2026-09-09, Windows 11 x64): 업데이트/아키텍처 테스트 24개와 예약/A·B동 회귀 테스트 25개 통과.
+production 빌드 및 ia32/x64 NSIS 생성, 각 패키지의 PE 비트수·통신 모듈 로딩·장비 import·로컬 웹서버 응답 검사 통과.
+ia32 실행 검사는 64비트 Windows의 32비트 실행 환경에서 수행했다. Windows 10 LTSB 32비트 실기기 검증을 대신하지 않는다.
+이 검증에서 설치파일 게시, 실제 NSIS 설치, 장비 업데이트 요청, 결제/인쇄, 운영 DB 변경은 수행하지 않았다.
+
 ```powershell
 npm.cmd run test:updates
-node --experimental-strip-types --test tests/reservation-check-in.test.mts tests/reservation-schedule.test.mts tests/kiosk-sales-config.test.mts
+node --experimental-strip-types --test tests/reservation-check-in.test.mts tests/reservation-schedule.test.mts tests/kiosk-sales-config.test.mts tests/kiosk-building-scope.test.mts
 npm.cmd run electron:build
+npm.cmd run electron:build:ia32
 # 명시적 live QA: 전용 프로젝트에 임시 qa-* 데이터/계정을 만들고 검사 후 제거한다.
 node scripts/test-update-cloud.cjs --run-live
 node scripts/test-update-cloud.cjs --run-live --release-version 1.2.0

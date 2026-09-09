@@ -3,7 +3,7 @@ const { check, releaseOf, requestOf, newer } = require("./update-protocol")
 const safeError = (error) => String(error.message).replace(/https?:\/\/\S+/g, "[주소 숨김]").slice(0, 250)
 
 // No update discovery on launch/quit: only an explicit signed device request.
-function createKioskUpdater({ deviceId, publicKey, version, stateFile, pollStatus, createUpdater, prepare, resume, shutdown, ready, recover = () => {} }) {
+function createKioskUpdater({ deviceId, publicKey, version, stateFile, pollStatus, createUpdater, prepare, resume, shutdown, ready, recover = () => {}, arch = process.arch }) {
   let running = false, exiting = false, shutdownStarted = false, downloaded = null, state = { state: "online" }
   if (fs.existsSync(stateFile)) state = JSON.parse(fs.readFileSync(stateFile, "utf8"))
   const save = (value) => {
@@ -31,7 +31,8 @@ function createKioskUpdater({ deviceId, publicKey, version, stateFile, pollStatu
       if (state.requestId === command.id && ["completed", "failed"].includes(state.state)) return
       if (state.requestId !== command.id) save({ state: "validating", requestId: command.id, targetVersion: command.version })
       check(command.fromVersion === version && newer(command.version, version), "현재 버전과 배포 요청이 일치하지 않습니다.")
-      const release = releaseOf(received.release, publicKey)
+      const release = releaseOf(received.release, publicKey, arch)
+      check(!command.arch || command.arch === arch, "다른 아키텍처의 업데이트 요청입니다.")
       check(release.version === command.version, "배포 버전 불일치")
       if (downloaded?.id !== command.id) {
         save({ state: "downloading", requestId: command.id, targetVersion: command.version })

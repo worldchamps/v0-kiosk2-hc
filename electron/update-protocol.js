@@ -5,6 +5,14 @@ const ID = /^[a-zA-Z0-9_-]{8,80}$/
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const digest = (value) => crypto.createHash("sha256").update(value).digest("hex")
 function check(condition, message) { if (!condition) throw new Error(message) }
+function checkArch(arch) {
+  check(arch === "x64" || arch === "ia32", "지원하지 않는 아키텍처 (x64 또는 ia32 필요)")
+  return arch
+}
+function releaseTag(version, arch = "x64") {
+  check(VERSION.test(version || ""), "정식 버전 번호가 필요합니다.")
+  return "v" + version + (checkArch(arch) === "ia32" ? "-ia32" : "")
+}
 function httpsBase(value) {
   const url = new URL(value)
   check(url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash, "HTTPS 서버 주소가 필요합니다.")
@@ -20,9 +28,9 @@ function verify(envelope, key) {
   check(crypto.verify(null, bytes, key, Buffer.from(envelope.signature || "", "base64")), "배포 서명이 일치하지 않습니다.")
   return JSON.parse(bytes.toString("utf8"))
 }
-function releaseOf(envelope, key) {
+function releaseOf(envelope, key, arch = process.arch) {
   const release = verify(envelope, key)
-  check(release.appId === APP_ID && VERSION.test(release.version) && release.platform === "win32" && release.arch === "x64", "지원하지 않는 설치파일")
+  check(release.appId === APP_ID && VERSION.test(release.version) && release.platform === "win32" && release.arch === checkArch(arch), "지원하지 않는 설치파일 아키텍처/버전")
   check(/^[A-Za-z0-9+/]{86}==$/.test(release.sha512) && Number.isSafeInteger(release.size) && release.size > 0, "설치파일 해시/크기 오류")
   return release
 }
@@ -42,4 +50,4 @@ function newer(next, current) {
 function safeToInstall(status, now = Date.now()) {
   return status.safe === true && now - status.at < 10000 && now - status.lastActivity >= 60000
 }
-module.exports = { APP_ID, ID, VERSION, digest, check, httpsBase, sign, verify, releaseOf, requestOf, newer, safeToInstall }
+module.exports = { APP_ID, ID, VERSION, digest, check, checkArch, releaseTag, httpsBase, sign, verify, releaseOf, requestOf, newer, safeToInstall }

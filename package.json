@@ -1,6 +1,6 @@
 {
   "name": "thebeachstay-kiosk",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "main": "electron/bootstrap.js",
   "scripts": {
@@ -8,8 +8,9 @@
     "dev": "next dev",
     "electron": "electron .",
     "electron:build": "node scripts/build-kiosk.cjs",
+    "electron:build:ia32": "node scripts/build-kiosk.cjs --arch ia32",
     "kiosk:deploy": "node scripts/kiosk-deploy.cjs",
-    "test:updates": "node --test tests/kiosk-updates.test.cjs tests/private-updates.test.cjs",
+    "test:updates": "node --test tests/kiosk-updates.test.cjs tests/private-updates.test.cjs tests/kiosk-architecture.test.cjs",
     "electron:dev": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
     "electron:overlay": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && cross-env OVERLAY_MODE=true electron .\"",
     "electron:overlay:aggressive": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && cross-env OVERLAY_MODE=true AGGRESSIVE_TOPMOST=true electron .\"",
@@ -91,7 +92,7 @@
     ],
     "extraResources": [
       {
-        "from": ".local/hardware/KioskHardware",
+        "from": ".local/hardware-${arch}/KioskHardware",
         "to": "hardware",
         "filter": [
           "**/*"
@@ -100,7 +101,8 @@
       { "from": ".local/update-public.pem", "to": "update-public.pem" }
     ],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [{ "target": "nsis", "arch": ["x64", "ia32"] }],
+      "artifactName": "TheBeachStay Kiosk Setup ${version}-${arch}.${ext}",
       "icon": "public/icon.ico"
     },
     "nsis": {
