@@ -6,6 +6,8 @@
 import { getKioskPropertyId, propertyUsesPrinter } from "./property-utils"
 import * as HardwarePrinter from "@/lib/printer-utils"
 
+const commandLog: Array<{ command: string; bytes: number[]; timestamp: string }> = []
+
 function shouldUsePrinter(): boolean {
   const property = getKioskPropertyId()
   return propertyUsesPrinter(property)
@@ -31,8 +33,7 @@ export async function autoConnectPrinter(): Promise<boolean> {
  * 프린터 연결 해제 (Hardware Server 상태이므로 실제 해제 안 함)
  */
 export async function disconnectPrinter(): Promise<void> {
-  // No-op
-  console.log("[PRINTER] disconnectPrinter request ignored (Managed by Hardware Server)")
+  throw new Error("인쇄 서버가 프린터 연결을 관리합니다. 이 화면에서는 장치를 연결 해제할 수 없습니다.")
 }
 
 /**
@@ -48,6 +49,8 @@ export function isPrinterConnected(): boolean {
  */
 export async function printReceipt(receiptData: any): Promise<boolean> {
   if (!shouldUsePrinter()) return false
+  commandLog.push({ command: "영수증 전송 요청", bytes: [], timestamp: new Date().toISOString() })
+  if (commandLog.length > 100) commandLog.shift()
 
   const property = getKioskPropertyId()
 
@@ -115,20 +118,22 @@ export async function printTestPage(): Promise<boolean> {
 /**
  * Legacy Stub Functions
  */
-export function setSimplePrintMode(simple: boolean): void { }
+export function setSimplePrintMode(simple: boolean): void {
+  if (simple) throw new Error("인쇄 서버 방식에서는 단순 인쇄 모드 전환을 지원하지 않습니다.")
+}
 export function getSimplePrintMode(): boolean { return false }
 export function getPrinterModel(): string {
   return getKioskPropertyId() === "property4" ? "SAM4S GCUBE (Windows)" : "Bixolon (HW Server)"
 }
 export function getPrinterStatus(): any {
   return {
-    connected: true,
+    connected: isPrinterConnected(),
     model: getKioskPropertyId() === "property4" ? "SAM4S_GCUBE_WINDOWS" : "HW_SERVER",
     simpleMode: false,
   }
 }
 export function getPrinterDiagnostics(): any {
-  return { connected: true, message: "Managed by Hardware Server" }
+  return { connected: isPrinterConnected(), commandLog: [...commandLog], message: "마지막 인쇄 서버 연결 상태입니다. 실제 프린터·용지 상태는 확인되지 않았습니다." }
 }
 export async function checkPrinterStatus(): Promise<{
   success: boolean
@@ -137,16 +142,21 @@ export async function checkPrinterStatus(): Promise<{
   error: boolean
   message: string
 }> {
-  const connected = isPrinterConnected()
+  const connected = await autoConnectPrinter()
   return {
-    success: connected,
+    success: false,
     online: connected,
-    paperOk: connected,
+    paperOk: false,
     error: !connected,
-    message: connected ? "Hardware Server에서 프린터를 관리하고 있습니다." : "프린터를 사용할 수 없습니다.",
+    message: connected ? "인쇄 서버 연결만 확인되었습니다. 실제 인쇄·용지 상태는 현장에서 확인하세요." : "인쇄 서버에 연결할 수 없습니다.",
   }
 }
 export function getCommandLog(): Array<{ command: string; bytes: number[]; timestamp: string }> {
-  return []
+  return [...commandLog]
 }
-export function clearCommandLog(): void { }
+export function clearCommandLog(): void { commandLog.length = 0 }
+
+export async function checkPrinterReady() {
+  const status = await checkPrinterStatus()
+  return { ready: false, online: status.online, paperOut: null, error: null, message: status.message }
+}

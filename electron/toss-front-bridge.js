@@ -316,7 +316,11 @@ class TossFrontBridge extends EventEmitter {
       return this.signPayment(result.payment)
     } catch (originalError) {
       if (originalError instanceof Error && originalError.code === "PAYMENT_FAILED") {
-        throw new Error(originalError.message === "CANCELED" ? "결제가 취소되었습니다." : originalError.message)
+        const failure = new Error(originalError.message === "CANCELED" ? "결제가 취소되었습니다." : originalError.message)
+        // Only the authenticated terminal's explicit non-approval may unlock
+        // the UI. Transport errors and failed recovery remain uncertain.
+        if (originalError.message === "CANCELED") failure.code = "PAYMENT_NOT_APPROVED"
+        throw failure
       }
       try {
         await this.waitForAuthentication(15000)
@@ -372,7 +376,20 @@ class TossFrontBridge extends EventEmitter {
       throw new Error("취소할 결제 정보의 서명이 올바르지 않습니다.")
     }
     const result = await this.request("CANCEL_REQUEST", { payment }, 75000)
-    return result.cancel
+    if (result.type !== "CANCEL_SUCCESS" || result.cancel?.paymentKey !== payment.paymentKey ||
+        result.cancel?.amount !== payment.amount || typeof result.cancel?.approvalNumber !== "string") {
+      throw new Error("카드 취소 응답이 원래 결제와 일치하지 않습니다. 관리자에게 확인해주세요.")
+    }
+    // A cancellation receipt cannot be replaced with the original approval proof.
+    const cancelProof = {
+      operation: "toss-front-cancel",
+      paymentKey: payment.paymentKey,
+      amount: payment.amount,
+      cancelApprovalNumber: result.cancel.approvalNumber,
+      timestamp: Date.now(),
+    }
+    const signature = createHmac("sha256", this.pairingKey).update(JSON.stringify(cancelProof)).digest("hex")
+    return { ...result.cancel, cancelProof: { ...cancelProof, signature } }
   }
 
   handleSerialData(chunk) {

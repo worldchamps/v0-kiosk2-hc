@@ -3,8 +3,16 @@
  * 표준 ESC/POS 명령어 사용 (모든 프린터 호환)
  */
 
+interface WebSerialPort {
+  readable: ReadableStream<Uint8Array> | null
+  writable: WritableStream<Uint8Array> | null
+  getInfo(): { usbVendorId?: number; usbProductId?: number }
+  open(options: { baudRate: number; dataBits: number; stopBits: number; parity: "none"; flowControl: "none" }): Promise<void>
+  close(): Promise<void>
+}
+type SerialNavigator = Navigator & { serial: { requestPort(): Promise<WebSerialPort>; getPorts(): Promise<WebSerialPort[]> } }
 // 프린터 연결 상태
-let printerPort: SerialPort | null = null
+let printerPort: WebSerialPort | null = null
 let printerWriter: WritableStreamDefaultWriter | null = null
 
 // Print mode setting
@@ -144,7 +152,7 @@ export async function connectPrinter(): Promise<boolean> {
     // 사용자에게 포트 선택 요청
     try {
       logDebug("👤 사용자에게 포트 선택 요청 중...")
-      printerPort = await (navigator as any).serial.requestPort()
+      printerPort = await (navigator as SerialNavigator).serial.requestPort()
       const portInfo = printerPort.getInfo()
       logDebug(`✅ 사용자가 포트를 선택했습니다: USB Vendor=${portInfo.usbVendorId}, Product=${portInfo.usbProductId}`)
     } catch (err) {
@@ -215,7 +223,7 @@ export async function autoConnectPrinter(): Promise<boolean> {
     }
 
     // Get list of available ports
-    const ports = await (navigator as any).serial.getPorts()
+    const ports = await (navigator as SerialNavigator).serial.getPorts()
     logDebug(`📡 사용 가능한 포트 ${ports.length}개 발견`)
 
     if (ports.length === 0) {
@@ -239,6 +247,7 @@ export async function autoConnectPrinter(): Promise<boolean> {
 
     // Set up the output stream
     const writableStream = printerPort.writable
+    if (!writableStream) return false
     printerWriter = writableStream.getWriter()
 
     // Initialize printer

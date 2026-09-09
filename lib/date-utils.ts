@@ -172,6 +172,28 @@ export const getReservationCheckInEligibility = (dateValue: string | undefined, 
   }
 }
 
+// Check-in grants room credentials, so both the start and the end of the stay
+// must be valid, including when an earlier successful request is replayed.
+export const getReservationStayEligibility = (
+  checkInValue: string | undefined,
+  checkOutValue: string | undefined,
+  now = new Date(),
+) => {
+  const entry = getReservationCheckInEligibility(checkInValue, now)
+  if (!entry.allowed) return entry
+  const checkOutDateTime = resolveReservationSheetDateTime(checkOutValue, "11:00")
+  const timestamp = (value: string) => new Date(`${normalizeDate(value)}T${getTime(value, "")}:00+09:00`).getTime()
+  const endsAt = checkOutDateTime ? timestamp(checkOutDateTime) : NaN
+  if (!Number.isFinite(endsAt) || endsAt <= timestamp(entry.checkInDateTime)) {
+    return { ...entry, allowed: false, code: "INVALID_CHECK_OUT_TIME",
+      message: "예약 퇴실 일시를 확인할 수 없습니다. 직원에게 문의해 주세요.", checkOutDateTime }
+  }
+  const allowed = now.getTime() < endsAt
+  return { ...entry, allowed, code: allowed ? "" : "RESERVATION_EXPIRED",
+    message: allowed ? "" : "예약된 퇴실 시간이 지나 이 예약으로 입실할 수 없습니다. 직원에게 문의해 주세요.",
+    checkOutDateTime }
+}
+
 export const formatDateTimeKorean = (value: string) => {
   const date = formatDateKorean(value)
   const time = getTime(value, "")

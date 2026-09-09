@@ -1,184 +1,146 @@
 "use client"
 
 import type React from "react"
-import { createContext, useContext, useState, useCallback, useRef } from "react"
-import { dispenseBills } from "@/lib/bill-dispenser-utils"
+import { createContext, useContext, useState, useCallback, useEffect, useRef } from "react"
+import type { CompletedPayment } from "@/lib/payment-types"
 
-// 결제 세션 상태 타입
+export interface PendingBooking {
+  requestId: string
+  body: string
+  cancellationStarted?: boolean
+}
+
 export interface PaymentSession {
-  isActive: boolean // 결제 진행 중 여부
-  acceptedAmount: number // 현재까지 받은 금액
-  requiredAmount: number // 필요한 금액
-  acceptedBills: number[] // 받은 지폐 목록 (1000, 5000, 10000, 50000)
-  sessionStartTime: number // 세션 시작 시간
-  reservationData?: any // 예약 정보 (현장예약용)
-  overpaymentAmount: number // 초과 지불 금액
+  isActive: boolean
+  acceptedAmount: number
+  requiredAmount: number
+  acceptedBills: number[]
+  sessionStartTime: number
+  reservationData?: any
+  overpaymentAmount: number
+  returnedAmount?: number
+  method?: "cash" | "card"
+  cardInFlight?: boolean
+  recoveryRequired?: string
+  recoveryEvidence?: { expectedAmount: number; payment: CompletedPayment }
+  pendingBooking?: PendingBooking
 }
 
 interface PaymentContextType {
   paymentSession: PaymentSession
-  startPayment: (requiredAmount: number, reservationData?: any) => void
+  ready: boolean
+  storageError: string
+  startPayment: (amount: number, reservationData?: any, method?: "cash" | "card") => boolean
   addBill: (amount: number) => void
-  completePayment: () => void
-  cancelPayment: () => Promise<void>
+  recordCashReturned: (amount: number) => void
+  completePayment: () => boolean
+  cancelPayment: (refundedAmount?: number) => Promise<boolean>
   isPaymentComplete: () => boolean
-  refundChange: () => Promise<boolean>
+  setCardInFlight: (busy: boolean) => boolean
+  requireRecovery: (message: string, evidence?: PaymentSession["recoveryEvidence"]) => void
+  savePendingBooking: (booking: PendingBooking) => boolean
 }
 
 const PaymentContext = createContext<PaymentContextType | undefined>(undefined)
-
+const STORAGE_KEY = "kiosk-payment-recovery-v1"
 const initialSession: PaymentSession = {
-  isActive: false,
-  acceptedAmount: 0,
-  requiredAmount: 0,
-  acceptedBills: [],
-  sessionStartTime: 0,
-  overpaymentAmount: 0,
+  isActive: false, acceptedAmount: 0, requiredAmount: 0, acceptedBills: [], sessionStartTime: 0, overpaymentAmount: 0,
 }
 
 export function PaymentProvider({ children }: { children: React.ReactNode }) {
   const [paymentSession, setPaymentSession] = useState<PaymentSession>(initialSession)
-  const refundInProgressRef = useRef(false)
+  const current = useRef(paymentSession)
+  const [ready, setReady] = useState(false)
+  const [storageError, setStorageError] = useState("")
 
-  // 결제 시작
-  const startPayment = useCallback((requiredAmount: number, reservationData?: any) => {
-    console.log("[v0] Payment session started:", { requiredAmount, reservationData })
-    setPaymentSession({
-      isActive: true,
-      acceptedAmount: 0,
-      requiredAmount,
-      acceptedBills: [],
-      sessionStartTime: Date.now(),
-      reservationData,
-      overpaymentAmount: 0,
-    })
-  }, [])
-
-  // 지폐 추가
-  const addBill = useCallback((amount: number) => {
-    setPaymentSession((prev) => {
-      if (!prev.isActive) return prev
-
-      const newAcceptedAmount = prev.acceptedAmount + amount
-      const newAcceptedBills = [...prev.acceptedBills, amount]
-
-      const overpayment = Math.max(0, newAcceptedAmount - prev.requiredAmount)
-
-      console.log("[v0] Bill added:", {
-        amount,
-        newAcceptedAmount,
-        requiredAmount: prev.requiredAmount,
-        overpayment,
-      })
-
-      return {
-        ...prev,
-        acceptedAmount: newAcceptedAmount,
-        acceptedBills: newAcceptedBills,
-        overpaymentAmount: overpayment,
-      }
-    })
-  }, [])
-
-  const refundChange = useCallback(async (): Promise<boolean> => {
-    const overpayment = paymentSession.overpaymentAmount
-
-    if (overpayment === 0) {
-      console.log("[v0] No overpayment to refund")
-      return true
-    }
-
-    // 1만원 단위로 나누어떨어지지 않으면 오류
-    if (overpayment % 10000 !== 0) {
-      console.error("[v0] Overpayment is not a multiple of 10,000 won:", overpayment)
-      return false
-    }
-
-    const billCount = overpayment / 10000
-    console.log(`[v0] Refunding ${overpayment}원 (${billCount}장의 1만원권)`)
-
+  useEffect(() => {
     try {
-      // 1만원권 방출
-      const success = await dispenseBills(billCount)
-
-      if (!success) {
-        console.error("[v0] Failed to dispense change")
-        return false
+      const saved = window.localStorage.getItem(STORAGE_KEY)
+      if (saved) {
+        const value = JSON.parse(saved) as PaymentSession
+        if (typeof value.isActive !== "boolean" || !Number.isFinite(value.acceptedAmount) || value.acceptedAmount < 0 ||
+            !Number.isFinite(value.requiredAmount) || value.requiredAmount < 0 || !Array.isArray(value.acceptedBills) ||
+            value.acceptedBills.some(amount => !Number.isFinite(amount) || amount <= 0) || (!value.isActive && value.acceptedAmount > 0) ||
+            (value.pendingBooking && (typeof value.pendingBooking.requestId !== "string" || typeof value.pendingBooking.body !== "string"))) {
+          throw new Error("Invalid saved payment")
+        }
+        if (value.pendingBooking && JSON.parse(value.pendingBooking.body)?.requestId !== value.pendingBooking.requestId) throw new Error("Invalid pending request")
+        if (value.isActive) {
+          // A restart cannot establish whether a physical payment finished.
+          value.recoveryRequired ||= "이전 결제 확인이 필요합니다. 관리자에게 문의해주세요."
+          current.current = value
+          setPaymentSession(value)
+        }
       }
-
-      console.log("[v0] Change refunded successfully")
-      return true
-    } catch (error) {
-      console.error("[v0] Error during change refund:", error)
-      return false
-    }
-  }, [paymentSession.overpaymentAmount])
-
-  // 결제 완료
-  const completePayment = useCallback(() => {
-    console.log("[v0] Payment session reset")
-    setPaymentSession(initialSession)
-  }, [])
-
-  // 결제 취소 및 환불
-  const cancelPayment = useCallback(async () => {
-    if (refundInProgressRef.current) {
-      console.log("[v0] Refund already in progress, skipping")
-      return
-    }
-
-    const currentSession = paymentSession
-
-    if (!currentSession.isActive) {
-      console.log("[v0] No active payment session")
-      setPaymentSession(initialSession)
-      return
-    }
-
-    refundInProgressRef.current = true
-    console.log("[v0] Cancelling payment session:", {
-      acceptedAmount: currentSession.acceptedAmount,
-      acceptedBills: currentSession.acceptedBills,
-    })
-
-    try {
-      // Note: The actual refund (dispensing bills) is handled by the payment screen
-      // This function just resets the payment session
-      console.log("[v0] Payment session cancelled")
-    } catch (error) {
-      console.error("[v0] Error during cancellation:", error)
+    } catch {
+      setStorageError("이전 결제 기록을 확인하지 못했습니다. 새 결제를 진행하지 말고 관리자에게 문의해주세요.")
     } finally {
-      refundInProgressRef.current = false
-      setPaymentSession(initialSession)
+      setReady(true)
     }
-  }, [paymentSession])
+  }, [])
 
-  // 결제 완료 여부 확인
-  const isPaymentComplete = useCallback(() => {
-    return paymentSession.isActive && paymentSession.acceptedAmount >= paymentSession.requiredAmount
-  }, [paymentSession])
+  const save = useCallback((next: PaymentSession) => {
+    // Persist before another money operation or clearing its evidence.
+    try {
+      if (next.isActive) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+      else window.localStorage.removeItem(STORAGE_KEY)
+      current.current = next
+      setPaymentSession(next)
+      return true
+    } catch {
+      const preserved = next.isActive ? next : current.current
+      current.current = { ...preserved, isActive: true, recoveryRequired: "결제 기록 저장 오류입니다. 관리자 확인이 필요합니다." }
+      setPaymentSession(current.current)
+      setStorageError("결제 기록을 안전하게 저장하지 못했습니다. 관리자에게 문의해주세요.")
+      return false
+    }
+  }, [])
 
-  return (
-    <PaymentContext.Provider
-      value={{
-        paymentSession,
-        startPayment,
-        addBill,
-        completePayment,
-        cancelPayment,
-        isPaymentComplete,
-        refundChange,
-      }}
-    >
-      {children}
-    </PaymentContext.Provider>
-  )
+  const startPayment = useCallback((requiredAmount: number, reservationData?: any, method?: "cash" | "card") => {
+    const previous = current.current
+    if (!ready || storageError || requiredAmount <= 0 || previous.acceptedAmount > 0 || previous.cardInFlight ||
+        previous.pendingBooking || previous.recoveryRequired) return false
+    return save({ ...initialSession, isActive: true, requiredAmount, reservationData, method, sessionStartTime: Date.now() })
+  }, [ready, storageError, save])
+
+  const addBill = useCallback((amount: number) => {
+    const previous = current.current
+    if (!previous.isActive || !Number.isFinite(amount) || amount <= 0) return
+    const acceptedAmount = previous.acceptedAmount + amount
+    save({ ...previous, acceptedAmount, acceptedBills: [...previous.acceptedBills, amount],
+      overpaymentAmount: Math.max(0, acceptedAmount - previous.requiredAmount) })
+  }, [save])
+
+  const completePayment = useCallback(() => save(initialSession), [save])
+  const recordCashReturned = useCallback((amount: number) => {
+    const previous = current.current
+    const acceptedAmount = Math.max(0, previous.acceptedAmount - amount)
+    save({ ...previous, acceptedAmount, returnedAmount: (previous.returnedAmount || 0) + amount,
+      overpaymentAmount: Math.max(0, acceptedAmount - previous.requiredAmount) })
+  }, [save])
+  const cancelPayment = useCallback(async (refundedAmount = 0) => {
+    const previous = current.current
+    if (previous.pendingBooking || previous.cardInFlight || previous.recoveryRequired || previous.acceptedAmount > refundedAmount) return false
+    return save(initialSession)
+  }, [save])
+  const setCardInFlight = useCallback((cardInFlight: boolean) => save({ ...current.current, cardInFlight }), [save])
+  const requireRecovery = useCallback((recoveryRequired: string, evidence?: PaymentSession["recoveryEvidence"]) => {
+    save({ ...current.current, isActive: true, recoveryRequired,
+      ...(evidence ? { recoveryEvidence: evidence } : {}) })
+  }, [save])
+  const savePendingBooking = useCallback((pendingBooking: PendingBooking) => {
+    return save({ ...current.current, isActive: true, pendingBooking })
+  }, [save])
+  const isPaymentComplete = useCallback(() => paymentSession.isActive && paymentSession.acceptedAmount >= paymentSession.requiredAmount, [paymentSession])
+
+  return <PaymentContext.Provider value={{ paymentSession, ready, storageError, startPayment, addBill, recordCashReturned,
+    completePayment, cancelPayment, isPaymentComplete, setCardInFlight, requireRecovery, savePendingBooking }}>
+    {children}
+  </PaymentContext.Provider>
 }
 
 export function usePayment() {
   const context = useContext(PaymentContext)
-  if (context === undefined) {
-    throw new Error("usePayment must be used within a PaymentProvider")
-  }
+  if (context === undefined) throw new Error("usePayment must be used within a PaymentProvider")
   return context
 }

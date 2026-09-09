@@ -98,6 +98,7 @@ async function run() {
     () => { throw new Error("canceled payment unexpectedly succeeded") },
     (error) => {
       if (error.message !== "결제가 취소되었습니다.") throw error
+      if (error.code !== "PAYMENT_NOT_APPROVED") throw new Error("explicit terminal cancellation lost its non-approval status")
     },
   )
   if (recoveryRequests !== recoveryRequestsBeforeCancel) {

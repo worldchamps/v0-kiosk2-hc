@@ -56,7 +56,7 @@ export default function BillDispenserTest() {
   const [dispenseBillCount, setDispenseBillCount] = useState<number>(1)
   const [txMessages, setTxMessages] = useState<string[]>([])
   const [rxMessages, setRxMessages] = useState<string[]>([])
-  const [selectedPort, setSelectedPort] = useState("COM5")
+  const [selectedPort, setSelectedPort] = useState("managed")
   const [isOldProtocol, setIsOldProtocol] = useState(true)
   const [totalDispensed, setTotalDispensed] = useState<number | null>(null)
   const [errorInfo, setErrorInfo] = useState<{ code: number; description: string } | null>(null)
@@ -109,10 +109,11 @@ export default function BillDispenserTest() {
     try {
       if (isElectron) {
         // Electron 환경: 이미 연결되어 있는지 확인
-        const status = await window.electronAPI.getBillDispenserStatus()
-        if (status && status.connected) {
+        const connected = await connectBillDispenser()
+        if (connected) {
           setIsConnected(true)
-          setStatus("지폐방출기가 이미 연결되어 있습니다 (COM5)")
+          setDeviceStatus(getBillDispenserStatus())
+          setStatus("지폐방출기 응답을 확인했습니다.")
         } else {
           setError("지폐방출기가 연결되어 있지 않습니다. Electron 앱을 재시작하세요.")
         }
@@ -388,6 +389,7 @@ export default function BillDispenserTest() {
           </CardTitle>
         </CardHeader>
         <CardContent>
+          <p className="mb-4 text-sm text-gray-600">포트는 PC의 로컬 설정을 사용합니다. 방출 금지·장치 카운터 조회/초기화는 현재 브리지에서 지원하지 않아 비활성화되어 있습니다.</p>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Left Column - Connection & Control */}
             <div className="space-y-6">
@@ -402,11 +404,12 @@ export default function BillDispenserTest() {
                 <CardContent className="space-y-4">
                   <div>
                     <label className="text-sm font-medium mb-2 block">Com Port</label>
-                    <Select value={selectedPort} onValueChange={setSelectedPort} disabled={isConnected}>
+                    <Select value={selectedPort} onValueChange={setSelectedPort} disabled>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="managed">PC 로컬 설정</SelectItem>
                         <SelectItem value="COM1">COM1</SelectItem>
                         <SelectItem value="COM2">COM2</SelectItem>
                         <SelectItem value="COM3">COM3</SelectItem>
@@ -505,7 +508,8 @@ export default function BillDispenserTest() {
                   <div className="grid grid-cols-2 gap-2">
                     <Button
                       onClick={handleDisableDispenser}
-                      disabled={!isConnected || isProcessing}
+                      disabled
+                      title="현재 하드웨어 브리지에서 지원하지 않는 장치 명령입니다."
                       variant="outline"
                       size="sm"
                     >
@@ -537,7 +541,8 @@ export default function BillDispenserTest() {
                   <div className="grid grid-cols-2 gap-2">
                     <Button
                       onClick={handleClearDispensedCount}
-                      disabled={!isConnected || isProcessing}
+                      disabled
+                      title="현재 하드웨어 브리지에서 장치 카운터 초기화를 지원하지 않습니다."
                       variant="outline"
                       size="sm"
                     >
@@ -546,7 +551,8 @@ export default function BillDispenserTest() {
                     </Button>
                     <Button
                       onClick={handleClearTotalDispensedCount}
-                      disabled={!isConnected || isProcessing}
+                      disabled
+                      title="현재 하드웨어 브리지에서 장치 카운터 초기화를 지원하지 않습니다."
                       variant="outline"
                       size="sm"
                     >
@@ -558,7 +564,8 @@ export default function BillDispenserTest() {
                   <div className="grid grid-cols-2 gap-2">
                     <Button
                       onClick={handleGetTotalDispensedCount}
-                      disabled={!isConnected || isProcessing}
+                      disabled
+                      title="현재 하드웨어 브리지에서 장치 누적 배출량 조회를 지원하지 않습니다."
                       variant="outline"
                       size="sm"
                     >

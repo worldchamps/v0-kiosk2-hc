@@ -13,6 +13,7 @@ export interface TossFrontStatus {
 }
 
 export interface TossFrontResult {
+  notApproved?: boolean
   success: boolean
   payment?: TossFrontPaymentProof
   cancel?: unknown
@@ -42,6 +43,7 @@ export interface ElectronAPI {
   }
 
   // 지폐 인식기
+  getHardwareStatus: () => Promise<{ connected: boolean | null }>
   sendToBillAcceptor: (command: number[]) => Promise<{ success: boolean; error?: string }>
   onBillAcceptorData: (callback: (data: { data: number[] }) => void) => void
   onBillAcceptorStatus: (callback: (status: { connected: boolean; error?: string }) => void) => void
@@ -57,6 +59,9 @@ export interface ElectronAPI {
   onPrinterStatus: (callback: (status: { connected: boolean; port?: string; error?: string }) => void) => void
   reconnectPrinter: () => Promise<{ success: boolean }>
   getPrinterStatus: () => Promise<{ connected: boolean; port?: string }>
+  printToBixolon: (text: string, options?: { alignment?: number; attribute?: number; textSize?: number; codePage?: number }) => Promise<boolean>
+  cutBixolonPaper: () => Promise<boolean>
+  sendRawToBixolon: (data: number[]) => Promise<boolean>
   printToSam4s: (receipt: unknown) => Promise<{ success: boolean; printer?: string; error?: string }>
 
   // 유틸리티

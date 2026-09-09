@@ -97,7 +97,7 @@ export async function validateSheetColumns(spreadsheetId: string) {
       actualHeaders: headers,
       expectedHeaders,
       matches: headers.length === expectedHeaders.length,
-      mismatches: [],
+      mismatches: [] as Array<{ index: number; expected: string; actual: unknown }>,
     }
 
     // 불일치 항목 찾기

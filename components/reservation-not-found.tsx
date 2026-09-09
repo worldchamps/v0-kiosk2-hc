@@ -14,6 +14,7 @@ interface ReservationNotFoundProps {
   onNavigate: (screen: string) => void
   kioskLocation: KioskLocation
   isPopupMode?: boolean
+  lookupFailed?: boolean
 }
 
 export default function ReservationNotFound({
@@ -21,6 +22,7 @@ export default function ReservationNotFound({
   onNavigate,
   kioskLocation,
   isPopupMode = false,
+  lookupFailed = false,
 }: ReservationNotFoundProps) {
   const today = getCurrentDateKST()
   const formattedDate = formatDateKorean(today)
@@ -32,7 +34,7 @@ export default function ReservationNotFound({
   const redirectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
-    playAudio("RESERVATION_NOT_FOUND")
+    if (!lookupFailed) playAudio("RESERVATION_NOT_FOUND")
 
     // Start countdown
     countdownIntervalRef.current = setInterval(() => {
@@ -99,7 +101,7 @@ export default function ReservationNotFound({
       <div className="kiosk-content-container">
         <div>
           <h1 className="kiosk-title">{locationTitle}</h1>
-          <div className="kiosk-highlight">예약 확인 불가</div>
+          <div className="kiosk-highlight">{lookupFailed ? "예약 조회 연결 오류" : "예약 확인 불가"}</div>
         </div>
 
         <div className="w-full mt-6">
@@ -108,10 +110,10 @@ export default function ReservationNotFound({
               <AlertCircle className="h-16 w-16 text-red-500" />
 
               <p className="text-left text-lg font-medium text-red-500">
-                오늘({formattedDate}) 예약이 확인되지 않았습니다.
+                {lookupFailed ? "예약 조회를 완료하지 못했습니다. 예약이 없는 것으로 확인된 것은 아닙니다." : `오늘(${formattedDate}) 예약이 확인되지 않았습니다.`}
               </p>
 
-              <p className="text-left text-gray-600">다른 날짜에 예약하셨거나, 이름이 다르게 등록되었을 수 있습니다.</p>
+              <p className="text-left text-gray-600">{lookupFailed ? "잠시 후 다시 확인하거나 관리자에게 문의해주세요. 010-5126-4644" : "다른 날짜에 예약하셨거나, 이름이 다르게 등록되었을 수 있습니다."}</p>
 
               <p className="text-left text-sm text-gray-500">{countdown}초 후 자동으로 처음 화면으로 돌아갑니다</p>
             </CardContent>

@@ -76,7 +76,7 @@ export default function BillAcceptorTest() {
   const [txMessages, setTxMessages] = useState<string[]>([])
   const [rxMessages, setRxMessages] = useState<string[]>([])
   const [autoMode, setAutoMode] = useState(false)
-  const [selectedPort, setSelectedPort] = useState("COM4")
+  const [selectedPort, setSelectedPort] = useState("managed")
   const [lastEvent, setLastEvent] = useState<any>(null)
 
   const isElectron = typeof window !== "undefined" && window.electronAPI
@@ -133,10 +133,11 @@ export default function BillAcceptorTest() {
     try {
       if (isElectron) {
         // Electron 환경: 이미 연결되어 있는지 확인
-        const status = await window.electronAPI.getBillAcceptorStatus()
-        if (status && status.connected) {
+        const connected = await connectBillAcceptor()
+        if (connected) {
           setIsConnected(true)
-          setStatus("지폐인식기가 이미 연결되어 있습니다 (COM4)")
+          setDeviceStatus(getBillAcceptorStatus())
+          setStatus("지폐인식기 응답을 확인했습니다.")
         } else {
           setError("지폐인식기가 연결되어 있지 않습니다. Electron 앱을 재시작하세요.")
         }
@@ -225,7 +226,7 @@ export default function BillAcceptorTest() {
     try {
       const version = await getVersion()
       if (version) {
-        setStatus(`펌웨어 버전: v${version.major}.${version.minor}`)
+        setStatus(`연결 방식: ${version}`)
         setError("")
       } else {
         setStatus("버전 확인 실패")
@@ -254,11 +255,11 @@ export default function BillAcceptorTest() {
           autoStack: (config & 0x10) !== 0,
           eventTx: (config & 0x20) !== 0,
         })
-        setStatus(`설정 읽기 완료: 0x${config.toString(16).padStart(2, "0")}`)
+        setStatus(`이번 세션에서 장치가 승인한 설정: 0x${config.toString(16).padStart(2, "0")}`)
         setError("")
       } else {
         setStatus("설정 읽기 실패")
-        setError("디바이스 설정을 읽을 수 없습니다.")
+        setError("현재 브리지는 장치 설정 읽기를 지원하지 않습니다. 이번 세션에서 승인된 설정만 확인할 수 있습니다.")
       }
     } catch (error: any) {
       setStatus("설정 읽기 오류")
@@ -459,6 +460,7 @@ export default function BillAcceptorTest() {
           </CardTitle>
         </CardHeader>
         <CardContent>
+          <p className="mb-4 text-sm text-gray-600">포트는 PC의 로컬 설정을 사용합니다. 장치 펌웨어·설정 직접 읽기는 현재 브리지에서 지원하지 않으며, 세션에서 승인된 설정만 표시합니다.</p>
           <Tabs defaultValue="test" className="w-full">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="test">테스트</TabsTrigger>
@@ -495,11 +497,12 @@ export default function BillAcceptorTest() {
                     <CardContent className="space-y-3">
                       <div className="flex items-center gap-2">
                         <span className="text-sm">포트:</span>
-                        <Select value={selectedPort} onValueChange={setSelectedPort}>
+                        <Select value={selectedPort} onValueChange={setSelectedPort} disabled>
                           <SelectTrigger className="w-24">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
+                            <SelectItem value="managed">PC 로컬 설정</SelectItem>
                             <SelectItem value="COM4">COM4</SelectItem>
                             <SelectItem value="COM3">COM3</SelectItem>
                             <SelectItem value="COM2">COM2</SelectItem>
@@ -542,7 +545,7 @@ export default function BillAcceptorTest() {
                         onClick={handleVersionCheck}
                         disabled={!isConnected || isProcessing}
                       >
-                        Version Check
+                        연결 방식 확인
                       </Button>
                     </CardContent>
                   </Card>
@@ -623,7 +626,7 @@ export default function BillAcceptorTest() {
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <Button size="sm" onClick={handleReadConfig} disabled={!isConnected || isProcessing}>
-                          Read Config
+                          세션 설정 확인
                         </Button>
                         <Button size="sm" onClick={handleSetConfig} disabled={!isConnected || isProcessing}>
                           Set Config
@@ -679,11 +682,11 @@ export default function BillAcceptorTest() {
                           </p>
                           {deviceStatus.version && (
                             <p className="text-sm">
-                              <strong>버전:</strong> v{deviceStatus.version.major}.{deviceStatus.version.minor}
+                              <strong>연결 방식:</strong> {deviceStatus.version}
                             </p>
                           )}
                           <p className="text-sm">
-                            <strong>수취:</strong> {deviceStatus.accepting ? "활성화" : "비활성화"}
+                            <strong>수취:</strong> {deviceStatus.accepting ? "활성화 요청 승인됨" : "활성화 확인 안 됨"}
                           </p>
                           {lastEvent && (
                             <p className="text-sm">

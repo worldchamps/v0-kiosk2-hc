@@ -93,7 +93,7 @@ export default function MonthlySalesCalendar({ initialSalesData = [] }: MonthlyS
   }
 
   // 날짜별 매출 계산
-  const dailySales = {}
+  const dailySales: Record<number, { total: number; count: number; sales: SalesData[] }> = {}
 
   // 예약 데이터를 기반으로 날짜별 매출 계산
   salesData.forEach((sale) => {

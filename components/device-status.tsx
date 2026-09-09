@@ -7,11 +7,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { CheckCircle, XCircle, RefreshCw, Printer, Banknote, DollarSign } from "lucide-react"
+import { isBillAcceptorConnected } from "@/lib/bill-acceptor-utils"
+import { isBillDispenserConnected } from "@/lib/bill-dispenser-utils"
+import { autoConnectPrinter } from "@/lib/printer-utils-unified"
 
 interface DeviceStatus {
   name: string
   port: string
-  connected: boolean
+  connected: boolean | null
   icon: React.ReactNode
   details?: string
 }
@@ -26,62 +29,28 @@ export default function DeviceStatus() {
     try {
       const statuses: DeviceStatus[] = []
 
-      if (typeof window !== "undefined" && window.electronAPI?.getPrinterStatus) {
-        const printerStatus = await window.electronAPI.getPrinterStatus()
-        statuses.push({
-          name: "프린터",
-          port: "COM2",
-          connected: printerStatus?.connected || false,
-          icon: <Printer className="h-5 w-5" />,
-          details: printerStatus?.connected ? "정상 작동 중" : "연결되지 않음",
-        })
-      } else {
-        statuses.push({
-          name: "프린터",
-          port: "COM2",
-          connected: false,
-          icon: <Printer className="h-5 w-5" />,
-          details: "Electron 환경에서만 사용 가능",
-        })
-      }
-
-      if (typeof window !== "undefined" && window.electronAPI?.getBillAcceptorStatus) {
-        const acceptorStatus = await window.electronAPI.getBillAcceptorStatus()
-        statuses.push({
-          name: "지폐 인식기",
-          port: "COM4",
-          connected: acceptorStatus?.connected || false,
-          icon: <Banknote className="h-5 w-5" />,
-          details: acceptorStatus?.connected ? "정상 작동 중" : "연결되지 않음",
-        })
-      } else {
-        statuses.push({
-          name: "지폐 인식기",
-          port: "COM4",
-          connected: false,
-          icon: <Banknote className="h-5 w-5" />,
-          details: "Electron 환경에서만 사용 가능",
-        })
-      }
-
-      if (typeof window !== "undefined" && window.electronAPI?.getBillDispenserStatus) {
-        const dispenserStatus = await window.electronAPI.getBillDispenserStatus()
-        statuses.push({
-          name: "지폐 방출기",
-          port: "COM5",
-          connected: dispenserStatus?.connected || false,
-          icon: <DollarSign className="h-5 w-5" />,
-          details: dispenserStatus?.connected ? "정상 작동 중" : "연결되지 않음",
-        })
-      } else {
-        statuses.push({
-          name: "지폐 방출기",
-          port: "COM5",
-          connected: false,
-          icon: <DollarSign className="h-5 w-5" />,
-          details: "Electron 환경에서만 사용 가능",
-        })
-      }
+      const transportConnected = await autoConnectPrinter()
+      statuses.push({
+        name: "인쇄 서버",
+        port: "PC 로컬 설정",
+        connected: transportConnected,
+        icon: <Printer className="h-5 w-5" />,
+        details: transportConnected ? "전송 경로 확인됨. 실제 프린터·용지는 테스트 출력으로 확인하세요." : "인쇄 경로를 확인하지 못했습니다.",
+      })
+      statuses.push({
+        name: "지폐 인식기",
+        port: "PC 로컬 설정",
+        connected: isBillAcceptorConnected() ? true : null,
+        icon: <Banknote className="h-5 w-5" />,
+        details: isBillAcceptorConnected() ? "최근 장치 응답 확인됨" : "지폐 인식기 탭에서 장치 응답을 확인하세요.",
+      })
+      statuses.push({
+        name: "지폐 방출기",
+        port: "PC 로컬 설정",
+        connected: isBillDispenserConnected() ? true : null,
+        icon: <DollarSign className="h-5 w-5" />,
+        details: isBillDispenserConnected() ? "최근 장치 응답 확인됨" : "지폐 방출기 탭에서 장치 응답을 확인하세요.",
+      })
 
       setDevices(statuses)
     } catch (error) {
@@ -130,7 +99,7 @@ export default function DeviceStatus() {
                     <XCircle className="h-4 w-4 text-red-500" />
                   )}
                   <Badge variant={device.connected ? "default" : "destructive"}>
-                    {device.connected ? "연결됨" : "연결 안됨"}
+                    {device.connected === null ? "미확인" : device.connected ? "연결 확인됨" : "연결 안됨"}
                   </Badge>
                 </div>
               </div>

@@ -1,5 +1,7 @@
 import { getDB } from "@/lib/firebase-admin"
 import { isRoomInBuilding } from "@/lib/kiosk-scope"
+import { bookingRoomKey, getBlockedOnSiteRooms } from "@/lib/on-site-bookings"
+import { getPropertyFromRoomNumber } from "@/lib/property-utils"
 
 /**
  * Firebase Beach Room Status 데이터 타입
@@ -54,7 +56,7 @@ export async function getBeachRoomStatusFromFirebase(): Promise<BeachRoomData[]>
 export async function getRoomInfoByMatchingNumber(matchingRoomNumber: string): Promise<BeachRoomData | null> {
   try {
     const rooms = await getBeachRoomStatusFromFirebase()
-    const room = rooms.find((r) => r.matchingRoomNumber === matchingRoomNumber)
+    const room = rooms.find((r) => bookingRoomKey(r.matchingRoomNumber) === bookingRoomKey(matchingRoomNumber))
 
     if (!room) {
       console.warn(`[Firebase] Room not found: ${matchingRoomNumber}`)
@@ -125,12 +127,15 @@ export async function updateRoomStatusInFirebase(matchingRoomNumber: string, new
 export async function getAvailableRooms(location?: string): Promise<BeachRoomData[]> {
   try {
     const allRooms = await getBeachRoomStatusFromFirebase()
+    const properties = [...new Set(allRooms.map(room => getPropertyFromRoomNumber(room.matchingRoomNumber)).filter(property => property !== null))]
+    const blocked = new Set((await Promise.all(properties.map(getBlockedOnSiteRooms))).flatMap(rooms => [...rooms]))
 
     let filteredRooms = allRooms.filter((room) => {
       const vending = typeof room.vendingAvailable === "string"
         ? room.vendingAvailable.trim().toUpperCase()
         : room.vendingAvailable
       return room.status === "공실"
+        && !blocked.has(bookingRoomKey(room.matchingRoomNumber))
         && String(room.unavailable || "").trim().toUpperCase() !== "X"
         && ![false, "X", "N", "FALSE", "0"].includes(vending as any)
     })
@@ -169,6 +174,6 @@ export async function getAvailableRooms(location?: string): Promise<BeachRoomDat
     return filteredRooms
   } catch (error) {
     console.error("[Firebase] Error getting available rooms:", error)
-    return []
+    throw error
   }
 }

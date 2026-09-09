@@ -15,7 +15,7 @@ import {
   getPrinterDiagnostics,
   clearCommandLog,
   checkPrinterReady,
-} from "@/lib/printer-utils"
+} from "@/lib/printer-utils-unified"
 
 export default function PrinterSettings() {
   const [simpleMode, setSimpleMode] = useState(false)
@@ -101,7 +101,7 @@ export default function PrinterSettings() {
 
       const success = await printTestPage()
       if (success) {
-        setStatus(`테스트 인쇄가 완료되었습니다. (${simpleMode ? "단순 모드" : "일반 모드"})`)
+        setStatus("인쇄 명령이 전달되었습니다. 실제 용지 출력과 절단을 확인하세요.")
       } else {
         setStatus("테스트 인쇄에 실패했습니다.")
       }
@@ -207,16 +207,16 @@ export default function PrinterSettings() {
 
         {printerStatus && (
           <div className={`p-3 rounded-md ${printerStatus.ready ? "bg-green-50" : "bg-yellow-50"}`}>
-            <h4 className="font-medium mb-2">프린터 실시간 상태</h4>
+            <h4 className="font-medium mb-2">인쇄 경로 상태 (실물 프린터 미확인)</h4>
             <div className="text-sm space-y-1">
               <p>
-                <strong>온라인:</strong> {printerStatus.online ? "✅ 예" : "❌ 아니오"}
+                <strong>인쇄 서버 연결:</strong> {printerStatus.online ? "✅ 예" : "❌ 아니오"}
               </p>
               <p>
-                <strong>용지:</strong> {printerStatus.paperOut ? "❌ 없음" : "✅ 있음"}
+                <strong>용지:</strong> {printerStatus.paperOut === null ? "확인되지 않음" : printerStatus.paperOut ? "❌ 없음" : "✅ 있음"}
               </p>
               <p>
-                <strong>에러:</strong> {printerStatus.error ? "❌ 있음" : "✅ 없음"}
+                <strong>에러:</strong> {printerStatus.error === null ? "확인되지 않음" : printerStatus.error ? "❌ 있음" : "✅ 없음"}
               </p>
               {printerStatus.statusByte !== undefined && (
                 <p className="text-xs text-gray-500">
@@ -237,14 +237,15 @@ export default function PrinterSettings() {
               <Button
                 variant={simpleMode ? "default" : "outline"}
                 onClick={handleToggleSimpleMode}
+                disabled
+                title="인쇄 서버 방식에서는 모드 전환을 지원하지 않습니다."
                 className={simpleMode ? "bg-green-600 hover:bg-green-700" : ""}
               >
                 {simpleMode ? "단순 모드" : "일반 모드"}
               </Button>
             </div>
             <p className="text-sm text-gray-600">
-              단순 모드는 기본 텍스트만 사용하여 복잡한 서식 없이 인쇄합니다. SAM4S ELLIX/GIANT 프린터와 같은 다양한
-              프린터와의 호환성 문제가 있을 경우 이 모드를 사용하세요.
+              현재 인쇄 서버 방식에서는 모드 전환을 지원하지 않습니다. 실제 출력은 테스트 인쇄로 확인하세요.
             </p>
           </div>
 

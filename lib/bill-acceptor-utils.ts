@@ -2,22 +2,19 @@
  * ONEPLUS 지폐인식기 제어를 위한 유틸리티 함수 (Hardware 서버 연결 방식)
  */
 
-declare global {
-  interface Window {
-    electronAPI: any
-  }
-}
+import { hardwareCallWithin } from "@/lib/hardware-timeout"
 
 // 지폐인식기 연결 상태 (이제 하드웨어 서버와의 연결 상태를 나타냄)
 let isConnected = false
 
 // 스트림 버퍼링 및 파싱
 let streamBuffer: Uint8Array = new Uint8Array(0)
-const pendingCommands: Map<string, { resolve: Function; reject: Function; timeout: NodeJS.Timeout }> = new Map()
+const pendingCommands = new Map<string, { resolve: (response: Uint8Array | null) => void; timeout: ReturnType<typeof setTimeout> }>()
 
 // 지폐 인식 상태
 let isAcceptingBills = false
-let currentStatus = 0x01 // WAIT
+let currentStatus: number | null = null // Unknown until the device replies.
+let lastConfig: number | null = null
 
 // 이벤트 처리 상태
 let eventProcessingEnabled = false
@@ -161,6 +158,7 @@ async function processReceivedPacket(packet: Uint8Array): Promise<void> {
 
 function handleEventMessage(packet: Uint8Array): void {
   const eventData = packet[3]
+  currentStatus = eventData
   logConnection("EVENT_RECEIVED", `이벤트: 0x${eventData.toString(16).padStart(2, "0")} (${getStatusString(eventData)})`)
 
   lastEventMessage = {
@@ -176,59 +174,67 @@ function handleEventMessage(packet: Uint8Array): void {
 
 // 명령어 전송 및 응답 대기
 async function sendCommand(packet: Uint8Array, expectedCmd1: number, expectedCmd2: number, timeoutMs = 3000): Promise<Uint8Array | null> {
-  if (!isConnected) return null
+  const api = typeof window !== "undefined" ? window.electronAPI : undefined
+  if (!api) return null
 
   const responseKey = `${expectedCmd1.toString(16).padStart(2, "0")}-${expectedCmd2.toString(16).padStart(2, "0")}`
 
-  const responsePromise = new Promise<Uint8Array>((resolve, reject) => {
+  if (pendingCommands.has(responseKey)) return null
+  const responsePromise = new Promise<Uint8Array | null>((resolve) => {
     const timeout = setTimeout(() => {
       pendingCommands.delete(responseKey)
-      reject(new Error("Timeout"))
+      resolve(null)
     }, timeoutMs)
-    pendingCommands.set(responseKey, { resolve, reject, timeout })
+    pendingCommands.set(responseKey, { resolve, timeout })
   })
 
-  const success = await window.electronAPI.sendToBillAcceptor(Array.from(packet))
-  if (!success) {
-    pendingCommands.delete(responseKey)
-    return null
+  const pending = pendingCommands.get(responseKey)
+  const fail = () => {
+    if (pending && pendingCommands.get(responseKey) === pending) {
+      clearTimeout(pending.timeout); pending.resolve(null); pendingCommands.delete(responseKey)
+    }
   }
-
   try {
-    return await responsePromise
-  } catch (e) {
-    return null
-  }
+    // Do not await IPC before the response timer: a stalled main process must also time out.
+    Promise.resolve(api.sendToBillAcceptor(Array.from(packet))).then(result => { if (result?.success !== true) fail() }, fail)
+  } catch { fail() }
+  return responsePromise
 }
 
 // --- 공용 API ---
 
 export async function connectBillAcceptor(): Promise<boolean> {
   logConnection("CONNECT_ATTEMPT", "하드웨어 서버 연결 상태 확인")
+  const api = typeof window !== "undefined" ? window.electronAPI : undefined
+  if (!api) return false
+  isConnected = false
 
   // Electron에서 상태 수신 대기 설정
-  window.electronAPI.onBillAcceptorStatus((status: { connected: boolean }) => {
-    isConnected = status.connected
+  api.onBillAcceptorStatus((status: { connected: boolean }) => {
+    if (!status.connected) { isConnected = false; currentStatus = null; lastConfig = null }
     logConnection("STATUS_CHANGED", `연결 상태: ${isConnected ? "Connected" : "Disconnected"}`)
   })
 
-  window.electronAPI.onBillAcceptorData(handleIncomingData)
+  api.onBillAcceptorData(handleIncomingData)
 
   // 잠시 대기하여 초기 상태를 확인 (하드웨어 브리지가 정보를 주도록)
   // 연결될 때까지 최대 5초 대기
   const startTime = Date.now()
+  let reconnectRequested = false
   while (Date.now() - startTime < 5000) {
     // Active polling of status
-    const status = await window.electronAPI.getHardwareStatus()
-    isConnected = status.connected
+    const remaining = () => Math.max(0, 5000 - (Date.now() - startTime))
+    const status = await hardwareCallWithin(() => api.getHardwareStatus(), Math.min(1000, remaining()))
+    if (!status) return false
+    if (status.connected && remaining() > 0 && await checkConnection(Math.min(3000, remaining()))) break
 
-    if (isConnected) break
-
-    await new Promise(resolve => setTimeout(resolve, 500))
+    await new Promise(resolve => setTimeout(resolve, Math.min(500, remaining())))
 
     // 연결 시도가 없으면 재연결 요청 (한번만)
-    if (Date.now() - startTime > 1500 && !isConnected) {
-      await window.electronAPI.reconnectBillAcceptor()
+    if (Date.now() - startTime > 1500 && remaining() > 0 && !reconnectRequested) {
+      reconnectRequested = true
+      const result = await hardwareCallWithin(() => api.reconnectBillAcceptor(), Math.min(1000, remaining()))
+      if (result?.success !== true) return false
     }
   }
 
@@ -242,18 +248,22 @@ export async function connectBillAcceptor(): Promise<boolean> {
 
 export async function disconnectBillAcceptor(): Promise<void> {
   isConnected = false
+  currentStatus = null
+  lastConfig = null
 }
 
-export async function checkConnection(): Promise<boolean> {
+export async function checkConnection(timeoutMs = 3000): Promise<boolean> {
   const packet = createPacket(0x48, 0x69, 0x3f) // 'H' 'i' '?'
-  const res = await sendCommand(packet, 0x6d, 0x65) // 'm' 'e'
-  return !!res && res[1] === 0x6d && res[2] === 0x65
+  const res = await sendCommand(packet, 0x6d, 0x65, timeoutMs) // 'm' 'e'
+  isConnected = !!res && res[1] === 0x6d && res[2] === 0x65
+  return isConnected
 }
 
 export async function getStatus(): Promise<number | null> {
   const packet = createPacket(0x47, 0x41, 0x3f) // 'G' 'A' '?'
   const res = await sendCommand(packet, 0x67, 0x61) // 'g' 'a'
-  return res ? res[3] : null
+  currentStatus = res ? res[3] : null
+  return currentStatus
 }
 
 export async function getBillData(): Promise<number | null> {
@@ -275,7 +285,7 @@ export async function enableAcceptance(): Promise<boolean> {
 export async function disableAcceptance(): Promise<boolean> {
   const packet = createPacket(0x53, 0x41, 0x0e) // 'S' 'A' 0x0E
   const res = await sendCommand(packet, 0x4f, 0x4b)
-  if (res && (res[1] === 0x4f || res[1] === 0x4e)) { // OK or NG
+  if (res && res[1] === 0x4f && res[2] === 0x4b) {
     isAcceptingBills = false
     return true
   }
@@ -295,9 +305,12 @@ export async function returnBill(): Promise<boolean> {
 }
 
 export async function setConfig(config: number): Promise<boolean> {
+  if (!Number.isInteger(config) || config < 0 || config > 255) return false
   const packet = createPacket(0x53, 0x43, config) // 'S' 'C' config
   const res = await sendCommand(packet, 0x4f, 0x4b)
-  return res ? (res[1] === 0x4f && res[2] === 0x4b) : false
+  const success = !!res && res[1] === 0x4f && res[2] === 0x4b
+  if (success) lastConfig = config
+  return success
 }
 
 export async function initializeDevice(): Promise<boolean> {
@@ -314,7 +327,8 @@ export function isBillAcceptorConnected(): boolean {
   return isConnected
 }
 
-export function getStatusString(status: number): string {
+export function getStatusString(status: number | null): string {
+  if (status === null) return "상태 미확인"
   switch (status) {
     case 0x01: return "WAIT (대기)"
     case 0x02: return "START_WAIT (수취 준비)"
@@ -337,7 +351,7 @@ export function getBillAcceptorDiagnostics() {
 }
 
 export function getBillAcceptorStatus() {
-  return currentStatus;
+  return { ...getBillAcceptorDiagnostics(), accepting: isAcceptingBills, config: lastConfig, version: getVersion() };
 }
 
 export function getLastEventMessage() {
@@ -349,5 +363,15 @@ export function getBillAcceptorCommandLog() {
 }
 
 export function getVersion(): string {
-  return "2.0 (Hardware Bridge)";
+  return "Hardware Bridge (장치 펌웨어 버전은 조회되지 않음)";
+}
+
+export function clearBillAcceptorCommandLog(): void { commandLog.length = 0 }
+export const resetDevice = initializeDevice
+// This bridge cannot read firmware configuration/error registers. Never invent a device response.
+export async function getConfig(): Promise<number | null> { return lastConfig }
+export async function getErrorCode(): Promise<number | null> { return null }
+export function getErrorString(code: number): string { return `${getStatusString(code)} — 상세 오류 코드는 장치에서 확인하세요.` }
+export async function processBillAcceptance(): Promise<{ success: boolean; amount: number; error?: string }> {
+  return { success: false, amount: 0, error: "단독 수취 검사는 지원하지 않습니다. 결제 화면의 수취·반환 절차를 사용하세요." }
 }

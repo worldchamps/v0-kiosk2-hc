@@ -5,6 +5,7 @@ import { AlertCircle, CheckCircle2, CreditCard, Loader2, RefreshCw, WifiOff } fr
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import type { CompletedPayment, TossFrontPaymentProof } from "@/lib/payment-types"
+import { usePayment } from "@/contexts/payment-context"
 
 interface TossFrontCardPaymentProps {
   requiredAmount: number
@@ -37,6 +38,8 @@ export default function TossFrontCardPayment({
   })
   const [error, setError] = useState("")
   const autoStartedRef = useRef(false)
+  const requestInFlight = useRef(false)
+  const { setCardInFlight, requireRecovery } = usePayment()
 
   const refreshStatus = useCallback(async () => {
     if (!window.electronAPI?.tossFront) {
@@ -44,9 +47,14 @@ export default function TossFrontCardPayment({
       setError("토스 프론트 결제는 키오스크 앱(Electron)에서만 사용할 수 있습니다.")
       return
     }
-    const nextStatus = await window.electronAPI.tossFront.getStatus()
-    setStatus(nextStatus)
-    if (nextStatus.error) setError(nextStatus.error)
+    try {
+      const nextStatus = await window.electronAPI.tossFront.getStatus()
+      setStatus(nextStatus)
+      if (nextStatus.error) setError(nextStatus.error)
+    } catch {
+      setStatus({ configured: false, connected: false, authenticated: false })
+      setError("카드 단말기 상태를 확인하지 못했습니다. 관리자에게 문의해주세요.")
+    }
   }, [])
 
   useEffect(() => {
@@ -65,37 +73,48 @@ export default function TossFrontCardPayment({
   }
 
   const startPayment = async () => {
-    if (state === "waiting") return
+    if (requestInFlight.current || state === "waiting" || state === "complete") return
     const front = window.electronAPI?.tossFront
     if (!front || !status.authenticated) {
       setError("토스 프론트 단말기가 연결되지 않았습니다.")
       return
     }
 
+    if (!setCardInFlight(true)) return
+    requestInFlight.current = true
     setState("waiting")
     setError("")
     try {
       const result = await front.requestPayment({ amount: requiredAmount })
+      if (!result.success && result.notApproved === true) {
+        // Only the bridge's authenticated no-approval result is safe to retry.
+        if (!setCardInFlight(false)) return
+        requestInFlight.current = false
+        setState("error")
+        setError(result.error || "카드 결제가 승인되지 않았습니다. 다시 시도하거나 결제수단을 변경해주세요.")
+        return
+      }
       if (!result.success || !result.payment) {
         throw new Error(result.error || "카드 결제가 완료되지 않았습니다.")
       }
       if (result.payment.amount !== requiredAmount) {
-        throw new Error("승인 금액이 예약 금액과 일치하지 않습니다.")
+        requireRecovery("카드 승인 금액이 예약 금액과 다릅니다. 다시 결제하지 말고 관리자에게 문의해주세요.", {
+          expectedAmount: requiredAmount,
+          payment: { method: "CARD", provider: "TOSS_FRONT", front: result.payment },
+        })
+        return
       }
 
       setState("complete")
-      window.setTimeout(
-        () =>
-          onComplete({
+      onComplete({
             method: "CARD",
             provider: "TOSS_FRONT",
             front: result.payment as TossFrontPaymentProof,
-          }),
-        700,
-      )
+          })
     } catch (paymentError) {
       setState("error")
-      setError(paymentError instanceof Error ? paymentError.message : "카드 결제를 진행하지 못했습니다.")
+      // IPC loss/timeout cannot prove that the terminal did not approve the card.
+      requireRecovery(paymentError instanceof Error ? paymentError.message : "카드 승인 결과를 확인하지 못했습니다. 관리자에게 문의해주세요.")
     }
   }
 

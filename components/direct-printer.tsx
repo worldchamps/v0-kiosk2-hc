@@ -117,6 +117,8 @@ export default function DirectPrinter({ receiptData, onClose }: DirectPrinterPro
                   variant="outline"
                   size="sm"
                   onClick={handleToggleSimpleMode}
+                  disabled
+                  title="인쇄 서버 방식에서는 단순 모드 전환을 지원하지 않습니다."
                   className={simpleMode ? "bg-green-100 hover:bg-green-200 border-green-300" : ""}
                 >
                   {simpleMode ? "단순 모드" : "일반 모드"}

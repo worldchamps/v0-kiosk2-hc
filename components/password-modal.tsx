@@ -4,14 +4,7 @@ import type React from "react"
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import * as Dialog from "@radix-ui/react-dialog"
 import { Lock } from "lucide-react"
 import PasswordInput from "@/components/password-input"
 
@@ -45,15 +38,17 @@ export default function PasswordModal({ isOpen, onClose, onConfirm, password }: 
   }
 
   return (
-    <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+    <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) handleClose() }}>
+      <Dialog.Portal>
+      <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
+      <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[90vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-6 shadow-lg">
+        <div className="mb-4 space-y-2">
+          <Dialog.Title className="flex items-center gap-2">
             <Lock className="h-5 w-5" />
             관리자 인증
-          </DialogTitle>
-          <DialogDescription>모드 변경을 위해 관리자 비밀번호를 입력해주세요.</DialogDescription>
-        </DialogHeader>
+          </Dialog.Title>
+          <Dialog.Description>모드 변경을 위해 관리자 비밀번호를 입력해주세요.</Dialog.Description>
+        </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
@@ -62,14 +57,15 @@ export default function PasswordModal({ isOpen, onClose, onConfirm, password }: 
             {error && <p className="text-sm text-red-500">{error}</p>}
           </div>
 
-          <DialogFooter className="sm:justify-between">
+          <div className="flex justify-between gap-2">
             <Button type="button" variant="outline" onClick={handleClose}>
               취소
             </Button>
             <Button type="submit">확인</Button>
-          </DialogFooter>
+          </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }

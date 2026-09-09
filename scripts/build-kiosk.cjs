@@ -32,8 +32,7 @@ async function main() {
   if (key.asymmetricKeyType !== "ed25519") throw new Error("An Ed25519 public key is required")
   fs.mkdirSync(".local", { recursive: true })
   fs.writeFileSync(".local/update-public.pem", key.export({ type: "spki", format: "pem" }))
-  run(process.execPath, ["--test", "tests/kiosk-updates.test.cjs", "tests/private-updates.test.cjs", "tests/kiosk-architecture.test.cjs"])
-  run(process.execPath, ["--experimental-strip-types", "--test", "tests/reservation-check-in.test.mts", "tests/reservation-schedule.test.mts", "tests/kiosk-sales-config.test.mts", "tests/kiosk-building-scope.test.mts"])
+  run(process.execPath, ["scripts/test-kiosk.cjs"])
   const sdk = process.env[`KIOSK_BIXOLON_SDK_FILE_${arch.toUpperCase()}`] || process.env.KIOSK_BIXOLON_SDK_FILE
   if (sdk && peArchitecture(sdk) !== arch) throw new Error("Bixolon SDK DLL architecture does not match the installer")
   // SerialPort ships N-API binaries for both Windows architectures. Rebuilding

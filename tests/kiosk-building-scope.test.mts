@@ -32,11 +32,16 @@ const room = (code: string) => ({
 })
 const reservation = (code: string) => ["비치 A,B동", "Test Guest", `id-${code}`, "test", "Test", "100", "000",
   "26.09.06/15:00", "26.09.07/11:00", code, "test-password", "", "", "1F"]
+class ScopeTestDate extends Date {
+  constructor(value?: string | number) { super(value ?? "2026-09-06T06:00:00Z") }
+  static now() { return new ScopeTestDate().getTime() }
+}
 
 function harness(building: string | undefined = "A", property = "property3") {
   const env = { KIOSK_PROPERTY_ID: property, ...(building === undefined ? {} : { KIOSK_BUILDING: building }),
     GOOGLE_SHEETS_SPREADSHEET_ID: "test-sheet" }
   const effects: string[] = []
+  const bookingRecords = new Map<string, any>()
   const rows = [reservation("A131"), reservation("B121"), reservation("D211"), reservation("")]
   const rooms = [room("A131"), room("B121"), room("D211")]
   const values = {
@@ -51,11 +56,40 @@ function harness(building: string | undefined = "A", property = "property3") {
     "@/lib/property-utils": properties,
     "@/lib/google-sheets": { SHEET_COLUMNS: columns, createSheetsClient: () => ({ spreadsheets: { values } }) },
     "@/lib/date-utils": { ...dates,
-      getReservationCheckInEligibility: (value: string) => dates.getReservationCheckInEligibility(value, new Date("2026-09-06T06:00:00Z")) },
+      getReservationCheckInEligibility: (value: string) => dates.getReservationCheckInEligibility(value, new Date("2026-09-06T06:00:00Z")),
+      getReservationStayEligibility: (start: string, end: string) => dates.getReservationStayEligibility(start, end, new Date("2026-09-06T06:00:00Z")) },
     "@/lib/firebase-admin": {
+      getPaymentClaim: async () => null,
       addToPMSQueue: async () => { effects.push("queue") },
       claimPayment: async () => { effects.push("claim"); return true },
       releasePaymentClaim: async () => { effects.push("release") },
+    },
+    "@/lib/check-in-operation": { completeReservationCheckIn: async (input: any) => {
+      await input.writeCheckIn("2026-09-06T06:00:00Z")
+      effects.push("queue")
+      return { success: true, data: { roomNumber: input.roomNumber } }
+    } },
+    // Scope tests stop at the workflow boundary; real-store concurrency/fault
+    // contracts are exercised separately in on-site-booking.test.cjs.
+    "@/lib/on-site-bookings": {
+      bookingRoomKey: (value: string) => value.replace(/[\s-]+/g, "").toUpperCase(),
+      bookingHash: (value: string) => value,
+      readOnSiteBooking: async () => null, beginOnSiteBooking: async () => true,
+      claimOnSiteRoom: async () => true, rejectOnSiteBooking: async () => {},
+      bookingRecordRef: (key: string) => ({
+        set: async (value: any) => { bookingRecords.set(key, structuredClone(value)) },
+        transaction: async (callback: (current: any) => any) => {
+          const next = callback(bookingRecords.get(key))
+          if (next !== undefined) bookingRecords.set(key, next)
+          return { committed: next !== undefined, snapshot: { val: () => bookingRecords.get(key) } }
+        },
+      }),
+      reservationTimestamp: () => Date.now() + 86400000,
+      roomScheduleConflicts: () => false,
+      finalizeOnSiteBooking: async (record: any) => {
+        effects.push("room-status", "queue")
+        return { ...record, state: "complete" }
+      },
     },
     "@/lib/firebase-beach-rooms": {
       // Deliberately return mixed buildings: the endpoint must still filter.
@@ -79,7 +113,7 @@ function harness(building: string | undefined = "A", property = "property3") {
   return {
     env, effects, rows, rooms, dependencies,
     get: (name: string, query = "") => load(`../app/api/${name}/route.ts`, dependencies, env).GET(new Request(`http://test.local/api/${name}?${query}`)),
-    post: (name: string, body: unknown) => load(`../app/api/${name}/route.ts`, dependencies, env).POST(new Request(`http://test.local/api/${name}`, {
+    post: (name: string, body: unknown) => load(`../app/api/${name}/route.ts`, dependencies, env, { Date: ScopeTestDate }).POST(new Request(`http://test.local/api/${name}`, {
       method: "POST", body: JSON.stringify(body),
     })),
   }
@@ -131,6 +165,11 @@ test("A/B room listing ignores conflicting URLs and category labels; vacant/sale
     { ...blocked[0], status: "사용 중" }, { ...blocked[1], unavailable: "X" }, { ...blocked[2], vendingAvailable: false }]
   const firebase = load("../lib/firebase-beach-rooms.ts", {
     "@/lib/kiosk-scope": scope,
+    "@/lib/property-utils": properties,
+    "@/lib/on-site-bookings": {
+      bookingRoomKey: (value: string) => value.replace(/[\s-]+/g, "").toUpperCase(),
+      getBlockedOnSiteRooms: async () => new Set(),
+    },
     "@/lib/firebase-admin": { getDB: () => ({ ref: () => ({ once: async () => ({ val: () => mixed }) }) }) },
   })
   assert.deepEqual(Array.from(await firebase.getAvailableRooms("A"), (item: any) => item.matchingRoomNumber), ["A131"])
@@ -178,7 +217,7 @@ test("on-site sale rejects foreign/unassigned rooms before payment checks or wri
   for (const building of ["A", "B"]) {
     const api = harness(building)
     const code = building === "A" ? "A131" : "B121"
-    const body = { roomNumber: code, roomCode: code, guestName: "Test Guest", phoneNumber: "000",
+    const body = { requestId: "qa-building-scope-request", roomNumber: code, roomCode: code, guestName: "Test Guest", phoneNumber: "000",
       roomType: "Test", building: `Beach ${building}`, price: 100,
       checkInDate: "2026-09-06", checkOutDate: "2026-09-07", stayType: "overnight", payment: { method: "CASH" } }
     for (const roomCode of [building === "A" ? "B121" : "A131", "D211", "", null]) {

@@ -54,3 +54,31 @@ export function verifyTossFrontPaymentProof(proof: TossFrontPaymentProof, expect
 
   return proof
 }
+
+export interface TossFrontCancellationProof {
+  operation: "toss-front-cancel"
+  paymentKey: string
+  amount: number
+  cancelApprovalNumber: string
+  timestamp: number
+  signature: string
+}
+
+export function verifyTossFrontCancellationProof(proof: TossFrontCancellationProof, payment: { paymentKey: string; amount: number }) {
+  if (!proof || proof.operation !== "toss-front-cancel" || proof.paymentKey !== payment.paymentKey ||
+      proof.amount !== payment.amount || !Number.isSafeInteger(proof.amount) || proof.amount <= 0 ||
+      typeof proof.cancelApprovalNumber !== "string" || proof.cancelApprovalNumber.length > 100 ||
+      !Number.isFinite(proof.timestamp) || proof.timestamp <= 0 || proof.timestamp > Date.now() + 60000 ||
+      typeof proof.signature !== "string" || !/^[a-f0-9]{64}$/i.test(proof.signature)) {
+    throw new Error("단말기의 카드 취소 확인 정보가 올바르지 않습니다.")
+  }
+  const payload = JSON.stringify({ operation: proof.operation, paymentKey: proof.paymentKey,
+    amount: proof.amount, cancelApprovalNumber: proof.cancelApprovalNumber, timestamp: proof.timestamp })
+  const expected = createHmac("sha256", getPairingKey()).update(payload).digest()
+  if (!timingSafeEqual(Buffer.from(proof.signature, "hex"), expected)) {
+    throw new Error("카드 취소 확인 서명이 일치하지 않습니다.")
+  }
+  // No short expiry: a genuine cancellation may need its DB record retried after an outage.
+  // It is bound to the original payment, and recording the same cancellation is idempotent.
+  return proof
+}

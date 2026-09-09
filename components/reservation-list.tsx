@@ -57,7 +57,7 @@ export default function ReservationList({
   })
 
   useEffect(() => {
-    playAudio("MULTIPLE_RESERVATIONS")
+    playAudio("RESERVATION_FOUND")
   }, [])
 
   const handleBackClick = () => {

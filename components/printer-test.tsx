@@ -10,6 +10,7 @@ import {
   printTestPage,
   getSimplePrintMode,
   setSimplePrintMode,
+  autoConnectPrinter,
 } from "@/lib/printer-utils-unified"
 
 export default function PrinterTest() {
@@ -34,10 +35,9 @@ export default function PrinterTest() {
   }, [isElectron])
 
   const checkPrinterStatus = async () => {
-    if (isElectron && window.electronAPI.getPrinterStatus) {
+    if (isElectron) {
       try {
-        const status = await window.electronAPI.getPrinterStatus()
-        setIsConnected(status && status.connected)
+        setIsConnected(await autoConnectPrinter())
       } catch (err) {
         console.error("프린터 상태 확인 오류:", err)
       }
@@ -54,11 +54,10 @@ export default function PrinterTest() {
   const handleSerialConnect = async () => {
     if (isElectron) {
       // Electron 환경: 이미 연결되어 있는지 확인
-      const status = await window.electronAPI.getPrinterStatus()
-      if (status && status.connected) {
+      if (await autoConnectPrinter()) {
         setIsConnected(true)
         setConnectionType("serial")
-        setSuccess("프린터가 이미 연결되어 있습니다 (COM2)")
+        setSuccess("인쇄 서버 연결을 확인했습니다. 프린터·용지는 테스트 출력으로 확인하세요.")
       } else {
         setError("프린터가 연결되어 있지 않습니다. Electron 앱을 재시작하세요.")
       }
@@ -107,7 +106,7 @@ export default function PrinterTest() {
       const success = await printTestPage()
 
       if (success) {
-        setSuccess("테스트 페이지가 성공적으로 인쇄되었습니다.")
+        setSuccess("인쇄 명령이 전달되었습니다. 실제 용지 출력과 절단을 확인하세요.")
       } else {
         setError("테스트 페이지 인쇄에 실패했습니다.")
       }
@@ -146,7 +145,7 @@ export default function PrinterTest() {
           {isElectron ? (
             <div className="flex items-center gap-2 text-green-600">
               <Wifi className="h-5 w-5" />
-              <span>{isConnected ? "프린터 연결됨 (COM2)" : "프린터 연결 안됨"}</span>
+              <span>{isConnected ? "인쇄 서버 연결 확인됨 (실물 프린터·용지 미확인)" : "인쇄 서버 연결 미확인"}</span>
             </div>
           ) : (
             <div className="space-y-4">
@@ -206,14 +205,15 @@ export default function PrinterTest() {
             <Button
               variant={simpleMode ? "default" : "outline"}
               onClick={handleToggleSimpleMode}
+              disabled
+              title="인쇄 서버 방식에서는 모드 전환을 지원하지 않습니다."
               className={simpleMode ? "bg-green-600 hover:bg-green-700" : ""}
             >
               {simpleMode ? "활성화됨" : "비활성화됨"}
             </Button>
           </div>
           <p className="text-sm mt-2 text-gray-600">
-            단순 인쇄 모드는 기본 텍스트만 사용하여 복잡한 서식 없이 인쇄합니다. 프린터 호환성 문제가 있을 경우 이
-            모드를 사용하세요.
+            현재 인쇄 서버 방식에서는 모드 전환을 지원하지 않습니다. 실제 출력·용지·절단은 테스트 인쇄로 확인하세요.
           </p>
         </div>
       </CardContent>

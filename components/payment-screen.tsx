@@ -37,7 +37,7 @@ export default function PaymentScreen({
   title = "결제",
   description = "결제수단을 선택해주세요",
 }: PaymentScreenProps) {
-  const { paymentSession, startPayment, addBill, isPaymentComplete, cancelPayment } = usePayment()
+  const { paymentSession, startPayment, addBill, isPaymentComplete, cancelPayment, requireRecovery, recordCashReturned } = usePayment()
   const [isConnecting, setIsConnecting] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string>("")
@@ -45,6 +45,12 @@ export default function PaymentScreen({
   const [largeBillsOnly, setLargeBillsOnly] = useState(false)
   const paymentCompleteRef = useRef(false)
   const [isCancelling, setIsCancelling] = useState(false)
+  const cancellingRef = useRef(false)
+  const acceptanceAttemptedRef = useRef(false)
+  const latestSession = useRef(paymentSession)
+  latestSession.current = paymentSession
+  const completionCallback = useRef(onPaymentComplete)
+  completionCallback.current = onPaymentComplete
   const [paymentMethod, setPaymentMethod] = useState<"select" | "cash" | "card">("select")
   const requiredAmount = paymentMethod === "card" ? cardAmount : cashAmount
 
@@ -67,14 +73,16 @@ export default function PaymentScreen({
     }
 
     console.log("[v0] Payment complete! Processing...")
-    setIsProcessing(false)
+    setIsProcessing(true)
     paymentCompleteRef.current = true
 
     try {
       setStatusMessage("결제를 마무리하고 있습니다...")
-      await initializeDevice()
+      if (!await initializeDevice() || !await setConfig(0x1c)) throw new Error("Acceptor shutdown not confirmed")
     } catch (e) {
       console.error("[v0] Error initializing device during completion:", e)
+      requireRecovery("지폐 투입구 종료를 확인하지 못했습니다. 관리자에게 문의해주세요.")
+      return
     }
 
     const overpayment = finalTotal - requiredAmount
@@ -84,35 +92,39 @@ export default function PaymentScreen({
       setStatusMessage(`거스름돈 ${overpayment.toLocaleString()}원 반환 중...`)
 
       try {
-        const billCount = Math.floor(overpayment / 10000)
+        if (overpayment % 10000 !== 0) {
+          requireRecovery(`거스름돈 ${overpayment.toLocaleString()}원을 자동 반환할 수 없습니다. 관리자에게 문의해주세요.`)
+          return
+        }
+        const billCount = overpayment / 10000
         if (billCount > 0) {
           console.log(`[v0] Dispensing change: ${billCount} x 10,000`)
 
           // Ensure dispenser is connected before trying
           if (!isBillDispenserConnected()) {
             console.log("[v0] Dispenser not connected, connecting...")
-            await connectBillDispenser()
+            if (!await connectBillDispenser()) throw new Error("Dispenser disconnected")
           }
 
           const dispensed = await dispenseBills(billCount)
           if (dispensed) {
+            recordCashReturned(overpayment)
             console.log("[v0] Change dispensed successfully")
             setStatusMessage(`거스름돈 반환 완료`)
           } else {
             console.error("[v0] Failed to dispense bills")
-            setStatusMessage("거스름돈을 반환하지 못했습니다. 문의전화로 연락해주세요.")
-            // Wait to let user see error
-            await new Promise(r => setTimeout(r, 3000))
+            requireRecovery("거스름돈 반환 완료를 확인하지 못했습니다. 중복 반환하지 말고 관리자에게 문의해주세요.")
+            return
           }
         } else {
           console.warn("[v0] Change amount less than 1 bill unit (10,000)")
-          setStatusMessage(`거스름돈 ${overpayment.toLocaleString()}원 (반환 불가 - 데스크 문의)`)
-          await new Promise(r => setTimeout(r, 3000))
+          requireRecovery(`거스름돈 ${overpayment.toLocaleString()}원을 자동 반환할 수 없습니다. 관리자에게 문의해주세요.`)
+          return
         }
       } catch (e) {
         console.error("[v0] Dispenser error:", e)
-        setStatusMessage("거스름돈을 반환하지 못했습니다. 문의전화로 연락해주세요.")
-        await new Promise(r => setTimeout(r, 2000))
+        requireRecovery("거스름돈 반환 완료를 확인하지 못했습니다. 관리자에게 문의해주세요.")
+        return
       }
     } else {
       setStatusMessage("결제 완료!")
@@ -120,13 +132,13 @@ export default function PaymentScreen({
 
     console.log("[v0] Payment flow finished, navigating...")
     await new Promise(r => setTimeout(r, 1000))
-    onPaymentComplete({ method: "CASH" })
-  }, [requiredAmount, onPaymentComplete])
+    await completionCallback.current({ method: "CASH" })
+  }, [requiredAmount, requireRecovery, recordCashReturned])
 
   // Polling Function
   const pollDeviceStatus = useCallback(
     async () => {
-      if (isPollingProcessingRef.current || paymentCompleteRef.current) return
+      if (isPollingProcessingRef.current || paymentCompleteRef.current || cancellingRef.current) return
       isPollingProcessingRef.current = true
 
       try {
@@ -150,28 +162,29 @@ export default function PaymentScreen({
               case 0x05: amount = 5000; break
               default:
                 console.warn("[v0] Polling: Unknown bill code:", billData.toString(16))
-                setError("지폐를 확인할 수 없습니다. 다시 넣어주세요.")
-                break;
+                requireRecovery("투입된 지폐 금액을 확인하지 못했습니다. 추가 투입하지 말고 관리자에게 문의해주세요.")
+                return
             }
 
             if (amount > 0) {
               console.log(`[v0] Polling: Adding bill ${amount}`)
+              const newTotal = latestSession.current.acceptedAmount + amount
               addBill(amount)
               setStatusMessage(`${amount.toLocaleString()}원 투입됨`)
 
-              const newTotal = paymentSession.acceptedAmount + amount
               if (newTotal >= requiredAmount) {
                 return handlePaymentCompletion(newTotal)
               }
             }
           } else {
             console.error("[v0] Polling: Failed to get bill data (Response null)")
-            setError("지폐를 확인할 수 없습니다. 다시 넣어주세요.")
+            requireRecovery("투입된 지폐 금액을 확인하지 못했습니다. 추가 투입하지 말고 관리자에게 문의해주세요.")
+            return
           }
 
           console.log("[v0] Polling: Re-enabling acceptance for next bill...")
           await new Promise((resolve) => setTimeout(resolve, 500))
-          await enableAcceptance()
+          if (!await enableAcceptance()) throw new Error("Acceptor enable not confirmed")
           setStatusMessage(largeBillsOnly ? "1만원권 또는 5만원권을 추가로 투입해주세요..." : "추가 지폐를 투입해주세요...")
 
         } else if (status === 0x0c) {
@@ -183,12 +196,12 @@ export default function PaymentScreen({
         }
       } catch (e) {
         console.error("[v0] Polling error:", e)
-        setError("현금 결제 중 문제가 발생했습니다. 문의전화로 연락해주세요.")
+        requireRecovery("현금 처리 결과를 확인하지 못했습니다. 추가 투입하지 말고 관리자에게 문의해주세요.")
       } finally {
         isPollingProcessingRef.current = false
       }
     },
-    [addBill, paymentSession.acceptedAmount, requiredAmount, handlePaymentCompletion, largeBillsOnly],
+    [addBill, requiredAmount, handlePaymentCompletion, largeBillsOnly, requireRecovery],
   )
 
   useEffect(() => {
@@ -215,7 +228,8 @@ export default function PaymentScreen({
 
         console.log("[v0] Bill acceptor connected")
         setStatusMessage("지폐 투입구를 준비하고 있습니다...")
-        await enableAcceptance()
+        acceptanceAttemptedRef.current = true
+        if (!await enableAcceptance()) throw new Error("Acceptor enable not confirmed")
         console.log("[v0] Bill acceptance enabled")
 
         setStatusMessage(largeBillsOnly ? "1만원권 또는 5만원권을 투입해주세요..." : "지폐를 투입해주세요...")
@@ -254,50 +268,83 @@ export default function PaymentScreen({
   const remainingAmount = requiredAmount - paymentSession.acceptedAmount
 
   const handleCancel = async () => {
-    if (isCancelling) return
+    if (cancellingRef.current || paymentCompleteRef.current) return
+    if (isPollingProcessingRef.current) {
+      setError("지폐 확인 중입니다. 잠시 후 취소를 다시 눌러주세요.")
+      return
+    }
 
+    cancellingRef.current = true
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null }
     setIsCancelling(true)
     setStatusMessage("결제 취소 중...")
 
     try {
+      // No enable command and no cash means there is no physical operation to reverse.
+      if (!acceptanceAttemptedRef.current && latestSession.current.acceptedAmount === 0) {
+        if (await cancelPayment()) onCancel()
+        return
+      }
       setEventCallback(null)
       console.log("[v0] Initializing bill acceptor for cancellation...")
-      await initializeDevice()
+      if (!await initializeDevice() || !await setConfig(0x1c)) throw new Error("Acceptor shutdown not confirmed")
 
-      if (paymentSession.acceptedAmount > 0) {
-        setStatusMessage(`${paymentSession.acceptedAmount.toLocaleString()}원 반환 중...`)
+      const acceptedAmount = latestSession.current.acceptedAmount
+      if (acceptedAmount > 0) {
+        setStatusMessage(`${acceptedAmount.toLocaleString()}원 반환 중...`)
 
-        const billCount = Math.floor(paymentSession.acceptedAmount / 10000)
+        if (acceptedAmount % 10000 !== 0) {
+          requireRecovery(`${acceptedAmount.toLocaleString()}원을 자동 반환할 수 없습니다. 관리자에게 문의해주세요.`)
+          return
+        }
+        const billCount = acceptedAmount / 10000
         console.log(`[v0] Refunding ${billCount} bills of 10,000 won`)
 
+        if (!isBillDispenserConnected() && !await connectBillDispenser()) throw new Error("Dispenser disconnected")
         const refunded = await dispenseBills(billCount)
 
         if (refunded) {
+          recordCashReturned(acceptedAmount)
           console.log("[v0] Refund successful")
           setStatusMessage("환불 완료!")
           await new Promise((resolve) => setTimeout(resolve, 2000))
         } else {
           console.error("[v0] Refund failed")
-          setError("환불 실패. 관리자에게 문의하세요.")
-          await new Promise((resolve) => setTimeout(resolve, 3000))
+          requireRecovery("환불 완료를 확인하지 못했습니다. 중복 반환하지 말고 관리자에게 문의해주세요.")
+          return
         }
       }
 
-      await cancelPayment()
-      onCancel()
+      if (await cancelPayment()) onCancel()
     } catch (error) {
       console.error("[v0] Cancel error:", error)
-      setError("결제를 취소하지 못했습니다. 문의전화로 연락해주세요.")
-      await new Promise((resolve) => setTimeout(resolve, 3000))
+      requireRecovery("결제 취소 및 반환 완료를 확인하지 못했습니다. 관리자에게 문의해주세요.")
     } finally {
+      cancellingRef.current = false
       setIsCancelling(false)
     }
+  }
+
+  const changeCashMethod = async () => {
+    if (cancellingRef.current || isPollingProcessingRef.current || latestSession.current.acceptedAmount > 0) return
+    cancellingRef.current = true
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null }
+    try {
+      if (acceptanceAttemptedRef.current && !await setConfig(0x1c)) {
+        requireRecovery("지폐 투입구 종료를 확인하지 못했습니다. 추가 결제하지 말고 관리자에게 문의해주세요.")
+        return
+      }
+      acceptanceAttemptedRef.current = false
+      setPaymentMethod("select")
+    } catch {
+      requireRecovery("지폐 투입구 종료를 확인하지 못했습니다. 관리자에게 문의해주세요.")
+    } finally { cancellingRef.current = false }
   }
 
   const selectPaymentMethod = (method: "card" | "cash") => {
     const amount = method === "card" ? cardAmount : cashAmount
     if (amount <= 0) return
-    startPayment(amount, paymentSession.reservationData)
+    if (!startPayment(amount, paymentSession.reservationData, method)) return
     setPaymentMethod(method)
   }
 
@@ -473,7 +520,7 @@ export default function PaymentScreen({
           </Button>
           <Button
             variant="ghost"
-            onClick={() => setPaymentMethod("select")}
+            onClick={changeCashMethod}
             disabled={isConnecting || paymentSession.acceptedAmount > 0}
             className="h-16 w-full text-xl"
           >

@@ -4,7 +4,9 @@
   "private": true,
   "main": "electron/bootstrap.js",
   "scripts": {
-    "build": "next build",
+    "build": "node scripts/test-kiosk.cjs && next build",
+    "test:qa": "node scripts/test-kiosk.cjs",
+    "typecheck": "tsc --noEmit --incremental false",
     "dev": "next dev",
     "electron": "electron .",
     "electron:build": "node scripts/build-kiosk.cjs",

@@ -1,347 +1,207 @@
-import { NextResponse } from "next/server"
-import type { NextRequest } from "next/server"
-import { createSheetsClient, SHEET_COLUMNS } from "@/lib/google-sheets"
-import { addToPMSQueue, claimPayment, releasePaymentClaim } from "@/lib/firebase-admin"
-import { sendAligoSMS, formatBookingMessage } from "@/lib/aligo-sms"
-import { getRoomInfoByMatchingNumber, updateRoomStatusInFirebase } from "@/lib/firebase-beach-rooms"
+import { NextResponse, type NextRequest } from "next/server"
+import { randomUUID } from "crypto"
+import { createSheetsClient } from "@/lib/google-sheets"
+import { claimPayment, releasePaymentClaim, getPaymentClaim } from "@/lib/firebase-admin"
+import { getRoomInfoByMatchingNumber } from "@/lib/firebase-beach-rooms"
 import { getPropertyFromRoomNumber } from "@/lib/property-utils"
 import { isShortStayAvailable, isShortStayRestrictedProperty } from "@/lib/short-stay-policy"
 import { getPmsRateAmount } from "@/lib/pms-rates"
 import { verifyCompletedCardPayment } from "@/lib/toss-pay"
 import { verifyTossFrontPaymentProof } from "@/lib/toss-front"
-import { buildOnSiteSheetDateTimes } from "@/lib/date-utils"
+import { buildOnSiteSheetDateTimes, formatCurrentSheetDateTime, normalizeDate, getReservationStayEligibility } from "@/lib/date-utils"
 import { getKioskScope, isRoomInBuilding, buildingRestrictionMessage } from "@/lib/kiosk-scope"
+import { findKioskRoomSalesConfig, getKioskSalesConfig, isKioskSalesWindowOpen } from "@/lib/kiosk-sales-config"
 import {
-  findKioskRoomSalesConfig,
-  getKioskSalesConfig,
-  isKioskSalesWindowOpen,
-} from "@/lib/kiosk-sales-config"
+  bookingHash, bookingRoomKey, bookingRecordRef, readOnSiteBooking, beginOnSiteBooking,
+  claimOnSiteRoom, rejectOnSiteBooking, finalizeOnSiteBooking, resumeOnSiteBooking,
+  reservationTimestamp, roomScheduleConflicts, type OnSiteBookingRecord,
+} from "@/lib/on-site-bookings"
+
+const pending = (record?: OnSiteBookingRecord) => NextResponse.json({
+  success: false, pending: true, canCancelPayment: false,
+  reservationId: record?.reservationId,
+  error: "예약·결제 처리 결과를 확인 중입니다. 다시 결제하지 말고 예약 상태를 다시 확인하거나 관리자에게 문의해 주세요.",
+}, { status: 202 })
+const resultOf = (record: OnSiteBookingRecord) => {
+  if (record.state === "complete") {
+    const stay = getReservationStayEligibility(String(record.data.checkInDate || ""), String(record.data.checkOutDate || ""))
+    if (!stay.allowed) return NextResponse.json({ success: false, canCancelPayment: false, error: stay.message }, { status: 409 })
+    return NextResponse.json({ success: true, data: record.data })
+  }
+  return record.state === "rejected"
+    ? NextResponse.json({ success: false, canCancelPayment: record.canCancelPayment === true, error: record.error }, { status: 409 })
+    : pending(record)
+}
 
 export async function POST(request: NextRequest) {
+  let record: OnSiteBookingRecord | undefined
+  let ownsRecord = false
+  let appendAttempted = false
+  let safeToCancel = false
   let claimedPayment: { provider: "toss_pay" | "toss_front"; id: string } | null = null
-  let reservationSaved = false
+  const reject = (error: string, status = 400) =>
+    NextResponse.json({ success: false, error, canCancelPayment: safeToCancel }, { status })
 
   try {
-    const body = await request.json()
-    const {
-      guestName,
-      phoneNumber,
-      roomNumber,
-      roomCode,
-      roomType,
-      building,
-      price: requestedPrice,
-      checkInDate,
-      checkOutDate,
-      password,
-      stayType,
-      stayTypeLabel,
-      payment,
-    } = body
-    const scope = getKioskScope()
-    if (scope.building && !isRoomInBuilding(roomCode, scope.building)) {
-      return NextResponse.json(
-        { error: buildingRestrictionMessage(scope.building) },
-        { status: 403 },
-      )
+    const body = await request.json().catch(() => null)
+    if (!body || typeof body !== "object" || Array.isArray(body)) return reject("올바른 예약 정보가 필요합니다.")
+    let scope
+    try { scope = getKioskScope() } catch { return reject("키오스크 숙소·동 설정을 확인해 주세요.", 503) }
+    if (scope.building && !isRoomInBuilding(body.roomCode, scope.building)) return reject(buildingRestrictionMessage(scope.building), 403)
+    if (typeof body.roomCode !== "string") return reject("객실 정보가 필요합니다.")
+    const roomCode = bookingRoomKey(body.roomCode)
+    const property = getPropertyFromRoomNumber(roomCode)
+    if (!property || property !== scope.property) return reject("이 키오스크에서 처리할 수 없는 숙소입니다.", 403)
+    const { payment, guestName, phoneNumber, roomType, stayType } = body
+    if (![guestName, phoneNumber, roomType].every(value => typeof value === "string" && value.trim() && value.length <= 200) ||
+        !["overnight", "shortStay"].includes(stayType) || !["CARD", "CASH"].includes(payment?.method)) {
+      return reject("예약 정보 또는 결제수단을 확인해 주세요.")
     }
-    const rateStayType: "overnight" | "shortStay" | undefined =
-      stayType === "overnight" || stayType === "shortStay" ? stayType : undefined
-    const normalizedStayTypeLabel = stayType === "overnight" ? "숙박" : stayType === "shortStay" ? "대실" : ""
-    const propertyId = getPropertyFromRoomNumber(roomCode || roomNumber || "")
-
-    if (payment?.method !== "CARD" && payment?.method !== "CASH") {
-      return NextResponse.json({ error: "올바른 결제수단 정보가 필요합니다." }, { status: 400 })
+    const provider = payment.provider === "TOSS_FRONT" ? "toss_front" : "toss_pay"
+    const paymentId = provider === "toss_front" ? payment.front?.paymentKey : payment.payToken
+    const sourceId = payment.method === "CARD" ? paymentId : body.requestId
+    if (typeof sourceId !== "string" || sourceId.length < 8 || sourceId.length > 300 ||
+        (payment.method === "CASH" && !/^[a-zA-Z0-9_-]{16,100}$/.test(sourceId))) {
+      return reject("결제 요청 식별자가 없습니다. 관리자에게 문의해 주세요.")
     }
+    const key = bookingHash((payment.method === "CARD" ? provider : "cash") + ":" + sourceId)
+    const fingerprint = bookingHash(JSON.stringify([property, roomCode, stayType, body.price, guestName, phoneNumber,
+      roomType, body.checkInDate, body.checkOutDate, payment.method, payment.provider || "", payment.payToken || "",
+      payment.orderNo || "", payment.front || null]))
+    const existing = await readOnSiteBooking(key)
+    if (existing && existing.fingerprint !== fingerprint) return reject("같은 결제 요청을 다른 예약에 사용할 수 없습니다.", 409)
+    const previousPayment = payment.method === "CARD" ? await getPaymentClaim(provider, paymentId) : null
+    if (previousPayment?.status === "canceled") return reject("이미 취소된 카드 결제입니다. 관리자에게 문의해 주세요.", 409)
+    if (previousPayment && !existing) return reject("이미 예약에 사용된 카드 결제입니다. 관리자에게 문의해 주세요.", 409)
 
-    const salesConfig = propertyId ? await getKioskSalesConfig(propertyId) : null
-    const configuredRoom = findKioskRoomSalesConfig(salesConfig, roomCode || roomNumber || "")
-
-    if (salesConfig && rateStayType) {
-      const stayEnabled = rateStayType === "overnight"
-        ? configuredRoom?.overnightEnabled
-        : configuredRoom?.shortStayEnabled
-      if (
-        !configuredRoom?.enabled ||
-        !stayEnabled ||
-        !isKioskSalesWindowOpen(salesConfig.policy, rateStayType)
-      ) {
-        return NextResponse.json({ error: "현재 PMS 설정에서 판매 중지된 객실 또는 이용 유형입니다." }, { status: 403 })
-      }
-    } else if (
-      stayType === "shortStay" &&
-      isShortStayRestrictedProperty(propertyId) &&
-      !isShortStayAvailable()
-    ) {
-      return NextResponse.json({ error: "대실 예약은 오후 9시 이전에만 가능합니다." }, { status: 403 })
-    }
-
-    const configuredRates = rateStayType ? configuredRoom?.rates[rateStayType] : null
-    const configuredPrice = configuredRates
-      ? payment.method === "CARD" ? configuredRates.card : configuredRates.cash
-      : 0
-    const price = salesConfig
-      ? configuredPrice > 0 ? configuredPrice : null
-      : rateStayType
-        ? await getPmsRateAmount({
-            roomCode: roomCode || roomNumber || "",
-            stayType: rateStayType,
-            paymentMethod: payment.method,
-          })
-        : null
-
-    console.log("[v0] On-site booking request:", { guestName, phoneNumber, roomNumber, roomCode, roomType })
-    console.log("[v0] roomCode received from frontend:", roomCode)
-
-    // Validate required fields
-    if (
-      !guestName ||
-      !phoneNumber ||
-      !roomNumber ||
-      !roomCode ||
-      !roomType ||
-      !checkInDate ||
-      !checkOutDate ||
-      !stayType ||
-      !price
-    ) {
-      return NextResponse.json(
-        { error: "필수 정보가 누락되었거나 Firebase PMS에 유효한 요금이 없습니다." },
-        { status: 400 },
-      )
-    }
-
-    if (Number(requestedPrice) !== price) {
-      console.warn("[v0] Correcting mismatched on-site price:", { requestedPrice, price, roomType, stayType })
-    }
-
-    if (payment?.method === "CARD") {
-      try {
-        if (payment.provider === "TOSS_FRONT") {
-          verifyTossFrontPaymentProof(payment.front, price)
-        } else {
-          if (!payment.payToken || !payment.orderNo) {
-            return NextResponse.json({ error: "카드 결제 정보가 누락되었습니다." }, { status: 400 })
-          }
-          await verifyCompletedCardPayment({
-            payToken: payment.payToken,
-            orderNo: payment.orderNo,
-            expectedAmount: price,
-          })
-        }
-      } catch (paymentError) {
-        console.error("[v0] Card payment verification failed:", paymentError)
-        return NextResponse.json(
-          { error: paymentError instanceof Error ? paymentError.message : "카드 결제를 확인하지 못했습니다." },
-          { status: 402 },
-        )
-      }
-    }
-
-    console.log("[v0] Checking room availability from Firebase...")
-    const roomInfo = await getRoomInfoByMatchingNumber(roomCode)
-
-    if (!roomInfo) {
-      console.log("[v0] Room not found in Firebase:", roomCode)
-      return NextResponse.json({ error: "객실을 찾을 수 없습니다." }, { status: 404 })
-    }
-
-    const vending = typeof roomInfo.vendingAvailable === "string"
-      ? roomInfo.vendingAvailable.trim().toUpperCase()
-      : roomInfo.vendingAvailable
-    if (
-      roomInfo.status !== "공실" ||
-      String(roomInfo.unavailable || "").trim().toUpperCase() === "X" ||
-      [false, "X", "N", "FALSE", "0"].includes(vending as any)
-    ) {
-      console.log("[v0] Room is no longer available:", roomCode, "Status:", roomInfo.status)
-      return NextResponse.json(
-        { error: "이 객실은 방금 예약이 완료되었습니다. 다른 객실을 선택해주세요." },
-        { status: 409 },
-      )
-    }
-
-    const sheets = createSheetsClient()
     const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID
+    if (!spreadsheetId) return reject("예약 서버 설정을 확인해 주세요.", 503)
+    const sheets = createSheetsClient()
+    const readRows = async (): Promise<unknown[][]> =>
+      (await sheets.spreadsheets.values.get({ spreadsheetId, range: "Reservations!A:N",
+        valueRenderOption: "UNFORMATTED_VALUE", dateTimeRenderOption: "FORMATTED_STRING",
+      }, { timeout: 15000, retry: false })).data.values || []
 
-    if (!spreadsheetId) {
-      return NextResponse.json({ error: "Spreadsheet ID not configured" }, { status: 500 })
+    // Recover the same request before rechecking changed prices, sales windows
+    // or vacancy. Its payment and payload are bound to the persisted fingerprint.
+    if (existing) {
+      record = existing
+      return resultOf(await resumeOnSiteBooking(existing, readRows))
     }
 
-    // Generate the reservation ID before claiming the payment so the payment
-    // record can always be traced back to its reservation.
-    const reservationId = `ONSITE-${Date.now()}`
-
+    const salesConfig = await getKioskSalesConfig(property)
+    const configuredRoom = findKioskRoomSalesConfig(salesConfig, roomCode)
+    const stayEnabled = stayType === "overnight" ? configuredRoom?.overnightEnabled : configuredRoom?.shortStayEnabled
+    const configuredRates = configuredRoom?.rates[stayType as "overnight" | "shortStay"]
+    const price = salesConfig
+      ? (payment.method === "CARD" ? configuredRates?.card : configuredRates?.cash)
+      : await getPmsRateAmount({ roomCode, stayType, paymentMethod: payment.method })
+    if (!price || !Number.isFinite(price) || price <= 0) return reject("유효한 PMS 요금을 확인하지 못했습니다.")
     if (payment.method === "CARD") {
-      const isFront = payment.provider === "TOSS_FRONT"
-      const provider = isFront ? "toss_front" : "toss_pay"
-      const paymentId = isFront ? payment.front.paymentKey : payment.payToken
-      const details: Record<string, string | number> = isFront
-        ? {
-            reservationId,
-            roomCode,
-            stayType,
-            paymentKey: payment.front.paymentKey,
-            paymentMethod: payment.front.paymentMethod,
-            approvalNumber: payment.front.approvalNumber,
-            amount: payment.front.amount,
-            tax: payment.front.tax,
-            supplyValue: payment.front.supplyValue,
-            timestamp: payment.front.timestamp,
-            installment: payment.front.installment,
-            tid: payment.front.tid || "",
-            issuerName: payment.front.issuerName || "",
-            maskedCardNumber: payment.front.maskedCardNumber || "",
-            van: payment.front.van || "",
-            vanTransactionManagementId: payment.front.vanTransactionManagementId || "",
-            signature: payment.front.signature,
-          }
-        : { reservationId, roomCode, stayType, orderNo: payment.orderNo, amount: price }
-      const claimed = await claimPayment(provider, paymentId, details)
-      if (!claimed) {
-        return NextResponse.json({ error: "이미 예약에 사용된 카드 결제입니다." }, { status: 409 })
+      try {
+        if (provider === "toss_front") verifyTossFrontPaymentProof(payment.front, price)
+        else {
+          if (!payment.payToken || !payment.orderNo) return reject("카드 결제 정보가 누락되었습니다.")
+          await verifyCompletedCardPayment({ payToken: payment.payToken, orderNo: payment.orderNo, expectedAmount: price })
+        }
+      } catch {
+        return reject("카드 결제 확인에 실패했습니다. 관리자에게 문의해 주세요.", 402)
+      }
+    }
+    safeToCancel = true
+    if (Number(body.price) !== price) return reject("결제 중 PMS 요금이 변경되었습니다. 관리자에게 문의해 주세요.", 409)
+    if (salesConfig && (!configuredRoom?.enabled || !stayEnabled || !isKioskSalesWindowOpen(salesConfig.policy, stayType))) {
+      return reject("현재 PMS 설정에서 판매 중지된 객실 또는 이용 유형입니다.", 403)
+    }
+    if (!salesConfig && stayType === "shortStay" && isShortStayRestrictedProperty(property) && !isShortStayAvailable()) {
+      return reject("대실 예약은 오후 9시 이전에만 가능합니다.", 403)
+    }
+    const now = new Date()
+    const dates = buildOnSiteSheetDateTimes(normalizeDate(formatCurrentSheetDateTime(now)),
+      normalizeDate(formatCurrentSheetDateTime(new Date(now.getTime() + 86400000))), stayType, now, {
+        shortStayDurationMinutes: salesConfig?.policy.shortStayDurationMinutes,
+        overnightCheckoutTime: salesConfig?.policy.overnightCheckoutTime,
+      })
+    const reservationId = "ONSITE-" + randomUUID()
+    const data: Record<string, unknown> = { reservationId, guestName, roomNumber: roomCode, roomCode, roomType, price,
+      ...dates, stayType, stayTypeLabel: stayType === "overnight" ? "숙박" : "대실", password: "", paymentReceipt: null }
+    if (provider === "toss_front" && payment.method === "CARD") {
+      const front = payment.front
+      data.paymentReceipt = { provider: "TOSS_FRONT", amount: front.amount, tax: front.tax, supplyValue: front.supplyValue,
+        approvalNumber: front.approvalNumber, timestamp: front.timestamp, installment: front.installment,
+        issuerName: front.issuerName || "", maskedCardNumber: front.maskedCardNumber || "", tid: front.tid || "" }
+    }
+    record = { key, fingerprint, reservationId, roomCode, property, state: "preparing", data, sheetRow: [],
+      holdUntil: reservationTimestamp(dates.checkOutDate) + 7200000 }
+    if (payment.method === "CARD") record.payment = { provider, id: paymentId }
+    if (!Number.isFinite(record.holdUntil)) return reject("입퇴실 시간을 확인해 주세요.")
+    ownsRecord = await beginOnSiteBooking(record)
+    if (!ownsRecord) {
+      const winner = await readOnSiteBooking(key)
+      if (!winner || winner.fingerprint !== fingerprint) {
+        safeToCancel = false
+        return reject("같은 요청의 처리 결과를 관리자에게 확인해 주세요.", 409)
+      }
+      record = winner
+      return resultOf(await resumeOnSiteBooking(winner, readRows))
+    }
+    if (!await claimOnSiteRoom(record)) {
+      await rejectOnSiteBooking(record, "이 객실은 예약 처리 중입니다. 다른 객실을 선택해 주세요.", true)
+      return reject("이 객실은 예약 처리 중입니다. 다른 객실을 선택해 주세요.", 409)
+    }
+    const roomInfo = await getRoomInfoByMatchingNumber(roomCode)
+    const vending = typeof roomInfo?.vendingAvailable === "string" ? roomInfo.vendingAvailable.trim().toUpperCase() : roomInfo?.vendingAvailable
+    if (!roomInfo || roomInfo.status !== "공실" || String(roomInfo.unavailable || "").trim().toUpperCase() === "X" ||
+        [false, "X", "N", "FALSE", "0"].includes(vending as string | boolean)) {
+      await rejectOnSiteBooking(record, "판매 가능한 공실이 아닙니다. 다른 객실을 선택해 주세요.", true)
+      return reject("판매 가능한 공실이 아닙니다. 다른 객실을 선택해 주세요.", 409)
+    }
+    if (roomScheduleConflicts(await readRows(), roomCode, dates.checkInDate, dates.checkOutDate)) {
+      await rejectOnSiteBooking(record, "기존 예약 또는 청소 준비 시간과 겹칩니다. 다른 객실을 선택해 주세요.", true)
+      return reject("기존 예약 또는 청소 준비 시간과 겹칩니다. 다른 객실을 선택해 주세요.", 409)
+    }
+    data.password = roomInfo.password || ""
+    data.floor = roomInfo.floor || ""
+    data.phoneNumber = phoneNumber
+    record.roomCode = roomInfo.matchingRoomNumber
+    data.roomCode = record.roomCode
+    data.roomNumber = record.roomCode
+    record.sheetRow = [property === "property4" ? "더 캠프스테이" : property === "property2" ? "카리브" : "경주 더 비치스테이",
+      guestName, reservationId, "키오스크", roomType, price, phoneNumber, dates.checkInDate, dates.checkOutDate,
+      record.roomCode, roomInfo.password || "", "Checked In", dates.checkInDate, roomInfo.floor || ""]
+    if (payment.method === "CARD") {
+      const details = { ...(provider === "toss_front" ? payment.front : { orderNo: payment.orderNo }), reservationId,
+        roomCode, stayType, amount: price }
+      if (!await claimPayment(provider, paymentId, details)) {
+        safeToCancel = false
+        await rejectOnSiteBooking(record, "이미 사용된 카드 결제입니다. 관리자에게 문의해 주세요.", false)
+        return reject("이미 사용된 카드 결제입니다. 관리자에게 문의해 주세요.", 409)
       }
       claimedPayment = { provider, id: paymentId }
     }
-
-    console.log("[v0] Room info from Firebase:", {
-      matchingRoomNumber: roomInfo.matchingRoomNumber,
-      roomNumber: roomInfo.roomNumber,
-      roomCodeToUse: roomCode,
-    })
-
-    const stayDateTimes = buildOnSiteSheetDateTimes(checkInDate, checkOutDate, stayType, new Date(), {
-      shortStayDurationMinutes: salesConfig?.policy.shortStayDurationMinutes,
-      overnightCheckoutTime: salesConfig?.policy.overnightCheckoutTime,
-    })
-
-    const reservationData = [
-      "경주 더 비치스테이", // Place
-      guestName, // Guest Name
-      reservationId, // Reservation ID
-      "키오스크", // Booking Platform
-      roomType, // Room Type
-      price, // Price
-      phoneNumber, // Phone Number
-      stayDateTimes.checkInDate, // Check-in Date
-      stayDateTimes.checkOutDate, // Check-out Date
-      roomCode, // Use roomCode (matchingRoomNumber)
-      password || roomInfo.password, // Use password from Firebase if not provided
-      "Checked In", // Check-in Status - 현장예약은 즉시 체크인
-      stayDateTimes.checkInDate, // Check-in Time - 현재 시간
-      roomInfo.floor, // Floor from Firebase
-    ]
-    console.log("[v0] Writing to Reservations sheet - Room Number (column J):", roomCode)
-
-    console.log("[v0] Adding reservation to Google Sheets...")
-    // Append to Reservations sheet
-    await sheets.spreadsheets.values.append({
-      spreadsheetId,
-      range: "Reservations!A:N",
-      valueInputOption: "USER_ENTERED",
-      requestBody: {
-        values: [reservationData],
-      },
-    })
-    reservationSaved = true
-    console.log("[v0] Reservation added to Google Sheets")
-
-    /* SMS 발송 비활성화 (사용자 요청)
-    if (phoneNumber) {
-      console.log("[v0] 📱 Sending SMS notification to:", phoneNumber)
-      try {
-        const smsMessage = formatBookingMessage({
-          guestName,
-          roomNumber: roomCode,
-          checkInDate,
-          checkOutDate,
-          password: password || roomInfo.password,
-        })
-
-        const smsResult = await sendAligoSMS({
-          phoneNumber,
-          message: smsMessage,
-        })
-
-        if (smsResult.success) {
-          console.log("[v0] ✅ SMS sent successfully")
-        } else {
-          console.error("[v0] ❌ SMS failed:", smsResult.message)
-        }
-      } catch (smsError) {
-        console.error("[v0] ❌ SMS error:", smsError)
-        // Continue even if SMS fails - booking is already complete
-      }
-    }
-    */
-
-    console.log("[v0] Updating room status to '사용 중' in Firebase...")
-    const updateSuccess = await updateRoomStatusInFirebase(roomCode, "사용 중")
-
-    if (updateSuccess) {
-      console.log(`[v0] ✅ Room status updated to '사용 중' for ${roomCode}`)
-    } else {
-      console.error(`[v0] ❌ Failed to update room status for ${roomCode}`)
-      // Continue even if Firebase update fails - reservation is already saved
-    }
-
-    try {
-      console.log("[v0] Adding to Firebase PMS Queue with roomCode:", roomCode)
-      await addToPMSQueue({
-        roomNumber: roomCode,
-        guestName,
-        checkInDate,
-      })
-      console.log("[v0] Successfully added to Firebase PMS Queue:", { roomCode, guestName })
-    } catch (firebaseError) {
-      console.error("[v0] Failed to add to Firebase PMS Queue:", firebaseError)
-      // Continue even if Firebase fails - Google Sheets update is primary
-    }
-
-    return NextResponse.json({
-      success: true,
-      message: "On-site booking completed successfully",
-      data: {
-        reservationId,
-        guestName,
-        roomNumber,
-        roomCode,
-        checkInDate: stayDateTimes.checkInDate,
-        checkOutDate: stayDateTimes.checkOutDate,
-        password: password || roomInfo.password,
-        roomType,
-        price,
-        stayType,
-        stayTypeLabel: normalizedStayTypeLabel || stayTypeLabel,
-        paymentReceipt:
-          payment.method === "CARD" && payment.provider === "TOSS_FRONT"
-            ? {
-                provider: "TOSS_FRONT",
-                amount: payment.front.amount,
-                tax: payment.front.tax,
-                supplyValue: payment.front.supplyValue,
-                approvalNumber: payment.front.approvalNumber,
-                timestamp: payment.front.timestamp,
-                installment: payment.front.installment,
-                issuerName: payment.front.issuerName || "",
-                maskedCardNumber: payment.front.maskedCardNumber || "",
-                tid: payment.front.tid || "",
-              }
-            : null,
-      },
-    })
+    // Persist the exact intended row BEFORE the uncertain external write.
+    record.state = "saving"
+    await bookingRecordRef(key).set(record)
+    appendAttempted = true
+    safeToCancel = false
+    await sheets.spreadsheets.values.append({ spreadsheetId, range: "Reservations!A:N", valueInputOption: "RAW",
+      requestBody: { values: [record.sheetRow] } }, { timeout: 15000, retry: false })
+    // A retry may have reconciled the visible row while this append response
+    // was delayed. Never rewind complete/committing or recreate a consumed job.
+    const saved = await bookingRecordRef(key).transaction(current => current?.state === "saving"
+      ? { ...current, state: "saved" } : undefined)
+    record = saved.snapshot.val() || record
+    if (!record) return pending()
+    return resultOf(record.state === "saved" ? await finalizeOnSiteBooking(record) : record)
   } catch (error) {
-    if (claimedPayment && !reservationSaved) {
+    console.error("[Kiosk booking] Processing requires verification:", error instanceof Error ? error.message : "Unknown error")
+    if (record && ownsRecord && !appendAttempted) {
       try {
-        await releasePaymentClaim(claimedPayment.provider, claimedPayment.id)
-      } catch (releaseError) {
-        console.error("[v0] Failed to release payment claim:", releaseError)
-      }
+        if (claimedPayment) await releasePaymentClaim(claimedPayment.provider, claimedPayment.id)
+        await rejectOnSiteBooking(record, "예약 저장 전에 오류가 발생했습니다. 관리자에게 문의해 주세요.", safeToCancel)
+        return reject("예약 저장 전에 오류가 발생했습니다. 관리자에게 문의해 주세요.", 503)
+      } catch { /* Unknown durable-write outcome: do not pretend cancellation is safe. */ }
     }
-    console.error("[v0] Error creating on-site booking:", error)
-    return NextResponse.json(
-      { error: "Failed to create booking", details: error instanceof Error ? error.message : String(error) },
-      { status: 500 },
-    )
+    return pending(record)
   }
 }

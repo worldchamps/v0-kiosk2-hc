@@ -2,22 +2,18 @@
  * ONEPLUS 지폐방출기 제어를 위한 유틸리티 함수 (Hardware 서버 연결 방식)
  */
 
-declare global {
-  interface Window {
-    electronAPI: any
-  }
-}
+import { hardwareCallWithin } from "@/lib/hardware-timeout"
 
 // 지폐방출기 연결 상태
 let isConnected = false
 
 // 스트림 버퍼링 및 파싱
 let streamBuffer: Uint8Array = new Uint8Array(0)
-const pendingCommands: Map<string, { resolve: Function; reject: Function; timeout: NodeJS.Timeout }> = new Map()
+const pendingCommands = new Map<string, { resolve: (response: Uint8Array | null) => void; timeout: ReturnType<typeof setTimeout> }>()
 
 // 지폐 방출 상태
-let currentStatus = 0 // 0: 대기, 1: 동작중, 2: 금지, 3: 완료
-let lastErrorCode = 0
+let currentStatus: number | null = null // Unknown until the device replies.
+let lastErrorCode: number | null = null
 let dispensedCount = 0
 let isOldProtocol = true
 
@@ -115,45 +111,64 @@ function processReceivedPacket(packet: Uint8Array): void {
 }
 
 async function sendCommand(packet: Uint8Array, expectedCmd1: number, expectedCmd2: number, timeoutMs = 1000): Promise<Uint8Array | null> {
-  if (!isConnected) return null
+  const api = typeof window !== "undefined" ? window.electronAPI : undefined
+  if (!api) return null
   const responseKey = `${expectedCmd1.toString(16).padStart(2, "0")}-${expectedCmd2.toString(16).padStart(2, "0")}`
-  const responsePromise = new Promise<Uint8Array>((resolve, reject) => {
+  if (pendingCommands.has(responseKey)) return null
+  const entry: (typeof commandLog)[number] = { command: responseKey, bytes: Array.from(packet), timestamp: new Date().toISOString() }
+  commandLog.push(entry)
+  if (commandLog.length > 100) commandLog.shift()
+  const responsePromise = new Promise<Uint8Array | null>((resolve) => {
     const timeout = setTimeout(() => {
       pendingCommands.delete(responseKey)
-      reject(new Error("Timeout"))
+      resolve(null)
     }, timeoutMs)
-    pendingCommands.set(responseKey, { resolve, reject, timeout })
+    pendingCommands.set(responseKey, { resolve, timeout })
   })
 
-  const success = await window.electronAPI.sendToBillDispenser(Array.from(packet))
-  if (!success) {
-    pendingCommands.delete(responseKey)
-    return null
+  const pending = pendingCommands.get(responseKey)
+  const fail = () => {
+    if (pending && pendingCommands.get(responseKey) === pending) {
+      entry.error = "명령 전송 실패"
+      clearTimeout(pending.timeout); pending.resolve(null); pendingCommands.delete(responseKey)
+    }
   }
-  try { return await responsePromise } catch (e) { return null }
+  try {
+    Promise.resolve(api.sendToBillDispenser(Array.from(packet))).then(result => { if (result?.success !== true) fail() }, fail)
+  } catch { fail() }
+  const response = await responsePromise
+  if (response) entry.response = Array.from(response)
+  else entry.error ||= "장치 응답 시간 초과"
+  return response
 }
 
 // --- 공용 API ---
 
 export async function connectBillDispenser(): Promise<boolean> {
   logConnection("CONNECT_ATTEMPT", "하드웨어 서버 연결 상태 확인")
-  window.electronAPI.onBillDispenserStatus((status: { connected: boolean }) => {
-    isConnected = status.connected
+  const api = typeof window !== "undefined" ? window.electronAPI : undefined
+  if (!api) return false
+  isConnected = false
+  api.onBillDispenserStatus((status: { connected: boolean }) => {
+    if (!status.connected) { isConnected = false; currentStatus = null }
   })
-  window.electronAPI.onBillDispenserData(handleIncomingData)
+  api.onBillDispenserData(handleIncomingData)
 
   // 연결될 때까지 최대 5초 대기
   const startTime = Date.now()
+  let reconnectRequested = false
   while (Date.now() - startTime < 5000) {
-    const status = await window.electronAPI.getHardwareStatus()
-    isConnected = status.connected
+    const remaining = () => Math.max(0, 5000 - (Date.now() - startTime))
+    const status = await hardwareCallWithin(() => api.getHardwareStatus(), Math.min(1000, remaining()))
+    if (!status) return false
+    if (status.connected && remaining() > 0 && await checkConnection(Math.min(1000, remaining()))) break
 
-    if (isConnected) break
+    await new Promise(resolve => setTimeout(resolve, Math.min(500, remaining())))
 
-    await new Promise(resolve => setTimeout(resolve, 500))
-
-    if (Date.now() - startTime > 1500 && !isConnected) {
-      await window.electronAPI.reconnectBillDispenser()
+    if (Date.now() - startTime > 1500 && remaining() > 0 && !reconnectRequested) {
+      reconnectRequested = true
+      const result = await hardwareCallWithin(() => api.reconnectBillDispenser(), Math.min(1000, remaining()))
+      if (result?.success !== true) return false
     }
   }
 
@@ -167,19 +182,23 @@ export async function connectBillDispenser(): Promise<boolean> {
 
 export async function disconnectBillDispenser(): Promise<void> {
   isConnected = false
+  currentStatus = null
 }
 
-export async function checkConnection(): Promise<boolean> {
+export async function checkConnection(timeoutMs = 1000): Promise<boolean> {
   const packet = new Uint8Array([0x24, 0x48, 0x49, 0x3f, 0xd0]) // '$HI?'
-  const res = await sendCommand(packet, 0x6d, 0x65) // 'me'
-  return !!res && res[1] === 0x6d && res[2] === 0x65
+  const res = await sendCommand(packet, 0x6d, 0x65, timeoutMs) // 'me'
+  isConnected = !!res && res[1] === 0x6d && res[2] === 0x65
+  return isConnected
 }
 
 export async function dispenseBills(count: number): Promise<boolean> {
-  if (count < 1 || count > 250) return false
+  if (!Number.isInteger(count) || count < 1 || count > 250) return false
   const packet = createPacket(0x44, count, 0x53) // 'D' count 'S'
   const res = await sendCommand(packet, 0x64, count, 10000) // Timeout increased to 10s for dispensing
-  return !!res && res[1] === 0x64 && res[2] === count
+  const success = !!res && res[1] === 0x64 && res[2] === count
+  if (success) { dispensedCount = count; currentStatus = 3 }
+  return success
 }
 
 export async function getDispenserStatus(): Promise<number> {
@@ -219,3 +238,26 @@ export async function enableDispenser(): Promise<boolean> {
 export function isBillDispenserConnected(): boolean {
   return isConnected
 }
+
+export function getBillDispenserStatus() {
+  return { currentStatus, lastErrorCode, dispensedCount, totalDispensedCount: null, isOldProtocol }
+}
+export function getBillDispenserCommandLog() { return commandLog }
+export function clearBillDispenserCommandLog(): void { commandLog.length = 0 }
+export function setProtocolVersion(old: boolean): void { isOldProtocol = old }
+export function getStatusString(status: number | null): string {
+  if (status === null) return "상태 미확인"
+  return ({ 0: "대기", 1: "동작 중", 2: "금지", 3: "완료" } as Record<number, string>)[status] || `장치 상태 0x${status.toString(16)}`
+}
+export async function getStatus(): Promise<string | null> {
+  const status = await getDispenserStatus()
+  if (status < 0) return null
+  return `장치 응답: 0x${status.toString(16)}`
+}
+export async function getErrorCode(): Promise<{ code: number; description: string } | null> {
+  return lastErrorCode === null ? null : { code: lastErrorCode, description: "장치가 보고한 오류 코드 (장치 설명서 확인)" }
+}
+export async function getTotalDispensedCount(): Promise<number | null> { return null }
+export async function disableDispenser(): Promise<boolean> { throw new Error("현재 브리지는 방출 금지 명령을 지원하지 않습니다.") }
+export async function clearDispensedCount(): Promise<boolean> { throw new Error("장치 배출 수량 초기화는 현재 브리지에서 지원하지 않습니다.") }
+export async function clearTotalDispensedCount(): Promise<boolean> { throw new Error("장치 누적 배출 수량 초기화는 현재 브리지에서 지원하지 않습니다.") }

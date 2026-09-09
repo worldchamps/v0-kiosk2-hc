@@ -123,6 +123,10 @@ function paymentClaimKey(payToken: string) {
   return createHash("sha256").update(payToken).digest("hex")
 }
 
+export async function getPaymentClaim(provider: "toss_pay" | "toss_front", paymentId: string): Promise<{ status: string; reservationId?: string } | null> {
+  return (await getDB().ref(`payment_claims/${provider}/${paymentClaimKey(paymentId)}`).once("value")).val()
+}
+
 export async function claimPayment(
   provider: "toss_pay" | "toss_front",
   paymentId: string,
@@ -140,7 +144,13 @@ export async function claimPayment(
     }
   })
   if (result.committed && details.reservationId) {
-    await database.ref(`payment_claims_by_reservation/${provider}/${details.reservationId}`).set(claimKey)
+    try {
+      await database.ref(`payment_claims_by_reservation/${provider}/${details.reservationId}`).set(claimKey)
+    } catch (error) {
+      // The claim itself is authoritative. A failed lookup index must not turn
+      // a successful transaction into an apparent unclaimed payment.
+      console.error("[Payment] Claim saved; reservation index needs repair", error)
+    }
   }
   return result.committed
 }

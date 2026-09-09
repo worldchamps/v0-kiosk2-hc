@@ -4,12 +4,9 @@
 
 import { buildSam4sReceiptHtml } from "@/electron/sam4s-receipt"
 import { getKioskPropertyId } from "@/lib/property-utils"
+import { hardwareCallWithin } from "@/lib/hardware-timeout"
 
-declare global {
-  interface Window {
-    electronAPI: any
-  }
-}
+let printTransportConnected = false
 
 // --------------------------------------------------------
 // ESC/POS Commands
@@ -36,7 +33,9 @@ const CMD = {
 // --------------------------------------------------------
 
 async function sendRaw(data: number[]) {
-  return await window.electronAPI.sendRawToBixolon(data)
+  const api = typeof window !== "undefined" ? window.electronAPI : undefined
+  if (!api || !await api.sendRawToBixolon(data)) throw new Error("프린터 명령을 인쇄 서버에 전달하지 못했습니다.")
+  return true
 }
 
 type PrintTextOptions = {
@@ -59,16 +58,22 @@ const STYLE = {
 }
 
 export async function printText(text: string, options: PrintTextOptions = {}) {
-  return await window.electronAPI.printToBixolon(text, {
+  const api = typeof window !== "undefined" ? window.electronAPI : undefined
+  if (!api) throw new Error("인쇄는 키오스크 앱에서만 사용할 수 있습니다.")
+  const sent = await api.printToBixolon(text, {
     alignment: options.alignment ?? STYLE.ALIGN_LEFT,
     attribute: options.attribute ?? STYLE.FONT_DEFAULT,
     textSize: options.textSize ?? STYLE.SIZE_NORMAL,
     codePage: options.codePage ?? STYLE.KS5601,
   })
+  if (!sent) throw new Error("인쇄 서버로 전송하지 못했습니다.")
+  return true
 }
 
 export async function cutPaper() {
-  return await window.electronAPI.cutBixolonPaper()
+  const api = typeof window !== "undefined" ? window.electronAPI : undefined
+  if (!api || !await api.cutBixolonPaper()) throw new Error("용지 절단 명령을 전송하지 못했습니다.")
+  return true
 }
 
 export async function initializePrinter() {
@@ -239,7 +244,7 @@ export async function printReceipt(data: KioskReceiptData): Promise<boolean> {
 }
 
 async function printSam4sReceipt(data: KioskReceiptData): Promise<boolean> {
-  const electronPrint = window.electronAPI?.printToSam4s
+  const electronPrint = typeof window !== "undefined" ? window.electronAPI?.printToSam4s : undefined
 
   if (electronPrint) {
     const result = await electronPrint(data)
@@ -323,10 +328,10 @@ export async function autoConnectPrinter(): Promise<boolean> {
     return typeof window !== "undefined" && (!!window.electronAPI?.printToSam4s || typeof window.print === "function")
   }
 
-  // New hardware server architecture handles connection automatically on startup.
-  // We just return true here to allow the dependent components to proceed.
-  console.log("[Bixolon] autoConnectPrinter called (shim): Connection managed by Hardware Server.")
-  return true;
+  const api = typeof window !== "undefined" ? window.electronAPI : undefined
+  try { printTransportConnected = !!api && !!(await hardwareCallWithin(() => api.getHardwareStatus()))?.connected }
+  catch { printTransportConnected = false }
+  return printTransportConnected
 }
 
 export function isPrinterConnected(): boolean {
@@ -334,11 +339,8 @@ export function isPrinterConnected(): boolean {
     return typeof window !== "undefined" && (!!window.electronAPI?.printToSam4s || typeof window.print === "function")
   }
 
-  // We can't synchronously check invalid hardware server status easily without an async call.
-  // Ideally, we should check a cached status from the electron-IPC event listener.
-  // For now, returning true is safe as the actual print call will fail gracefully if disconnected.
-  // TODO: Hook into a global context or Redux/Zustand store for real-time status if needed.
-  return true;
+  // This is the last transport check, not a paper/sensor or physical print guarantee.
+  return printTransportConnected;
 }
 
 export async function printRoomInfoReceipt(data: {
@@ -349,13 +351,12 @@ export async function printRoomInfoReceipt(data: {
   console.log("[Bixolon] printRoomInfoReceipt called (shim).");
   try {
     const now = new Date();
-    await printReceipt({
+    return await printReceipt({
       hotelName: getKioskPropertyId() === "property4" ? "THE CAMP STAY" : "THE BEACH STAY",
       roomNumber: data.roomNumber,
       password: data.password,
       checkInDate: now.toLocaleDateString(),
     });
-    return true;
   } catch (error) {
     console.error("[Bixolon] printRoomInfoReceipt failed:", error);
     return false;

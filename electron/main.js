@@ -617,7 +617,7 @@ ipcMain.handle("toss-front:request-payment", async (_event, payload) => {
     const payment = await tossFrontBridge.requestPayment(payload)
     return { success: true, payment }
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : String(error) }
+    return { success: false, notApproved: error?.code === "PAYMENT_NOT_APPROVED", error: error instanceof Error ? error.message : String(error) }
   }
 })
 
@@ -643,13 +643,12 @@ ipcMain.handle("send-to-printer", async (event, data) => {
   // Legacy handler (keep for now or redirect?)
   // For consistency with hardware server, we might want to use that instead.
   // But let's just add the new ones for now.
-  hardwareBridge.send({ type: "printer_raw", data: Array.from(Buffer.from(data)) })
-  return { success: true }
+  return { success: hardwareBridge.send({ type: "printer_raw", data: Array.from(Buffer.from(data)) }) }
 })
 
 // New handlers for Hardware Server Printer
 ipcMain.handle("print-to-bixolon", async (event, text, options = {}) => {
-  hardwareBridge.send({
+  return hardwareBridge.send({
     type: "printer_print",
     text,
     alignment: options.alignment,
@@ -657,17 +656,14 @@ ipcMain.handle("print-to-bixolon", async (event, text, options = {}) => {
     text_size: options.textSize,
     code_page: options.codePage,
   })
-  return true
 })
 
 ipcMain.handle("cut-bixolon-paper", async () => {
-  hardwareBridge.send({ type: "printer_cut" })
-  return true
+  return hardwareBridge.send({ type: "printer_cut" })
 })
 
 ipcMain.handle("send-raw-to-bixolon", async (event, data) => {
-  hardwareBridge.send({ type: "printer_raw", data })
-  return true
+  return hardwareBridge.send({ type: "printer_raw", data })
 })
 
 function printSam4sWithWindows(printerName, lines) {

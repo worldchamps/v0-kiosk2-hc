@@ -1,6 +1,6 @@
 ﻿"use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useState, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -23,7 +23,7 @@ import {
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { getRoomImagePath } from "@/lib/room-utils"
 import { sortRoomTypes } from "@/lib/room-type-order"
-import { usePayment } from "@/contexts/payment-context"
+import { usePayment, type PendingBooking } from "@/contexts/payment-context"
 import PaymentScreen from "@/components/payment-screen"
 import type { CompletedPayment } from "@/lib/payment-types"
 import CheckInComplete from "@/components/check-in-complete"
@@ -117,11 +117,14 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
   const [reservationData, setReservationData] = useState<any>(null)
   const [roomsError, setRoomsError] = useState("")
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-  const { paymentSession, startPayment, completePayment, cancelPayment } = usePayment()
+  const { paymentSession, startPayment, completePayment, cancelPayment, ready, storageError, requireRecovery, savePendingBooking } = usePayment()
+  const submittingRef = useRef(false)
+  const requestIdRef = useRef("")
+  const [bookingError, setBookingError] = useState("")
   useEffect(() => {
-    onUpdateSafeChange?.(step === "stayType" && !loading && !submitting && !paymentSession.isActive && !roomsError)
+    onUpdateSafeChange?.(ready !== false && !storageError && step === "stayType" && !loading && !submitting && !paymentSession.isActive && !roomsError)
     return () => onUpdateSafeChange?.(false)
-  }, [step, loading, submitting, paymentSession.isActive, roomsError, onUpdateSafeChange])
+  }, [step, loading, submitting, paymentSession.isActive, roomsError, onUpdateSafeChange, ready, storageError])
   const selectedRates = selectedRoom && selectedStay ? selectedRoom.rates?.[selectedStay.type] : undefined
 
   const locationName = location === "CAMP" ? "캠프" : location ? `${location}동` : ""
@@ -162,13 +165,14 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
   )
 
   const resetToHome = useCallback(async () => {
+    if (submittingRef.current || submitting || paymentSession.cardInFlight || paymentSession.pendingBooking || paymentSession.recoveryRequired || step === "payment") return
     if (paymentSession.isActive && paymentSession.acceptedAmount > 0) {
       console.warn("[v0] Cash has been inserted. Keeping the payment screen active.")
       return
     }
 
     if (paymentSession.isActive) {
-      await cancelPayment()
+      if (await cancelPayment() === false) return
     }
 
     setSelectedRoomType("")
@@ -179,7 +183,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
     setReservationData(null)
     setStep("stayType")
     await fetchAvailableRooms(false)
-  }, [cancelPayment, fetchAvailableRooms, paymentSession.acceptedAmount, paymentSession.isActive])
+  }, [cancelPayment, fetchAvailableRooms, paymentSession, step, submitting])
 
   useIdleTimer({
     onIdle: async () => {
@@ -257,7 +261,8 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
       return
     }
 
-    startPayment(roomRates?.cash || roomRates?.card || 0, reservationInfo)
+    requestIdRef.current = window.crypto.randomUUID()
+    if (startPayment(roomRates?.cash || roomRates?.card || 0, reservationInfo) === false) return
     setStep("payment")
   }
 
@@ -295,79 +300,89 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
       return
     }
 
-    startPayment(roomRates?.cash || roomRates?.card || 0, reservationInfo)
+    requestIdRef.current = window.crypto.randomUUID()
+    if (startPayment(roomRates?.cash || roomRates?.card || 0, reservationInfo) === false) return
     setStep("payment")
   }
 
-  const handlePaymentComplete = async (payment: CompletedPayment) => {
-    const bookingPrice =
-      payment.method === "CARD" ? selectedRates?.card ?? 0 : selectedRates?.cash ?? 0
-
-    const cancelApprovedFrontPayment = async () => {
-      if (payment.provider !== "TOSS_FRONT" || !payment.front) return
-      try {
-        const result = await window.electronAPI?.tossFront?.cancelPayment(payment.front)
-        if (!result?.success) {
-          console.error("[Toss Front] Automatic approval cancellation failed:", result?.error)
-          alert("카드 승인취소에 실패했습니다. 관리자에게 문의해주세요.")
-        }
-      } catch (frontCancelError) {
-        console.error("[Toss Front] Automatic approval cancellation failed:", frontCancelError)
-        alert("카드 승인취소에 실패했습니다. 관리자에게 문의해주세요.")
-      }
-    }
-
+  const submitPendingBooking = async (booking: PendingBooking) => {
+    if (submittingRef.current || booking.cancellationStarted) return
+    submittingRef.current = true
     try {
       setSubmitting(true)
+      setBookingError("")
       const response = await fetch("/api/on-site-booking", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          guestName,
-          phoneNumber,
-          roomNumber: selectedRoom?.roomCode,
-          roomCode: selectedRoom?.roomCode,
-          roomType: selectedRoom?.roomType,
-          building: selectedRoom?.building,
-          price: bookingPrice,
-          checkInDate,
-          checkOutDate,
-          password: selectedRoom?.password,
-          stayType: selectedStay?.type,
-          stayTypeLabel: selectedStay?.label,
-          payment,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: booking.body,
+        signal: AbortSignal.timeout(30000),
       })
-
       const data = await response.json()
-
-      if (data.success) {
+      if (response.ok && data.success === true && data.data) {
+        if (completePayment() === false) return
         setReservationData(data.data)
-        completePayment()
-        await fetchAvailableRooms()
         setStep("complete")
+        void fetchAvailableRooms(false)
+      } else if (data.canCancelPayment === true && !data.pending) {
+        const payment = JSON.parse(booking.body).payment as CompletedPayment
+        if (payment.method === "CARD" && payment.provider === "TOSS_FRONT" && payment.front) {
+          // Only an explicit pre-commit rejection permits an approval cancellation.
+          // Persist intent first: a lost cancellation response must never trigger another automatic cancellation.
+          if (!savePendingBooking({ ...booking, cancellationStarted: true })) return
+          const result = await window.electronAPI?.tossFront?.cancelPayment(payment.front)
+          if (result?.success) {
+            if (completePayment() === false) return
+            setBookingError("")
+            alert(`예약을 완료하지 못해 카드 승인을 취소했습니다. ${data.error || "다른 객실을 선택해주세요."}`)
+            setStep(selectedStay ? "roomSelect" : "stayType")
+            return
+          }
+        }
+        requireRecovery("예약이 완료되지 않았습니다. 결제/반환 상태를 관리자와 확인해주세요.")
+        setBookingError(data.error || "결제 확인이 필요합니다.")
       } else {
-        alert("예약 중 오류가 발생했습니다: " + data.error)
-        await cancelApprovedFrontPayment()
-        await cancelPayment()
-        setStep("roomSelect")
+        setBookingError(data.error || "예약 처리 결과를 아직 확인하지 못했습니다. 다시 결제하지 말고 처리 결과를 확인해주세요.")
       }
     } catch (error) {
       console.error("Error submitting booking:", error)
-      alert("예약 중 오류가 발생했습니다: " + (error instanceof Error ? error.message : String(error)))
-      await cancelApprovedFrontPayment()
-      await cancelPayment()
-      setStep("roomSelect")
+      setBookingError("예약 처리 결과를 확인하지 못했습니다. 결제 기록은 보관 중입니다. 다시 결제하지 마세요.")
     } finally {
+      submittingRef.current = false
       setSubmitting(false)
     }
   }
 
+  const handlePaymentComplete = async (payment: CompletedPayment) => {
+    if (submittingRef.current || paymentSession.pendingBooking) return
+    const requestId = requestIdRef.current || window.crypto.randomUUID()
+    requestIdRef.current = requestId
+    const booking: PendingBooking = { requestId, body: JSON.stringify({ requestId, guestName, phoneNumber,
+      roomNumber: selectedRoom?.roomCode, roomCode: selectedRoom?.roomCode, roomType: selectedRoom?.roomType,
+      building: selectedRoom?.building, price: payment.method === "CARD" ? selectedRates?.card ?? 0 : selectedRates?.cash ?? 0,
+      checkInDate, checkOutDate, password: selectedRoom?.password, stayType: selectedStay?.type,
+      stayTypeLabel: selectedStay?.label, payment }) }
+    if (!savePendingBooking(booking)) return
+    await submitPendingBooking(booking)
+  }
+
   const handlePaymentCancel = async () => {
-    await cancelPayment()
+    if (await cancelPayment() === false) return
     setStep("confirm")
+  }
+
+  if (ready === false) return <div role="status" className="p-12 text-2xl">이전 결제 기록을 확인하고 있습니다.</div>
+  if (paymentSession.pendingBooking || paymentSession.recoveryRequired || storageError) {
+    return <div className="kiosk-content-container space-y-8 p-8" role="alert">
+      <h1 className="text-4xl font-bold">결제 처리 확인이 필요합니다</h1>
+      <p className="text-2xl">{storageError || bookingError || paymentSession.recoveryRequired || "예약을 처리하고 있습니다. 다시 결제하지 마세요."}</p>
+      {paymentSession.acceptedAmount > 0 && <p className="text-2xl">보관 중인 현금: {paymentSession.acceptedAmount.toLocaleString()}원</p>}
+      {paymentSession.pendingBooking && <p className="break-all">확인 번호: {paymentSession.pendingBooking.requestId}</p>}
+      {paymentSession.pendingBooking && !paymentSession.pendingBooking.cancellationStarted && !storageError &&
+        <Button className="h-24 w-full text-2xl" disabled={submitting} onClick={() => submitPendingBooking(paymentSession.pendingBooking!)}>
+          {submitting ? "처리 결과 확인 중..." : "기존 결제 처리 결과 다시 확인"}
+        </Button>}
+      <p className="text-2xl">새 결제나 추가 현금 투입을 하지 마세요. 관리자 문의 010-5126-4644</p>
+    </div>
   }
 
   // Step 1: Stay type selection
@@ -568,7 +583,6 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
             className="kiosk-room-select-back"
             onClick={() => {
               setSelectedRoomType("")
-              setSelectedStay(null)
               setStep("roomType")
             }}
           >
@@ -639,7 +653,6 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
               type="button"
               onClick={() => {
                 setSelectedRoomType("")
-                setSelectedStay(null)
                 setStep("roomType")
               }}
             >

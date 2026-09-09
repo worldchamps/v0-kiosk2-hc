@@ -86,6 +86,13 @@ function createApiHarness(checkInDate: string, now: string) {
     "next/headers": { headers: async () => new Headers() },
     "@/lib/google-sheets": { createSheetsClient: () => ({ spreadsheets: { values } }), SHEET_COLUMNS: columns },
     "@/lib/firebase-admin": { addToPMSQueue: async (request: any) => { queue.push(request) } },
+    "@/lib/check-in-operation": { completeReservationCheckIn: async (input: any) => {
+      const checkInTime = new Date(now).toISOString()
+      await input.writeCheckIn(checkInTime)
+      queue.push(input)
+      return { success: true, data: { reservationId: input.reservationId, checkInTime,
+        status: "Checked In", roomNumber: input.roomNumber, password: input.password, floor: input.floor } }
+    } },
     "@/lib/property-utils": {
       getPropertyFromReservation: () => "property1",
       canCheckInAtKiosk: () => ({ allowed: true }),
@@ -94,6 +101,7 @@ function createApiHarness(checkInDate: string, now: string) {
     "@/lib/date-utils": {
       ...dates,
       getReservationCheckInEligibility: (value: string) => dates.getReservationCheckInEligibility(value, new Date(now)),
+      getReservationStayEligibility: (start: string, end: string) => dates.getReservationStayEligibility(start, end, new Date(now)),
     },
   }
   const { POST } = loadModule("../app/api/check-in/route.ts", dependencies)
@@ -154,6 +162,25 @@ test("an H-column change after lookup is enforced at submission; bad H never wri
   assert.equal(api.queue.length, 0)
 })
 
+test("cancelled, checked-out and unknown terminal statuses cannot be checked in through direct POST", async () => {
+  for (const status of ["Canceled", "Cancelled", "취소", "예약취소", "Checked Out", "unknown"]) {
+    const api = createApiHarness("26.09.06/15:00", "2026-09-06T06:00:00Z")
+    api.row[11] = status
+    const response = await api.checkIn({ adminOverride: true })
+    assert.equal(response.status, 409, status)
+    assert.equal((await response.json()).error, "RESERVATION_NOT_ACTIVE")
+    assert.equal(api.writes.length, 0); assert.equal(api.queue.length, 0)
+  }
+})
+
+test("malformed reservation IDs are rejected before check-in effects", async () => {
+  for (const reservationId of [null, {}, [], 123, "", "x".repeat(201)]) {
+    const api = createApiHarness("26.09.06/15:00", "2026-09-06T06:00:00Z")
+    assert.equal((await api.checkIn({ reservationId })).status, 400)
+    assert.equal(api.writes.length, 0); assert.equal(api.queue.length, 0)
+  }
+})
+
 test("reservation details disable early entry with a visible time, and enable it when due", () => {
   let now = new Date("2026-09-06T05:59:59Z")
   const { default: Details } = loadModule("../components/reservation-details.tsx", {
@@ -188,4 +215,75 @@ test("reservation details disable early entry with a visible time, and enable it
   const at = renderToStaticMarkup(React.createElement(Details, props))
   assert.doesNotMatch(at, /disabled=""|입실 시간 전/)
   assert.match(at, />체크인<\/button>/)
+})
+
+test("new on-site UUID reservations cannot expose room credentials through the legacy checked-in path", async () => {
+  const api = createApiHarness("26.09.06/15:00", "2026-09-06T06:00:00Z")
+  const reservationId = "ONSITE-00000000-0000-4000-8000-000000000001"
+  api.row[2] = reservationId; api.row[11] = "Checked In"
+  const response = await api.checkIn({ reservationId })
+  assert.equal(response.status, 409)
+  const body = await response.json()
+  assert.equal(body.error, "ON_SITE_BOOKING_RECOVERY_REQUIRED")
+  assert.equal(body.data, undefined)
+  assert.equal(api.writes.length, 0); assert.equal(api.queue.length, 0)
+})
+
+test("short-stay and overnight entry remain allowed until, but not at, their exact checkout time", () => {
+  for (const [start, end, before, at] of [
+    ["26.09.06/15:00", "26.09.06/18:00", "2026-09-06T08:59:59.999Z", "2026-09-06T09:00:00Z"],
+    ["26.09.06/15:00", "26.09.07/11:00", "2026-09-07T01:59:59.999Z", "2026-09-07T02:00:00Z"],
+    ["26.09.06/23:30", "26.09.07/02:30", "2026-09-06T17:29:59.999Z", "2026-09-06T17:30:00Z"],
+    ["26.09.06", "26.09.07", "2026-09-07T01:59:59.999Z", "2026-09-07T02:00:00Z"],
+  ]) {
+    assert.equal(dates.getReservationStayEligibility(start, end, new Date(before)).allowed, true, end)
+    const expired = dates.getReservationStayEligibility(start, end, new Date(at))
+    assert.equal(expired.allowed, false, end); assert.equal(expired.code, "RESERVATION_EXPIRED")
+  }
+})
+
+test("checkout parsing rejects missing, malformed, impossible and non-increasing schedules", () => {
+  for (const end of [undefined, "", "garbage", "26.02.30/11:00", "26.09.07/24:00",
+    "26.09.07/11:60", "26.09.07/11:00:60", "26.09.07/11:xx", "26.09.07/",
+    "26.09.07/11:00junk", "26.09.06/15:00", "26.09.06/14:00"]) {
+    const result = dates.getReservationStayEligibility("26.09.06/15:00", end, new Date("2026-09-06T06:00:00Z"))
+    assert.equal(result.allowed, false, String(end)); assert.equal(result.code, "INVALID_CHECK_OUT_TIME", String(end))
+  }
+  for (const end of ["'26.09.07/11:00", "2026-09-07T11:00", "2026. 9. 7 오전 11:00:00", "09/07/2026"]) {
+    assert.equal(dates.getReservationStayEligibility("26.09.06/15:00", end, new Date("2026-09-07T01:59:59Z")).allowed, true, end)
+  }
+})
+
+test("expired unpaid, legacy completed and durable completed reservations cannot reach the credential-returning operation", async () => {
+  for (const status of ["", "Checked In"]) {
+    const api = createApiHarness("26.09.06/15:00", "2026-09-10T03:00:00Z")
+    api.row[11] = status; api.row[12] = status ? "2026-09-06T06:00:00Z" : ""
+    const response = await api.checkIn({ adminOverride: true })
+    assert.equal(response.status, 409, status)
+    const body = await response.json()
+    assert.equal(body.code, "RESERVATION_EXPIRED")
+    assert.equal(body.data, undefined); assert.equal(body.password, undefined)
+    assert.equal(api.writes.length, 0); assert.equal(api.queue.length, 0)
+  }
+})
+
+test("fresh I-column changes and invalid checkout values stop direct API writes and password disclosure", async () => {
+  const api = createApiHarness("26.09.06/15:00", "2026-09-06T09:00:00Z")
+  await api.search()
+  for (const end of ["26.09.06/18:00", "", "26.09.07/25:00", "26.09.06/14:00"]) {
+    api.row[8] = end
+    const response = await api.checkIn({ checkOutDate: "2099-01-01" })
+    assert.equal(response.status, 409, end)
+    assert.equal((await response.json()).data, undefined)
+  }
+  assert.equal(api.writes.length, 0); assert.equal(api.queue.length, 0)
+})
+
+test("valid ongoing short-stay and overnight direct requests keep the existing successful flow", async () => {
+  for (const [end, now] of [["26.09.06/18:00", "2026-09-06T08:59:59Z"], ["26.09.07/11:00", "2026-09-07T01:59:59Z"]]) {
+    const api = createApiHarness("26.09.06/15:00", now); api.row[8] = end
+    const response = await api.checkIn()
+    assert.equal(response.status, 200); assert.equal((await response.json()).data.password, "test-password")
+    assert.equal(api.writes.length, 1); assert.equal(api.queue.length, 1)
+  }
 })

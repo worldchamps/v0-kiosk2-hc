@@ -29,6 +29,7 @@ import { usePayment } from "@/contexts/payment-context"
 import { parseReservationQrValue } from "@/lib/reservation-qr"
 import { KioskProgressScreen, RESERVATION_PROGRESS_STEPS } from "@/components/kiosk-progress"
 import { type KioskScope, buildingRestrictionMessage } from "@/lib/kiosk-scope"
+import type { Reservation } from "@/lib/types"
 
 interface KioskLayoutProps {
   onChangeMode: () => void
@@ -38,12 +39,16 @@ interface KioskLayoutProps {
 export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayoutProps) {
   const [currentScreen, setCurrentScreen] = useState("onSiteReservation")
   const [homeSessionKey, setHomeSessionKey] = useState(0)
-  const [reservationData, setReservationData] = useState(null)
-  const [reservationsList, setReservationsList] = useState([])
+  const [reservationData, setReservationData] = useState<Reservation | null>(null)
+  const [reservationsList, setReservationsList] = useState<Reservation[]>([])
   const [guestName, setGuestName] = useState("")
   const [loading, setLoading] = useState(false)
   const [onSiteUpdateSafe, setOnSiteUpdateSafe] = useState(false)
   const [error, setError] = useState("")
+  const [lookupError, setLookupError] = useState(false)
+  const [checkInPending, setCheckInPending] = useState(false)
+  const checkInSubmitting = useRef(false)
+  const lookupSubmitting = useRef(false)
   const [revealedInfo, setRevealedInfo] = useState({
     roomNumber: "",
     password: "",
@@ -75,15 +80,15 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
 
   const adminPassword = "KIM1334**"
 
-  const { paymentSession, cancelPayment } = usePayment()
+  const { paymentSession, storageError, ready } = usePayment()
 
   useEffect(() => {
     window.electronAPI?.setUpdateSafe?.(
-      !!kioskScope && currentScreen === "onSiteReservation" && onSiteUpdateSafe && !loading &&
+      ready && !storageError && !checkInPending && !!kioskScope && currentScreen === "onSiteReservation" && onSiteUpdateSafe && !loading &&
       !paymentSession.isActive && !showAdminKeypad && !showPropertyMismatch && !showPropertyRedirect,
     )
     return () => window.electronAPI?.setUpdateSafe?.(false)
-  }, [kioskScope, currentScreen, onSiteUpdateSafe, loading, paymentSession.isActive, showAdminKeypad, showPropertyMismatch, showPropertyRedirect])
+  }, [kioskScope, currentScreen, onSiteUpdateSafe, loading, paymentSession.isActive, showAdminKeypad, showPropertyMismatch, showPropertyRedirect, ready, storageError, checkInPending])
 
   useEffect(() => {
     let cancelled = false
@@ -157,7 +162,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   }, [currentScreen])
 
   useEffect(() => {
-    if (!isPopupMode) return
+    if (!isPopupMode || paymentSession.isActive || loading || checkInPending) return
 
     const resetTimer = () => {
       if (inactivityTimerRef.current) {
@@ -196,14 +201,11 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       window.removeEventListener("keydown", handleUserActivity)
       window.removeEventListener("mousemove", handleUserActivity)
     }
-  }, [isPopupMode])
+  }, [isPopupMode, paymentSession.isActive, loading, checkInPending])
 
   const handleNavigate = async (screen: string) => {
-    // 결제 진행 중이면 자동 환불
-    if (paymentSession.isActive && paymentSession.acceptedAmount > 0) {
-      console.log("[v0] Active payment detected during navigation, initiating refund")
-      await cancelPayment()
-    }
+    // A navigation is never proof that cash was returned or an approval was cancelled.
+    if (paymentSession.isActive || checkInSubmitting.current || checkInPending || lookupSubmitting.current) return
 
     stopAllAudio(false)
 
@@ -216,6 +218,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
 
     setCurrentScreen(targetScreen)
     setError("")
+    setLookupError(false)
 
     if (
       targetScreen !== "reservationConfirm" &&
@@ -237,6 +240,10 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   }
 
   const handleModeChangeClick = () => {
+    if (paymentSession.isActive || checkInSubmitting.current || checkInPending) {
+      alert("진행 중인 결제/체크인 확인을 먼저 완료해주세요. 관리자 문의 010-5126-4644")
+      return
+    }
     setShowAdminKeypad(true)
   }
 
@@ -249,17 +256,20 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     setShowAdminKeypad(false)
   }
 
-  const handleCheckReservation = async (name) => {
-    if (!name.trim()) return
+  const handleCheckReservation = async (name: string) => {
+    if (!name.trim() || lookupSubmitting.current) return
+    lookupSubmitting.current = true
 
     setLoading(true)
     setError("")
+    setLookupError(false)
 
     try {
       const response = await fetch(
         `/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false&kioskProperty=${kioskProperty}`,
         {
           method: "GET",
+          signal: AbortSignal.timeout(15000),
         },
       )
 
@@ -286,6 +296,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
           `/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false&searchAll=true`,
           {
             method: "GET",
+            signal: AbortSignal.timeout(15000),
           },
         )
 
@@ -308,8 +319,10 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     } catch (err) {
       console.error("[v0] Reservation check error:", err)
       setError("예약 확인 중 오류가 발생했습니다. 다시 시도해 주세요.")
+      setLookupError(true)
       setCurrentScreen("reservationNotFound")
     } finally {
+      lookupSubmitting.current = false
       setLoading(false)
     }
   }
@@ -326,7 +339,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       params.set("kioskProperty", kioskProperty)
     }
 
-    const response = await fetch(`/api/reservations?${params.toString()}`)
+    const response = await fetch(`/api/reservations?${params.toString()}`, { signal: AbortSignal.timeout(15000) })
     if (!response.ok) {
       throw new Error(`API error: ${response.status}`)
     }
@@ -383,26 +396,30 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     }
   }
 
-  const handleCheckIn = async () => {
-    if (!reservationData || !reservationData.reservationId) return false
+  const handleCheckIn = async (override = adminOverride) => {
+    if (!reservationData?.reservationId || checkInSubmitting.current) return false
+    checkInSubmitting.current = true
 
     setLoading(true)
     setError("")
+    let definitiveFailure = false
 
     try {
       const response = await fetch("/api/check-in", {
         method: "POST",
+        signal: AbortSignal.timeout(30000),
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           reservationId: reservationData.reservationId,
           kioskProperty: kioskProperty,
-          adminOverride: adminOverride,
+          adminOverride: override,
         }),
       })
 
       if (response.status === 403) {
+        definitiveFailure = true
         const errorData = await response.json()
         if (errorData.error === "KIOSK_BUILDING_MISMATCH") throw new Error(errorData.message)
 
@@ -425,11 +442,18 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       }
 
       if (!response.ok) {
+        definitiveFailure = response.status >= 400 && response.status < 500
         const errorData = await response.json()
         throw new Error(errorData.message || "체크인 중 오류가 발생했습니다. 다시 시도해 주세요.")
       }
 
       const data = await response.json()
+
+      if (response.status === 202 || data.pending || data.success !== true || !data.data) {
+        setCheckInPending(true)
+        setError(data.message || data.error || "체크인 처리 결과 확인이 필요합니다. 같은 예약으로 다시 확인해주세요.")
+        return false
+      }
 
       if (data.data) {
         setRevealedInfo({
@@ -440,6 +464,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       }
 
       setAdminOverride(false)
+      setCheckInPending(false)
 
       if (!isPopupMode) {
         setCurrentScreen("checkInComplete")
@@ -448,6 +473,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     } catch (err) {
       console.error("[v0] Check-in error:", err)
       const message = err instanceof Error ? err.message : "체크인 중 오류가 발생했습니다. 다시 시도해 주세요."
+      if (!definitiveFailure) setCheckInPending(true)
       setError(message)
 
       if (isPopupMode) {
@@ -455,11 +481,12 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       }
       return false
     } finally {
+      checkInSubmitting.current = false
       setLoading(false)
     }
   }
 
-  const handleSelectReservation = (reservation) => {
+  const handleSelectReservation = (reservation: Reservation) => {
     setReservationData(reservation)
     setCurrentScreen("reservationDetails")
   }
@@ -467,7 +494,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   const handleAdminOverride = () => {
     setShowPropertyMismatch(false)
     setAdminOverride(true)
-    handleCheckIn()
+    void handleCheckIn(true)
   }
 
   if (!kioskScope) {
@@ -483,6 +510,9 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     <div className="w-full h-full bg-[#fefef7] overflow-hidden kiosk-mode relative">
       <div className="kiosk-screen-area">
         {error && <div className="m-4 p-3 bg-red-100 text-red-700 rounded-md">{error}</div>}
+        {checkInPending && <button className="m-4 rounded border p-5 text-xl" disabled={loading} onClick={() => handleCheckIn()}>
+          {loading ? "체크인 결과 확인 중..." : "이 예약의 체크인 처리 결과 다시 확인"}
+        </button>}
 
         {currentScreen === "idle" && (
           <IdleScreen onNavigate={handleNavigate} kioskLocation={kioskLocation} imageUrl="/idle-image.jpg" />
@@ -526,7 +556,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
           <OnSiteReservation key={homeSessionKey} onNavigate={handleNavigate} location={kioskLocation} onUpdateSafeChange={setOnSiteUpdateSafe} />
         )}
 
-        {currentScreen === "reservationDetails" && (
+        {currentScreen === "reservationDetails" && reservationData && (
           <KioskProgressScreen
             steps={RESERVATION_PROGRESS_STEPS}
             currentStep={loading || !!(revealedInfo.roomNumber || revealedInfo.password) ? 2 : 0}
@@ -543,7 +573,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
           </KioskProgressScreen>
         )}
 
-        {currentScreen === "checkInComplete" && (
+        {currentScreen === "checkInComplete" && reservationData && (
           <KioskProgressScreen steps={RESERVATION_PROGRESS_STEPS} currentStep={2}>
             <CheckInComplete
               reservation={reservationData}
@@ -557,10 +587,11 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
 
         {currentScreen === "reservationNotFound" && (
           <ReservationNotFound
-            onRecheck={() => setCurrentScreen("reservationConfirm")}
+            onRecheck={() => { setError(""); setLookupError(false); setCurrentScreen("reservationConfirm") }}
             onNavigate={handleNavigate}
             kioskLocation={kioskLocation}
             isPopupMode={isPopupMode}
+            lookupFailed={lookupError}
           />
         )}
       </div>

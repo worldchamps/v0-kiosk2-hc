@@ -296,10 +296,10 @@ export default function BillAcceptorSettings() {
                   </p>
                   {deviceStatus.version && (
                     <p>
-                      <strong>펌웨어:</strong> v{deviceStatus.version.major}.{deviceStatus.version.minor}
+                      <strong>연결 방식:</strong> {deviceStatus.version}
                     </p>
                   )}
-                  {deviceStatus.config !== undefined && (
+                  {deviceStatus.config !== undefined && deviceStatus.config !== null && (
                     <p>
                       <strong>설정:</strong> 0x{deviceStatus.config.toString(16).padStart(2, "0")}
                     </p>
@@ -344,7 +344,7 @@ export default function BillAcceptorSettings() {
                     <X className="h-4 w-4" />
                     <span>수취 비활성화</span>
                   </Button>
-                  <Button onClick={handleProcessBill} disabled={isProcessing} className="flex items-center gap-2">
+                  <Button onClick={handleProcessBill} disabled title="단독 수취 검사는 미지원입니다. 결제 화면의 수취·반환 절차를 사용하세요." className="flex items-center gap-2">
                     {isProcessing ? (
                       <>
                         <RefreshCw className="h-4 w-4 animate-spin" />
