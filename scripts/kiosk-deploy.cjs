@@ -6,7 +6,7 @@ const crypto = require("node:crypto")
 const { parseArgs } = require("node:util")
 const { spawnSync } = require("node:child_process")
 const { loadConfig, database } = require("../ops/updates/admin.cjs")
-const { publishInstaller, downloadTicket } = require("../ops/updates/github.cjs")
+const { github, publishInstaller, downloadTicket } = require("../ops/updates/github.cjs")
 const { APP_ID, ID, VERSION, check, checkArch, releaseTag, sign, releaseOf, requestOf, newer } = require("../electron/update-protocol")
 const { installerArchitecture } = require("./package-architecture.cjs")
 const { values: args, positionals } = parseArgs({
@@ -17,7 +17,8 @@ const releasePath = (version, arch) => "releases/" + releaseTag(version, arch).r
 async function main() {
   const action = positionals[0]
   if (!action || action === "help") {
-    console.log("Commands: keygen --out DIR | register --device ID --property propertyN --out FILE | publish --file EXE --version X.Y.Z --key PEM | request --device ID --version X.Y.Z --from-version X.Y.Z --key PEM | status --device ID | cancel --device ID | revoke --device ID")
+    console.log("Commands: keygen --out DIR | register --device ID --property propertyN --out FILE | publish-all --version X.Y.Z --key PEM | publish --file EXE --version X.Y.Z --key PEM | request --device ID --version X.Y.Z --from-version X.Y.Z --key PEM | status --device ID | cancel --device ID | revoke --device ID")
+    console.log("Default release workflow: electron:build:all, then kiosk:release -- --version X.Y.Z --key PEM. Both architectures are required; publishing never requests a device update.")
     console.log("register/publish: --arch x64 (default) or ia32; request uses the registered architecture. Existing records without arch remain x64.")
     return
   }
@@ -31,20 +32,41 @@ async function main() {
     return
   }
   const config = loadConfig(), store = database(config)
-  if (action === "publish") {
-    const arch = checkArch(args.arch || "x64")
-    check(VERSION.test(args.version || "") && args.file && args.key, "file/version/key are required")
-    check(path.extname(args.file).toLowerCase() === ".exe" && process.platform === "win32", "Publish Windows NSIS installers only")
-    const inspected = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(__dirname, "inspect-installer.ps1"), "-InstallerPath", path.resolve(args.file)], { encoding: "utf8", windowsHide: true })
-    check(inspected.status === 0, "Unable to inspect installer version")
-    const actual = JSON.parse(inspected.stdout)
-    check(actual.productVersion === args.version && actual.productName === "TheBeachStay Kiosk", "Installer product/version mismatch")
-    check(installerArchitecture(path.resolve(args.file)) === arch, "Installer payload does not match --arch")
-    const key = releasePath(args.version, arch), previous = await store.get(key)
-    check(!previous.value, "This release version is immutable")
-    const signed = await publishInstaller(config, args.file, args.version, fs.readFileSync(args.key), arch)
-    await store.put(key, signed, previous.generation)
-    console.log("Private release published: " + args.version + ". No device update requested.")
+  if (action === "publish" || action === "publish-all") {
+    const both = action === "publish-all"
+    check(VERSION.test(args.version || "") && args.key, "version/key are required")
+    check(both ? !args.file && !args.arch : args.file, both ? "publish-all requires both default installer paths; do not pass file/arch" : "file is required")
+    const privateKey = fs.readFileSync(args.key)
+    check(crypto.createPrivateKey(privateKey).asymmetricKeyType === "ed25519", "An Ed25519 private key is required")
+    const plans = []
+    // Validate BOTH local installers, DB access and immutable tags before the
+    // first upload. A failed preflight must not publish only one architecture.
+    for (const arch of both ? ["x64", "ia32"] : [checkArch(args.arch || "x64")]) {
+      const file = both ? path.resolve(__dirname, "..", "dist", arch, `TheBeachStay Kiosk Setup ${args.version}-${arch}.exe`) : path.resolve(args.file)
+      check(path.extname(file).toLowerCase() === ".exe" && process.platform === "win32", "Publish Windows NSIS installers only")
+      const inspected = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(__dirname, "inspect-installer.ps1"), "-InstallerPath", file], { encoding: "utf8", windowsHide: true })
+      check(inspected.status === 0, "Unable to inspect installer version: " + arch)
+      const actual = JSON.parse(inspected.stdout)
+      check(actual.productVersion === args.version && actual.productName === "TheBeachStay Kiosk", "Installer product/version mismatch: " + arch)
+      check(installerArchitecture(file) === arch, "Installer payload does not match --arch: " + arch)
+      const key = releasePath(args.version, arch), previous = await store.get(key)
+      check(!previous.value, "This release version is immutable: " + arch)
+      let existing
+      try { existing = await github(config.githubRepo, "/releases/tags/" + releaseTag(args.version, arch)) }
+      catch (error) { if (error.status !== 404) throw error }
+      check(!existing, "GitHub release already exists; inspect its assets/DB registration before retrying: " + arch)
+      plans.push({ arch, file, key, generation: previous.generation })
+    }
+    // Two GitHub releases plus DB writes are not atomic. On failure preserve
+    // completed artifacts for inspection; never delete/overwrite or auto-install.
+    for (const { arch, file, key, generation } of plans) {
+      try {
+        const signed = await publishInstaller(config, file, args.version, privateKey, arch)
+        await store.put(key, signed, generation)
+        console.log("Private release and DB registered: " + args.version + " (" + arch + "). No device update requested.")
+      } catch (error) { throw new Error(`Release incomplete at ${arch}; inspect GitHub and DB before retrying. ${error.message}`) }
+    }
+    if (both) console.log("Both x64 and ia32 releases published and registered. No device update requested.")
     return
   }
   check(ID.test(args.device || ""), "An explicit kiosk --device ID (8-80 characters) is required")

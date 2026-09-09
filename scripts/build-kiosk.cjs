@@ -16,7 +16,7 @@ async function main() {
   if (process.platform !== "win32") throw new Error("Build the Windows installer on Windows")
   const { values } = parseArgs({ options: { arch: { type: "string", default: "x64" } } })
   const arch = checkArch(values.arch)
-  const python = process.env.KIOSK_BUILD_PYTHON || path.join(root, ".local", arch === "x64" ? "build-python" : "build-python-ia32", "Scripts", "python.exe")
+  const python = process.env[`KIOSK_BUILD_PYTHON_${arch.toUpperCase()}`] || process.env.KIOSK_BUILD_PYTHON || path.join(root, ".local", arch === "x64" ? "build-python" : "build-python-ia32", "Scripts", "python.exe")
   if (!fs.existsSync(python)) throw new Error(`Create a ${arch} Python venv and install hardware_server/requirements-build.txt; KIOSK_BUILD_PYTHON may specify its python.exe`)
   if (peArchitecture(python) !== arch) throw new Error(`Build Python must match ${arch}; do not bundle a different architecture`)
   const probe = spawnSync(python, ["-c", "import struct; print('ia32' if struct.calcsize('P') == 4 else 'x64')"], { encoding: "utf8", windowsHide: true })
@@ -34,7 +34,7 @@ async function main() {
   fs.writeFileSync(".local/update-public.pem", key.export({ type: "spki", format: "pem" }))
   run(process.execPath, ["--test", "tests/kiosk-updates.test.cjs", "tests/private-updates.test.cjs", "tests/kiosk-architecture.test.cjs"])
   run(process.execPath, ["--experimental-strip-types", "--test", "tests/reservation-check-in.test.mts", "tests/reservation-schedule.test.mts", "tests/kiosk-sales-config.test.mts", "tests/kiosk-building-scope.test.mts"])
-  const sdk = process.env.KIOSK_BIXOLON_SDK_FILE
+  const sdk = process.env[`KIOSK_BIXOLON_SDK_FILE_${arch.toUpperCase()}`] || process.env.KIOSK_BIXOLON_SDK_FILE
   if (sdk && peArchitecture(sdk) !== arch) throw new Error("Bixolon SDK DLL architecture does not match the installer")
   // SerialPort ships N-API binaries for both Windows architectures. Rebuilding
   // ia32 with an x64 host Node tries to load the wrong architecture in its probe.

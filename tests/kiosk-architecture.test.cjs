@@ -90,9 +90,12 @@ test("registration preserves legacy x64 and rejects a different saved runtime ar
   }
 })
 
-function deployHarness(action, args, initial = {}, payloadArch = "x64") {
+function deployHarness(action, args, initial = {}, payloadArch = "x64", failure = {}) {
   const records = new Map(Object.entries(initial)), writes = [], events = [], files = new Map()
-  const store = { get: async key => ({ value: records.get(key), generation: "test" }),
+  const store = { get: async key => {
+      if (failure.database === key) throw new Error("Cloud login required")
+      return { value: records.get(key), generation: "test" }
+    },
     put: async (key, value) => { writes.push(key); records.set(key, value) } }
   const deps = {
     "node:fs": { readFileSync: () => keys.privateKey.export({ type: "pkcs8", format: "pem" }),
@@ -102,11 +105,19 @@ function deployHarness(action, args, initial = {}, payloadArch = "x64") {
     "node:child_process": { spawnSync: () => ({ status: 0, stdout: JSON.stringify({ productVersion: "1.3.0", productName: "TheBeachStay Kiosk" }) }) },
     "../ops/updates/admin.cjs": { loadConfig: () => ({ projectId: "test-project" }), database: () => store },
     "../ops/updates/github.cjs": {
-      publishInstaller: async (_config, _file, version, _key, arch) => { events.push("publish:" + arch); return protocol.sign({ ...release, version, arch }, keys.privateKey) },
+      github: async (_repo, suffix) => {
+        if (failure.githubTag && suffix.endsWith(failure.githubTag)) return { id: 123, draft: true }
+        throw Object.assign(new Error("Not found"), { status: 404 })
+      },
+      publishInstaller: async (_config, _file, version, _key, arch) => {
+        events.push("publish:" + arch)
+        if (failure.upload === arch) throw new Error("Upload failed")
+        return protocol.sign({ ...release, version, arch }, keys.privateKey)
+      },
       downloadTicket: async () => { events.push("ticket"); return {} },
     },
     "../electron/update-protocol": protocol,
-    "./package-architecture.cjs": { installerArchitecture: () => payloadArch },
+    "./package-architecture.cjs": { installerArchitecture: file => typeof payloadArch === "function" ? payloadArch(file) : payloadArch },
   }
   const api = load("scripts/kiosk-deploy.cjs", deps)
   return { ...api, records, writes, events, files }
@@ -177,6 +188,65 @@ test("new registration records explicit architecture without changing bindings o
     assert.equal(api.records.get("registry/kiosk-test-01").arch, arch)
     assert.equal(JSON.parse(api.files.get("file")).arch, arch)
     assert.ok(api.writes.every(key => !key.startsWith("bindings/")))
+  }
+})
+
+test("publish-all preflights both architectures before writes and never sends device requests", async () => {
+  const args = { version: "1.3.0", key: "private.pem" }
+  const detected = file => file.endsWith("-ia32.exe") ? "ia32" : "x64"
+  const api = deployHarness("publish-all", args, {}, detected)
+  await api.main()
+  assert.deepEqual(api.events, ["publish:x64", "publish:ia32"])
+  assert.deepEqual(api.writes, ["releases/v1_3_0", "releases/v1_3_0-ia32"])
+  for (const arch of ["x64", "ia32"]) {
+    assert.equal(protocol.releaseOf(api.records.get(api.releasePath("1.3.0", arch)), keys.publicKey, arch).version, "1.3.0")
+  }
+  const cases = [
+    [deployHarness("publish-all", args, {}, "x64"), /payload/],
+    [deployHarness("publish-all", args, {}, file => { if (detected(file) === "ia32") throw new Error("Missing ia32 file"); return "x64" }), /Missing/],
+    [deployHarness("publish-all", args, { "releases/v1_3_0-ia32": "existing" }, detected), /immutable/],
+    [deployHarness("publish-all", args, {}, detected, { database: "releases/v1_3_0-ia32" }), /login/],
+    [deployHarness("publish-all", args, {}, detected, { githubTag: "v1.3.0-ia32" }), /already exists/],
+    [deployHarness("publish-all", { ...args, arch: "ia32" }, {}, detected), /both default/],
+  ]
+  for (const [failed, message] of cases) {
+    await assert.rejects(failed.main(), message)
+    assert.deepEqual(failed.events, [])
+    assert.deepEqual(failed.writes, [])
+  }
+  const partial = deployHarness("publish-all", args, {}, detected, { upload: "ia32" })
+  await assert.rejects(partial.main(), /Release incomplete at ia32/)
+  assert.deepEqual(partial.writes, ["releases/v1_3_0"])
+  assert.deepEqual(partial.events, ["publish:x64", "publish:ia32"])
+})
+
+test("combined build is sequential and each target uses its own Python/SDK without publishing", () => {
+  const pkg = require("../package.json")
+  assert.equal(pkg.scripts["electron:build:all"], "node scripts/build-kiosk.cjs --arch x64 && node scripts/build-kiosk.cjs --arch ia32")
+  assert.equal(pkg.scripts["kiosk:release"], "node scripts/kiosk-deploy.cjs publish-all")
+  for (const arch of ["x64", "ia32"]) {
+    const commands = []
+    load("scripts/build-kiosk.cjs", {
+      "node:fs": { existsSync: () => true, readdirSync: () => [], mkdirSync() {}, writeFileSync() {},
+        readFileSync: () => keys.publicKey.export({ type: "spki", format: "pem" }) },
+      "node:path": path, "node:crypto": crypto,
+      "node:util": { parseArgs: () => ({ values: { arch } }) },
+      "node:child_process": { spawnSync: (command, args) => { commands.push({ command, args }); return { status: 0, stdout: arch } } },
+      "../electron/update-protocol": protocol,
+      "./package-architecture.cjs": { peArchitecture: file => { assert.ok(file.includes(arch)); return arch } },
+    }, { execPath: "build-node", chdir() {}, env: {
+      KIOSK_UPDATE_PUBLIC_KEY_FILE: "public.pem", KIOSK_BUILD_PYTHON: "wrong-generic-python", KIOSK_BIXOLON_SDK_FILE: "wrong-generic-sdk",
+      ["KIOSK_BUILD_PYTHON_" + arch.toUpperCase()]: arch + "-python.exe",
+      ["KIOSK_BIXOLON_SDK_FILE_" + arch.toUpperCase()]: arch + "-sdk.dll",
+    } })
+    assert.equal(commands[0].command, arch + "-python.exe")
+    const hardware = commands.find(c => c.args.includes("PyInstaller"))
+    assert.equal(hardware.command, arch + "-python.exe")
+    assert.ok(hardware.args.some(arg => arg.includes(arch + "-sdk.dll")))
+    const builder = commands.find(c => c.args.includes("node_modules/electron-builder/cli.js"))
+    assert.ok(builder.args.includes("--" + arch))
+    assert.equal(builder.args.at(-1), "never")
+    assert.deepEqual(Array.from(commands.at(-1).args), ["scripts/verify-kiosk-package.cjs", "--arch", arch])
   }
 })
 

@@ -13,6 +13,10 @@
   PMS 화면/로컬 객실관리 PC는 이 원격 업데이트 대상이 아니다.
   무료 연결은 beachstay-kiosk-updates Firebase와 worldchamps/kiosk-private-releases PRIVATE 저장소만 사용한다.
   기존 kiosk-pms의 보안 규칙/요금제를 변경하지 않는다. GitHub 토큰은 배포 PC에만 둔다.
+  앞으로 릴리스는 같은 버전의 Windows 32비트(ia32)와 64비트(x64)를 함께 준비·검증·게시하는 것을 기본으로 한다.
+  `npm.cmd run electron:build:all` 후, 게시 승인을 받은 경우 `npm.cmd run kiosk:release -- --version X.Y.Z --key PRIVATE_KEY_PATH`를 사용한다.
+  두 비트수 모두 GitHub 게시 및 전용 업데이트 DB 등록을 확인하기 전에는 전체 릴리스 완료로 보고하지 않는다.
+  한 비트수만 게시하는 예외/복구는 운영자의 명시적 지시에 따른다. 기존 릴리스는 덮어쓰지 않는다.
 - 키오스크별 `.env.local`, 프린터 이름, COM 포트 등 장비 설정은 각 PC의 로컬 운영 설정이며 Git에 커밋하지 않는다.
 - 배포 기준 브랜치를 변경하면 이 파일의 브랜치명과 키오스크 pull 절차도 같은 커밋에서 갱신한다.
 

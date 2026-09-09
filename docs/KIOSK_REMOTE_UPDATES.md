@@ -12,6 +12,9 @@
 - Cloud Run, Cloud Storage 설치파일 버킷, 상주 배포 서버는 사용하지 않는다.
 - Firebase 공개 앱 설정/API 키는 인증 비밀이 아니다. 장비 권한은 Firebase Auth UID와 DB 보안 규칙으로 제한한다.
 - 코드 수정/빌드/업로드/장비 업데이트 요청은 서로 별도다. Git push 및 파일 업로드만으로 장비를 재시작하지 않는다.
+- 앞으로 정식 릴리스는 **같은 버전의 32비트(ia32)와 64비트(x64)를 함께 빌드·검증·게시**한다.
+  두 설치파일과 두 서명 메타데이터의 GitHub 게시 및 전용 업데이트 DB 등록을 모두 확인해야 릴리스 완료다.
+  단일 비트수 게시 명령은 운영자가 명시한 예외/부분 실패 복구에만 사용한다.
 
 ## 인증과 안전 경계
 
@@ -61,7 +64,8 @@ Windows Authenticode 인증서가 없으면 SmartScreen 경고가 있을 수 있
 ### Windows 32비트 빌드 (1.3.0부터)
 
 CPU가 x64여도 **Windows가 32비트이면 ia32 설치파일**을 사용한다.
-`electron:build`는 기존처럼 x64만, `electron:build:ia32`는 ia32만 빌드한다.
+기본 릴리스 준비는 `electron:build:all`이며 x64 다음 ia32를 순서대로 빌드한다.
+개별 검사용 `electron:build`는 기존처럼 x64만, `electron:build:ia32`는 ia32만 빌드한다.
 Node.js 개발 도구는 64비트를 사용해도 되지만 내장 장비 프로그램을 만드는 Python은 대상 비트수와 같아야 한다.
 공식 [Python Windows 배포](https://docs.python.org/3/using/windows.html#the-nuget-org-packages)의
 32비트 Python을 별도 폴더에 준비한 후 다음 명령을 실행한다. 기존 Python/Windows를 교체하지 않는다.
@@ -75,8 +79,9 @@ $env:KIOSK_UPDATE_PUBLIC_KEY_FILE = (Resolve-Path .local/update-signing/public.p
 npm.cmd run electron:build:ia32
 ```
 
-다른 위치의 빌드용 Python은 `KIOSK_BUILD_PYTHON`으로 지정한다. 이 변수가 설정되어 있으면 기본 경로보다 우선하므로
-32/64비트 빌드를 전환할 때 맞는 Python으로 변경하거나 해당 변수만 해제한다.
+다른 위치의 빌드용 Python은 `KIOSK_BUILD_PYTHON_X64`, `KIOSK_BUILD_PYTHON_IA32`로 각각 지정한다.
+우선순위는 비트수별 변수 → 기존 공통 `KIOSK_BUILD_PYTHON` → 기본 venv 경로다.
+공통 변수에 한 비트수의 Python만 설정한 채 두 비트수를 빌드하면 다른 쪽에서 중단되므로, 비트수별 변수를 지정하거나 공통 변수만 해제한다.
 빌드는 Python 실행파일과 실제 런타임 비트수를 확인하며, 다르면 패키징 전에 중단한다.
 [PyInstaller도 Python의 비트수에 따라 실행파일을 생성한다.](https://pyinstaller.org/en/v6.16.0/operating-mode.html)
 
@@ -92,6 +97,7 @@ npm.cmd run electron:build:ia32
 [SerialPort가 제공하는 N-API 바이너리](https://serialport.io/docs/guide-installation/)를 사용한다.
 빌드 래퍼는 대상 비트수의 바이너리를 확인한 뒤 재컴파일을 생략하고, 최종 Electron에서 실제 로딩을 검증한다.
 제조사 Bixolon DLL을 포함해야 하면 같은 비트수의 DLL 경로를 `KIOSK_BIXOLON_SDK_FILE`로 지정한다.
+함께 빌드할 때는 `KIOSK_BIXOLON_SDK_FILE_X64`, `KIOSK_BIXOLON_SDK_FILE_IA32`를 사용하면 각 값이 공통 변수보다 우선한다.
 지정하지 않으면 제조사 DLL을 새로 포함하지 않으므로 실제 프린터의 드라이버/SDK 준비 여부를 별도로 확인한다.
 
 기존 Electron 28.3.3을 유지한 호환성 확장이다. 최신 런타임으로 교체한 보안 업데이트는 아니다.
@@ -134,9 +140,28 @@ node scripts/kiosk-deploy.cjs register --device property3-kiosk-a-32 --property 
 
 ## 배포 PC에서 요청
 
+먼저 package.json/package-lock.json을 같은 새 버전으로 올리고 두 비트수의 Python/SDK를 준비한다.
+빌드와 게시 명령을 분리하며, `kiosk:release`는 실제 게시 승인을 받은 경우에만 실행한다.
+이미 게시한 버전은 재빌드 파일로 교체하지 않는다.
+
 ```powershell
-node scripts/kiosk-deploy.cjs publish --file "dist/x64/TheBeachStay Kiosk Setup 1.3.0-x64.exe" --version 1.3.0 --arch x64 --key .local/update-signing/private.pem
-node scripts/kiosk-deploy.cjs publish --file "dist/ia32/TheBeachStay Kiosk Setup 1.3.0-ia32.exe" --version 1.3.0 --arch ia32 --key .local/update-signing/private.pem
+npm.cmd run electron:build:all
+$releaseVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+npm.cmd run kiosk:release -- --version $releaseVersion --key .local/update-signing/private.pem
+```
+
+`kiosk:release`는 `publish-all`을 실행한다. `dist/x64`와 `dist/ia32`의 같은 버전 파일을 모두 검사하고,
+DB 접근 및 두 GitHub 태그의 중복 여부를 확인한 다음 순서대로 게시한다. 한 파일이 없거나 비트수/버전이 틀리면 첫 업로드 전에 중단한다.
+`--arch`/`--file`로 한쪽만 선택할 수 없으며 장비 업데이트 요청은 생성하지 않는다.
+
+GitHub의 두 릴리스와 DB 기록은 단일 트랜잭션이 아니다. 업로드 중 장애가 나면 일부만 게시될 수 있으며 성공 메시지를 내지 않는다.
+이때 기존 파일을 삭제/덮어쓰지 말고 각 태그의 draft/게시 상태와 DB 등록을 먼저 확인한다.
+재실행 시 이미 있는 릴리스는 중복 방지로 중단한다. 운영자 승인 후 미완료 비트수만 기존 `publish --file ... --version ... --arch ... --key ...`로 복구한다.
+GitHub에 이미 있고 DB에만 없는 경우 `publish` 재시도로 해결되지 않는다. 기존 파일·서명 검증 후 별도 DB 등록 복구가 필요하다.
+
+장비 업데이트는 게시와 별도로 명시적으로 선택한 장비에만 요청한다. 아래 버전은 해당 장비의 실제 현재/목표 버전으로 바꾼다.
+
+```powershell
 node scripts/kiosk-deploy.cjs status --device property3-kiosk-01
 node scripts/kiosk-deploy.cjs request --device property3-kiosk-01 --version 1.3.0 --from-version 1.2.0 --key .local/update-signing/private.pem
 node scripts/kiosk-deploy.cjs status --device property3-kiosk-01
@@ -151,6 +176,11 @@ request는 장비 등록의 비트수로 릴리스를 선택한다. 앱에서도
 업로드 도중 실패하면 비공개 draft를 확인한다. 임의 덮어쓰기 대신 원인 확인 후 새 버전을 사용한다.
 취소/접근 차단은 이미 시작된 설치 또는 이미 전달된 만료형 URL을 회수하지 못한다.
 초기 무료 연결 버전은 1.2.0이며, 최초 설치한 장비의 다음 원격 업데이트는 더 높은 버전이어야 한다.
+비트수 필드가 없는 기존 x64 장비/릴리스 경로는 유지한다. ia32 장비는 ia32 파일만, x64 장비는 x64 파일만 받는다.
+장비 비트수의 자동 전환은 지원하지 않는다. 결제/체크인/인쇄 중 설치 보류, 서명·해시 검사와 기존 PC 설정 유지도 그대로 적용한다.
+
+2026-09-09 게시 상태: `v1.3.0-ia32`만 GitHub에 게시됐고, Google CLI 재로그인이 필요해 전용 DB 등록은 보류됐다.
+따라서 1.3.0 전체 비트수의 원격 업데이트 준비가 완료된 상태는 아니다. 운영 전 로그인 및 각 릴리스/DB 상태를 다시 확인한다.
 
 ## 검증
 
