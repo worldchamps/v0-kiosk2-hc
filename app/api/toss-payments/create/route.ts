@@ -3,6 +3,7 @@ import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { getOnSiteRate } from "@/lib/on-site-pricing"
 import { createTossPayment } from "@/lib/toss-pay"
+import { getKioskScope, buildingRestrictionMessage } from "@/lib/kiosk-scope"
 
 function getPublicBaseUrl(request: NextRequest) {
   const configured = process.env.TOSS_PAY_PUBLIC_BASE_URL?.trim().replace(/\/$/, "")
@@ -24,6 +25,11 @@ function getPublicBaseUrl(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const { building, roomType, stayType } = await request.json()
+    const scope = getKioskScope()
+    if (scope.building && ![scope.building, `${scope.building}동`, `BEACH ${scope.building}`]
+      .includes(String(building || "").trim().toUpperCase())) {
+      return NextResponse.json({ error: buildingRestrictionMessage(scope.building) }, { status: 403 })
+    }
     if (!building || !roomType || (stayType !== "overnight" && stayType !== "shortStay")) {
       return NextResponse.json({ error: "결제 상품 정보가 올바르지 않습니다." }, { status: 400 })
     }

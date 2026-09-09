@@ -10,6 +10,7 @@ import { getPmsRateAmount } from "@/lib/pms-rates"
 import { verifyCompletedCardPayment } from "@/lib/toss-pay"
 import { verifyTossFrontPaymentProof } from "@/lib/toss-front"
 import { buildOnSiteSheetDateTimes } from "@/lib/date-utils"
+import { getKioskScope, isRoomInBuilding, buildingRestrictionMessage } from "@/lib/kiosk-scope"
 import {
   findKioskRoomSalesConfig,
   getKioskSalesConfig,
@@ -37,6 +38,13 @@ export async function POST(request: NextRequest) {
       stayTypeLabel,
       payment,
     } = body
+    const scope = getKioskScope()
+    if (scope.building && !isRoomInBuilding(roomCode, scope.building)) {
+      return NextResponse.json(
+        { error: buildingRestrictionMessage(scope.building) },
+        { status: 403 },
+      )
+    }
     const rateStayType: "overnight" | "shortStay" | undefined =
       stayType === "overnight" || stayType === "shortStay" ? stayType : undefined
     const normalizedStayTypeLabel = stayType === "overnight" ? "숙박" : stayType === "shortStay" ? "대실" : ""

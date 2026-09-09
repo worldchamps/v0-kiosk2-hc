@@ -28,6 +28,7 @@ import PropertyRedirectDialog from "@/components/property-redirect-dialog"
 import { usePayment } from "@/contexts/payment-context"
 import { parseReservationQrValue } from "@/lib/reservation-qr"
 import { KioskProgressScreen, RESERVATION_PROGRESS_STEPS } from "@/components/kiosk-progress"
+import { type KioskScope, buildingRestrictionMessage } from "@/lib/kiosk-scope"
 
 interface KioskLayoutProps {
   onChangeMode: () => void
@@ -52,6 +53,8 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   const [kioskLocation, setKioskLocation] = useState<KioskLocation>(() => initialLocation || getKioskLocation())
   const [isPopupMode, setIsPopupMode] = useState(false)
   const [kioskProperty, setKioskProperty] = useState<PropertyId>("property3")
+  const [kioskScope, setKioskScope] = useState<KioskScope | null>(null)
+  const [configError, setConfigError] = useState("")
   const [showPropertyMismatch, setShowPropertyMismatch] = useState(false)
   const [mismatchData, setMismatchData] = useState<{
     reservationProperty: PropertyId
@@ -76,50 +79,65 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
 
   useEffect(() => {
     window.electronAPI?.setUpdateSafe?.(
-      currentScreen === "onSiteReservation" && onSiteUpdateSafe && !loading &&
+      !!kioskScope && currentScreen === "onSiteReservation" && onSiteUpdateSafe && !loading &&
       !paymentSession.isActive && !showAdminKeypad && !showPropertyMismatch && !showPropertyRedirect,
     )
     return () => window.electronAPI?.setUpdateSafe?.(false)
-  }, [currentScreen, onSiteUpdateSafe, loading, paymentSession.isActive, showAdminKeypad, showPropertyMismatch, showPropertyRedirect])
+  }, [kioskScope, currentScreen, onSiteUpdateSafe, loading, paymentSession.isActive, showAdminKeypad, showPropertyMismatch, showPropertyRedirect])
 
   useEffect(() => {
-    const savedLocation = initialLocation || getKioskLocation()
-    setKioskLocation(savedLocation)
+    let cancelled = false
+    setKioskScope(null)
+    setConfigError("")
+    const initialize = async () => {
+      const response = await fetch("/api/kiosk-config", { cache: "no-store" })
+      const config = await response.json()
+      if (!response.ok) throw new Error(config.error || "키오스크 PC 설정을 확인하지 못했습니다.")
+      if (cancelled) return
+      const scope = config as KioskScope
+      const savedLocation = scope.building || initialLocation || getKioskLocation()
+      setKioskLocation(savedLocation)
 
-    const savedProperty = getKioskPropertyId()
-    setKioskProperty(savedProperty)
+      const savedProperty = scope.property
+      setKioskProperty(savedProperty)
 
-    const checkPopupMode = () => {
+      const checkPopupMode = () => {
+        if (typeof window !== "undefined") {
+          const urlParams = new URLSearchParams(window.location.search)
+          const isPopup = urlParams.get("popup") === "true"
+          const property = savedProperty
+          const isElectronPopup = propertyUsesElectron(property) && !!(window as any).electronAPI && window.opener
+          return isPopup || isElectronPopup
+        }
+        return false
+      }
+
+      const popupMode = checkPopupMode()
+      setIsPopupMode(popupMode)
+
       if (typeof window !== "undefined") {
         const urlParams = new URLSearchParams(window.location.search)
-        const isPopup = urlParams.get("popup") === "true"
-        const property = getKioskPropertyId()
-        const isElectronPopup = propertyUsesElectron(property) && !!(window as any).electronAPI && window.opener
-        return isPopup || isElectronPopup
+        const directScreen = urlParams.get("direct")
+
+        if (popupMode && directScreen) {
+          setCurrentScreen(directScreen)
+        } else if (popupMode) {
+          setCurrentScreen("reservationConfirm")
+        }
       }
-      return false
+
+      console.log("[v0] Kiosk initialized:", {
+        property: getPropertyDisplayName(savedProperty),
+        location: savedLocation,
+        isPopupMode: popupMode,
+        initialScreen: popupMode ? "reservationConfirm" : "onSiteReservation",
+      })
+      setKioskScope(scope)
     }
-
-    const popupMode = checkPopupMode()
-    setIsPopupMode(popupMode)
-
-    if (typeof window !== "undefined") {
-      const urlParams = new URLSearchParams(window.location.search)
-      const directScreen = urlParams.get("direct")
-
-      if (popupMode && directScreen) {
-        setCurrentScreen(directScreen)
-      } else if (popupMode) {
-        setCurrentScreen("reservationConfirm")
-      }
-    }
-
-    console.log("[v0] Kiosk initialized:", {
-      property: getPropertyDisplayName(savedProperty),
-      location: savedLocation,
-      isPopupMode: popupMode,
-      initialScreen: popupMode ? "reservationConfirm" : "onSiteReservation",
+    initialize().catch((error) => {
+      if (!cancelled) setConfigError(error instanceof Error ? error.message : "키오스크 PC 설정을 확인하지 못했습니다.")
     })
+    return () => { cancelled = true }
   }, [initialLocation])
 
   useEffect(() => {
@@ -260,6 +278,9 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
           setReservationData(reservation)
           setCurrentScreen("reservationDetails")
         }
+      } else if (kioskScope?.building) {
+        setError(buildingRestrictionMessage(kioskScope.building))
+        setCurrentScreen("reservationNotFound")
       } else {
         const allPropertiesResponse = await fetch(
           `/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false&searchAll=true`,
@@ -340,6 +361,11 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         return
       }
 
+      if (kioskScope?.building) {
+        setError(buildingRestrictionMessage(kioskScope.building))
+        setCurrentScreen("reservationNotFound")
+        return
+      }
       const allPropertyReservations = await findReservationById(reservationId, true)
       if (allPropertyReservations.length > 0) {
         const foundReservation = allPropertyReservations[0]
@@ -378,6 +404,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
 
       if (response.status === 403) {
         const errorData = await response.json()
+        if (errorData.error === "KIOSK_BUILDING_MISMATCH") throw new Error(errorData.message)
 
         const detectedFromRoom = getPropertyFromRoomNumber(reservationData.roomNumber)
         const detectedFromPlace = getPropertyFromPlace(reservationData.place)
@@ -441,6 +468,15 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     setShowPropertyMismatch(false)
     setAdminOverride(true)
     handleCheckIn()
+  }
+
+  if (!kioskScope) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-6 p-8 text-center text-2xl" role="status">
+        <p>{configError || "키오스크 PC 설정을 확인하고 있습니다."}</p>
+        {configError && <button className="rounded border p-4" onClick={() => window.location.reload()}>다시 확인</button>}
+      </div>
+    )
   }
 
   return (
@@ -576,7 +612,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         />
       )}
 
-      <PrintQueueListener />
+      <PrintQueueListener scope={kioskScope} />
     </div>
   )
 }

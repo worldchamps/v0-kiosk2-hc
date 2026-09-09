@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server"
 import { createSheetsClient, SHEET_COLUMNS } from "@/lib/google-sheets"
 import { getCurrentDateKST, normalizeDate, resolveReservationSheetDateTime } from "@/lib/date-utils"
 import { getPropertyFromReservation } from "@/lib/property-utils"
+import { getKioskScope, isRoomInBuilding } from "@/lib/kiosk-scope"
 
 export async function GET(request: NextRequest) {
   try {
@@ -10,8 +11,9 @@ export async function GET(request: NextRequest) {
     const guestName = searchParams.get("name")
     const reservationId = searchParams.get("reservationId")
     const todayOnly = searchParams.get("todayOnly") === "true"
-    const kioskProperty = searchParams.get("kioskProperty")
-    const searchAllProperties = searchParams.get("searchAll") === "true"
+    const scope = getKioskScope()
+    const kioskProperty = scope.building ? scope.property : searchParams.get("kioskProperty")
+    const searchAllProperties = !scope.building && searchParams.get("searchAll") === "true"
 
     console.log("[v0] Reservations API called with kioskProperty:", kioskProperty, "searchAll:", searchAllProperties)
 
@@ -41,6 +43,7 @@ export async function GET(request: NextRequest) {
     const today = getCurrentDateKST()
 
     for (const row of rows) {
+      if (!isRoomInBuilding(row[SHEET_COLUMNS.ROOM_NUMBER], scope.building)) continue
       const rowGuestName = row[SHEET_COLUMNS.GUEST_NAME] || ""
       const rowReservationId = row[SHEET_COLUMNS.RESERVATION_ID] || ""
       const checkInStatus = row[SHEET_COLUMNS.CHECK_IN_STATUS] || ""

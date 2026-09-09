@@ -1,4 +1,5 @@
 import { getDB } from "@/lib/firebase-admin"
+import { isRoomInBuilding } from "@/lib/kiosk-scope"
 
 /**
  * Firebase Beach Room Status 데이터 타입
@@ -145,10 +146,9 @@ export async function getAvailableRooms(location?: string): Promise<BeachRoomDat
           return cat === "CAMP" || cat === "THE CAMP" || cat === "더 캠프스테이" || cat === "캠프"
         })
       } else if (["A", "B"].includes(upperLocation)) {
-        filteredRooms = filteredRooms.filter((room) => {
-          const cat = room.category.toUpperCase().trim()
-          return cat === "BEACH A" || cat === "BEACH B" || cat === "A동" || cat === "B동"
-        })
+        filteredRooms = filteredRooms.filter((room) =>
+          isRoomInBuilding(room.matchingRoomNumber, upperLocation as "A" | "B"),
+        )
       } else if (["C", "D"].includes(upperLocation)) {
         filteredRooms = filteredRooms.filter((room) => {
           const cat = room.category.toUpperCase().trim()

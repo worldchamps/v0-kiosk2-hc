@@ -7,6 +7,7 @@ import { getPropertyFromReservation, canCheckInAtKiosk } from "@/lib/property-ut
 import type { PropertyId } from "@/lib/property-utils"
 import { sendAligoSMS, formatCheckInMessage } from "@/lib/aligo-sms"
 import { getReservationCheckInEligibility } from "@/lib/date-utils"
+import { getKioskScope, isRoomInBuilding, buildingRestrictionMessage } from "@/lib/kiosk-scope"
 
 // API Key for authentication
 const API_KEY = process.env.API_KEY || ""
@@ -29,6 +30,7 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const { reservationId, kioskProperty, adminOverride = false } = body
+    const scope = getKioskScope()
 
     console.log("[v0] ========================================")
     console.log("[v0] 🔍 Check-in Request")
@@ -80,6 +82,15 @@ export async function POST(request: NextRequest) {
     const password = reservationData[SHEET_COLUMNS.PASSWORD] || ""
     const floor = reservationData[SHEET_COLUMNS.FLOOR] || ""
     const phoneNumber = reservationData[SHEET_COLUMNS.PHONE_NUMBER] || ""
+
+    // Validate the room freshly read from Sheets, including after reassignment.
+    // adminOverride never bypasses the physical kiosk's building restriction.
+    if (scope.building && !isRoomInBuilding(roomNumber, scope.building)) {
+      return NextResponse.json(
+        { error: "KIOSK_BUILDING_MISMATCH", message: buildingRestrictionMessage(scope.building) },
+        { status: 403 },
+      )
+    }
 
     // Read the current H-column value, not the schedule cached by the kiosk UI.
     // Property overrides do not bypass the reservation's scheduled entry time.

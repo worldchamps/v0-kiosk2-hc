@@ -23,7 +23,7 @@ async function main() {
   fs.mkdirSync(".local", { recursive: true })
   fs.writeFileSync(".local/update-public.pem", key.export({ type: "spki", format: "pem" }))
   run(process.execPath, ["--test", "tests/kiosk-updates.test.cjs", "tests/private-updates.test.cjs"])
-  run(process.execPath, ["--experimental-strip-types", "--test", "tests/reservation-check-in.test.mts", "tests/reservation-schedule.test.mts", "tests/kiosk-sales-config.test.mts"])
+  run(process.execPath, ["--experimental-strip-types", "--test", "tests/reservation-check-in.test.mts", "tests/reservation-schedule.test.mts", "tests/kiosk-sales-config.test.mts", "tests/kiosk-building-scope.test.mts"])
   const python = path.join(root, ".local", "build-python", "Scripts", "python.exe")
   if (!fs.existsSync(python)) throw new Error("First create .local/build-python and install hardware_server/requirements-build.txt")
   run(python, ["-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--name", "KioskHardware",

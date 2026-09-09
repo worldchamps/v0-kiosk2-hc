@@ -1,9 +1,10 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { ref, onValue, update, off } from "firebase/database"
+import { ref, onValue, update } from "firebase/database"
 import { getFirebaseDatabase } from "@/lib/firebase-client"
 import { printRoomInfoReceipt, isPrinterConnected, autoConnectPrinter } from "@/lib/printer-utils"
+import { type KioskScope, isRoomInBuilding } from "@/lib/kiosk-scope"
 
 interface PrintJob {
   id: string
@@ -16,12 +17,13 @@ interface PrintJob {
   completedAt: string | null
 }
 
-export function PrintQueueListener() {
+export function PrintQueueListener({ scope }: { scope: KioskScope }) {
   const [pendingJobs, setPendingJobs] = useState<number>(0)
   const [lastPrintTime, setLastPrintTime] = useState<string>("")
   const [isPopupMode, setIsPopupMode] = useState(false)
 
   useEffect(() => {
+    if (scope.property !== "property3" && scope.property !== "property4") return
     if (typeof window !== "undefined") {
       const popupMode = localStorage.getItem("popupMode") === "true"
       setIsPopupMode(popupMode)
@@ -48,92 +50,85 @@ export function PrintQueueListener() {
       }
     })
 
-    const property3Ref = ref(database, "print_queue/property3")
-    const property4Ref = ref(database, "print_queue/property4")
+    const queueRef = ref(database, `print_queue/${scope.property}`)
+    const printing = new Set<string>()
 
     const handlePrintJob = async (property: string, jobId: string, job: PrintJob) => {
-      if (job.status === "pending" && job.action === "remote-print") {
-        console.log(`[PrintQueue] New print job detected in ${property}:`, job)
+      if (job.status === "pending" && job.action === "remote-print" &&
+          isRoomInBuilding(job.roomNumber, scope.building) && !printing.has(jobId)) {
+        printing.add(jobId)
+        try {
+          console.log(`[PrintQueue] New print job detected in ${property}:`, job)
 
-        if (!isPrinterConnected()) {
-          console.log("[PrintQueue] Printer not connected, attempting to connect...")
-          const connected = await autoConnectPrinter()
-          if (!connected) {
-            console.error("[PrintQueue] Failed to connect printer")
-            return
+          if (!isPrinterConnected()) {
+            console.log("[PrintQueue] Printer not connected, attempting to connect...")
+            const connected = await autoConnectPrinter()
+            if (!connected) {
+              console.error("[PrintQueue] Failed to connect printer")
+              return
+            }
           }
-        }
 
-        const roomNumber = job.roomNumber
-        let floor = "1F"
-        if (roomNumber.length >= 2) {
-          const floorDigit = roomNumber.charAt(1)
-          if (floorDigit >= "1" && floorDigit <= "9") {
-            floor = `${floorDigit}F`
+          const roomNumber = job.roomNumber
+          let floor = "1F"
+          if (roomNumber.length >= 2) {
+            const floorDigit = roomNumber.charAt(1)
+            if (floorDigit >= "1" && floorDigit <= "9") {
+              floor = `${floorDigit}F`
+            }
           }
-        }
 
-        const printData = {
-          roomNumber: job.roomNumber,
-          password: job.password,
-          floor: floor,
-        }
+          const printData = {
+            roomNumber: job.roomNumber,
+            password: job.password,
+            floor: floor,
+          }
 
-        console.log("[PrintQueue] Printing receipt with data:", printData)
-        const success = await printRoomInfoReceipt(printData)
+          console.log("[PrintQueue] Printing receipt with data:", printData)
+          const success = await printRoomInfoReceipt(printData)
 
-        if (success) {
-          console.log("[PrintQueue] Print successful, updating status...")
-          const jobRef = ref(database, `print_queue/${property}/${jobId}`)
-          await update(jobRef, {
-            status: "completed",
-            completedAt: new Date().toISOString(),
-          })
+          if (success) {
+            console.log("[PrintQueue] Print successful, updating status...")
+            const jobRef = ref(database, `print_queue/${property}/${jobId}`)
+            await update(jobRef, {
+              status: "completed",
+              completedAt: new Date().toISOString(),
+            })
 
-          setLastPrintTime(new Date().toLocaleTimeString())
-          console.log("[PrintQueue] Print job completed successfully")
-        } else {
-          console.error("[PrintQueue] Print failed")
+            setLastPrintTime(new Date().toLocaleTimeString())
+            console.log("[PrintQueue] Print job completed successfully")
+          } else {
+            console.error("[PrintQueue] Print failed")
+          }
+        } catch (error) {
+          console.error("[PrintQueue] Print job failed:", error)
+        } finally {
+          printing.delete(jobId)
         }
       }
     }
 
-    const property3Listener = onValue(property3Ref, (snapshot) => {
+    const unsubscribe = onValue(queueRef, (snapshot) => {
       const data = snapshot.val()
+      let pending = 0
       if (data) {
-        let pending = 0
         Object.entries(data).forEach(([jobId, job]) => {
           const printJob = job as PrintJob
-          if (printJob.status === "pending") {
+          if (printJob.status === "pending" && printJob.action === "remote-print" &&
+              isRoomInBuilding(printJob.roomNumber, scope.building)) {
             pending++
-            handlePrintJob("property3", jobId, printJob)
+            void handlePrintJob(scope.property, jobId, printJob)
           }
         })
-        setPendingJobs((prev) => prev + pending)
       }
-    })
-
-    const property4Listener = onValue(property4Ref, (snapshot) => {
-      const data = snapshot.val()
-      if (data) {
-        let pending = 0
-        Object.entries(data).forEach(([jobId, job]) => {
-          const printJob = job as PrintJob
-          if (printJob.status === "pending") {
-            pending++
-            handlePrintJob("property4", jobId, printJob)
-          }
-        })
-        setPendingJobs((prev) => prev + pending)
-      }
+      setPendingJobs(pending)
     })
 
     return () => {
       console.log("[PrintQueue] Cleaning up print queue listeners...")
-      off(property3Ref)
-      off(property4Ref)
+      unsubscribe()
     }
-  }, [])
+  }, [scope.property, scope.building])
 
   if (isPopupMode) {
     return null

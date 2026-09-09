@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getAvailableRooms } from "@/lib/firebase-beach-rooms"
 import { findPmsRateRoom, getPmsRateProperties } from "@/lib/pms-rates"
 import { getPropertyFromRoomNumber, type PropertyId } from "@/lib/property-utils"
+import { getKioskScope, isRoomInBuilding } from "@/lib/kiosk-scope"
 import {
   defaultKioskSalesPolicy,
   findKioskRoomSalesConfig,
@@ -16,11 +17,13 @@ export const revalidate = 0
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
-    const location = searchParams.get("location")?.toUpperCase()
+    const scope = getKioskScope()
+    const location = scope.building || searchParams.get("location")?.toUpperCase()
 
     console.log("[v0] Filtering by location:", location || "ALL")
 
-    const availableRooms = await getAvailableRooms(location || undefined)
+    const availableRooms = (await getAvailableRooms(location || undefined))
+      .filter((room) => isRoomInBuilding(room.matchingRoomNumber, scope.building))
 
     console.log("[v0] Available rooms from Firebase:", availableRooms.length)
 

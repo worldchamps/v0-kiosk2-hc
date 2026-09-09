@@ -68,6 +68,10 @@ Cloud Run/Identity Platform 유료 업그레이드나 결제 계정 연결은 �
 
 ## 키오스크 최초 등록
 
+property3의 A동/B동 PC는 각각 해당 동 객실만 판매·체크인한다.
+등록 전에 [A/B동 설치 설정](KIOSK_BUILDING_SCOPE.md)에 따라 각 PC의 `KIOSK_BUILDING`을 지정한다.
+같은 등록파일이나 암호화된 사용자 데이터 폴더를 두 PC에 복사하지 않는다.
+
 ```powershell
 node scripts/kiosk-deploy.cjs register --device property3-kiosk-01 --property property3 --out .local/property3-registration.json
 ```

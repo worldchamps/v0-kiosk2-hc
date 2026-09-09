@@ -7,6 +7,7 @@ import * as React from "react"
 import * as jsxRuntime from "react/jsx-runtime"
 import { renderToStaticMarkup } from "react-dom/server"
 import * as dates from "../lib/date-utils.ts"
+import * as kioskScope from "../lib/kiosk-scope.ts"
 
 test("scheduled entry is closed until the exact H-column time, in KST", () => {
   const before = new Date("2026-09-06T05:59:59.999Z")
@@ -80,6 +81,7 @@ function createApiHarness(checkInDate: string, now: string) {
     batchUpdate: async (request: any) => { writes.push(request) },
   }
   const dependencies = {
+    "@/lib/kiosk-scope": { ...kioskScope, getKioskScope: () => kioskScope.getKioskScope({ KIOSK_PROPERTY_ID: "property1" }) },
     "next/server": { NextResponse: Response },
     "next/headers": { headers: async () => new Headers() },
     "@/lib/google-sheets": { createSheetsClient: () => ({ spreadsheets: { values } }), SHEET_COLUMNS: columns },
