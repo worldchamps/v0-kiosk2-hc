@@ -12,7 +12,7 @@ using Microsoft.Win32;
 
 internal static class KioskRepair
 {
-    const string Title = "property3 A동 설정 복구";
+    const string Title = "property3 A동 설정 복구 v2";
     internal static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
     static void Require(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
     internal static Dictionary<string, object> Parse(string value) { return Json.Deserialize<Dictionary<string, object>>(value); }
@@ -36,8 +36,19 @@ internal static class KioskRepair
             if (uninstall == null) continue;
             foreach (string name in uninstall.GetSubKeyNames())
             using (var entry = uninstall.OpenSubKey(name))
-                if (entry != null && ((string)entry.GetValue("DisplayName", "")).StartsWith("TheBeachStay Kiosk ", StringComparison.Ordinal))
+                if (entry != null && ((string)entry.GetValue("DisplayName", "") == "TheBeachStay Kiosk" ||
+                    ((string)entry.GetValue("DisplayName", "")).StartsWith("TheBeachStay Kiosk ", StringComparison.Ordinal)))
                 {
+                    string location = entry.GetValue("InstallLocation", "") as string;
+                    if (!String.IsNullOrWhiteSpace(location)) dirs.Add(location);
+                    string icon = entry.GetValue("DisplayIcon", "") as string;
+                    if (!String.IsNullOrWhiteSpace(icon))
+                    {
+                        int comma = icon.LastIndexOf(',');
+                        string iconPath = (comma >= 0 ? icon.Substring(0, comma) : icon).Trim('"');
+                        if (String.Equals(Path.GetFileName(iconPath), "TheBeachStay Kiosk.exe", StringComparison.OrdinalIgnoreCase))
+                            dirs.Add(Path.GetDirectoryName(iconPath));
+                    }
                     // electron-builder stores InstallLocation in a separate key;
                     // the uninstall entry contains the quoted uninstaller path.
                     string command = entry.GetValue("UninstallString", "") as string;
@@ -53,12 +64,44 @@ internal static class KioskRepair
                     }
                 }
         }
-        var candidates = dirs.Select(d => Path.Combine(d, "TheBeachStay Kiosk.exe")).Where(File.Exists).ToArray();
-        Require(candidates.Length == 1, "설치된 키오스크 위치를 하나로 확인할 수 없습니다.\n설정은 변경하지 않았습니다. 관리자에게 문의해 주세요.");
-        string exe = candidates[0];
+        return SelectExecutable(dirs.Select(d => Path.Combine(d, "TheBeachStay Kiosk.exe")), PickExecutable);
+    }
+    internal static string PickExecutable()
+    {
+        using (var picker = new OpenFileDialog())
+        {
+            picker.Title = "바탕화면의 TheBeachStay Kiosk 바로가기 선택 (installer.exe 아님)";
+            picker.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            picker.Filter = "키오스크 실행파일 또는 바로가기|*.exe;*.lnk";
+            picker.DereferenceLinks = true;
+            picker.CheckFileExists = true;
+            picker.Multiselect = false;
+            return picker.ShowDialog() == DialogResult.OK ? picker.FileName : null;
+        }
+    }
+    internal static string SelectExecutable(IEnumerable<string> paths, Func<string> choose)
+    {
+        // Equivalent registry/default paths must not count as multiple installs.
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string path in paths)
+        {
+            try { candidates.Add(ValidateExecutable(path)); }
+            catch { /* Stale/unsupported registrations do not block manual selection. */ }
+        }
+        if (candidates.Count == 1) return candidates.Single();
+        string selected = choose(); // no match OR ambiguous: operator chooses, never guess
+        return selected == null ? null : ValidateExecutable(selected);
+    }
+    internal static string ValidateExecutable(string path)
+    {
+        string exe = Path.GetFullPath(path);
+        Require(File.Exists(exe) && String.Equals(Path.GetFileName(exe), "TheBeachStay Kiosk.exe", StringComparison.OrdinalIgnoreCase),
+            "기존 TheBeachStay Kiosk 실행파일이나 바탕화면 바로가기를 선택해 주세요.\ninstaller.exe 또는 복구파일 자체를 선택하면 안 됩니다.\n설정은 변경하지 않았습니다.");
         var package = Parse(File.ReadAllText(Path.Combine(Path.GetDirectoryName(exe), "resources", "app", "package.json")));
         Require((string)package["name"] == "thebeachstay-kiosk" && (string)package["version"] == "1.3.2" && (string)package["main"] == "electron/bootstrap.js",
             "이 복구파일은 설치형 키오스크 1.3.2용입니다. 현재 버전을 확인해 주세요.");
+        var version = FileVersionInfo.GetVersionInfo(exe);
+        Require(version.ProductName == "TheBeachStay Kiosk" && version.FileVersion == "1.3.2", "선택한 실행파일이 키오스크 1.3.2인지 확인해 주세요.");
         return exe;
     }
     internal static string Request(string dir)
@@ -123,6 +166,8 @@ internal static class KioskRepair
             Require(acquired, "복구파일이 이미 실행 중입니다.");
             Idle();
             string exe = Locate();
+            if (exe == null) return; // picker cancellation must never touch configuration
+            Idle();
             string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "thebeachstay-kiosk");
             string request = Request(dir);
             child = Start(exe);

@@ -7,7 +7,10 @@
 
 1. 해당 PC가 A동이며 진행 중이거나 미확정인 결제·입실·환불·인쇄가 없는지 확인한다.
 2. 평소 키오스크를 실행하는 Windows 계정에서 키오스크를 정상 종료한다. 제거하거나 사용자 데이터를 삭제하지 않는다.
-3. `Property3-A-Repair-x64.exe`(64비트 Windows) 또는 `Property3-A-Repair-x86.exe`(32비트 Windows)를 실행한다.
+3. `Property3-A-Repair-v2-x64.exe`(64비트 Windows) 또는 `Property3-A-Repair-v2-x86.exe`(32비트 Windows)를 실행한다.
+   자동 검색이 안 되거나 설치본이 여러 개이면 파일 선택창이 열린다. **바탕화면의 기존 TheBeachStay Kiosk 바로가기**를 선택한다.
+   또는 실제 설치 폴더의 `TheBeachStay Kiosk.exe`를 선택한다. `installer.exe`나 복구파일을 선택하지 않는다.
+   취소하면 설정을 읽거나 변경하지 않고 종료한다. 창 제목에 `v2`가 없으면 이전 복구파일이다.
 4. 표시된 장비 ID와 A동 여부를 확인하고 `예`를 누른다. 다른 계정으로 관리자 실행하지 않는다.
 5. 완료 후 기존 키오스크를 실행해 오류가 사라지고 **A동 객실만 표시되는지** 확인한다.
    여전히 오류가 있으면 화면을 전달한다. 이 도구가 다른 누락된 인증/장비 설정까지 복원하지는 않는다.
@@ -33,7 +36,9 @@
 
 새 의존성 없이 Windows .NET Framework와 **설치된 Electron 28.3.3의 Node 모드**를 사용한다.
 키오스크 bootstrap/웹서버/장비/네트워크는 실행하지 않는다. 암호화 키는 명령줄·파일·로그가 아닌 자식 프로세스 stdin으로만 전달한다.
-설치 위치는 현재 사용자 NSIS 등록 및 표준 설치 경로에서 찾고 앱 이름/버전/main을 검사한다.
+설치 위치는 현재 사용자 NSIS 등록 및 표준 설치 경로에서 찾고 앱 이름/버전/main과 실행파일 제품 정보를 검사한다.
+v2는 레지스트리의 InstallLocation/DisplayIcon/UninstallString을 확인하고 같은 경로의 대소문자·구분자·상대 요소를 중복 제거한다.
+검색 실패/복수 설치는 Windows 기본 파일 선택창으로 이어진다. 유효하지 않은 프로그램은 실행하지 않는다.
 프로필 경로는 앱 package.json의 `name=thebeachstay-kiosk` 및 기존 `app.getPath('userData')`에 따른다.
 
 암호화 형식 근거: [Electron 28.3.3 safeStorage](https://github.com/electron/electron/blob/v28.3.3/shell/browser/api/electron_api_safe_storage.cc),
@@ -44,12 +49,15 @@
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-kiosk-repair.ps1
 node --test tests/kiosk-repair.test.cjs
 # 두 비트수의 기존 1.3.2 패키지가 준비된 경로 지정
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-kiosk-repair.ps1 -PackageRoot .local/release-1.3.2/dist
+pwsh.exe -NoProfile -File scripts/test-kiosk-repair.ps1 -PackageRoot .local/release-1.3.2/dist
 npm.cmd run build
 ```
 
-출력은 `.local/property3-a-repair/`에 생성된다. EXE·테스트 프로필·로그는 Git에 커밋하지 않는다.
+v2 출력은 `.local/property3-a-repair-v2/`에 생성되며 이전 복구파일을 덮어쓰지 않는다. EXE·테스트 프로필·로그는 Git에 커밋하지 않는다.
+개발 PC의 검증 스크립트는 PowerShell 7에서 실행한다. 현장 복구 EXE에는 PowerShell 7이나 개발 도구가 필요하지 않다.
 합성 데이터만 사용해 Electron safeStorage → .NET DPAPI + 설치 패키지 Node 복구 → Electron safeStorage 재읽기를 검사한다.
 32비트 검사는 개발 PC의 Windows 11 x64/WOW64에서 수행하며 Windows 10 LTSB 32비트 실기기 검증을 대신하지 않는다.
 현장 PC에서의 실행/객실 목록 확인 전에는 현장 복구 완료로 보고하지 않는다.
+v2의 경로 미검색/중복/복수 설치/취소/잘못된 실행파일 검사 및 두 비트수 암호화 복구 검사는 통과했다.
+개발 PC UI 검사에서는 파일 선택창이 표시되는 것을 확인하지 못했으므로, 바로가기 선택의 실제 UI 동작은 현장 확인이 필요하다.
 이 유틸리티를 키오스크 `installer.exe`로 게시하거나 업데이트 DB에 등록하지 않는다.
