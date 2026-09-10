@@ -14,7 +14,9 @@ class PrivateReleaseProvider extends Provider {
     super({ ...runtimeOptions, isUseMultipleRangeRequest: false })
     this.url = downloadUrl(options.command)
     this.info = { version: options.release.version, files: [{
-      url: this.url.href, sha512: options.release.sha512, size: options.release.size,
+      // Extensionless GitHub asset URLs make electron-updater use info.url as
+      // its Windows cache filename. Keep the signed network URL in resolveFiles.
+      url: "installer.exe", sha512: options.release.sha512, size: options.release.size,
     }] }
   }
   async getLatestVersion() { return this.info }

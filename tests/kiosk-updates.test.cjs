@@ -192,15 +192,17 @@ test("concurrent ticks and an already completed command cannot repeat installati
 })
 
 test("download rejection never invokes shutdown and does not retry the failed command", async (t) => {
-  const h = updaterHarness(t)
-  h.idle()
-  h.native.downloadUpdate = async () => { throw new Error("checksum mismatch https://example.test/private?token=secret") }
-  await h.client.tick()
-  await h.client.tick()
-  assert.equal(h.calls.installs, 0)
-  assert.equal(h.calls.shutdowns, 0)
-  assert.equal(h.client.status().state, "failed")
-  assert.ok(!h.client.status().message.includes("secret"))
+  for (const address of ["https://example.test/private?token=secret", "https:\\example.test\\private?token=secret"]) {
+    const h = updaterHarness(t)
+    h.idle()
+    h.native.downloadUpdate = async () => { throw new Error("download error " + address) }
+    await h.client.tick()
+    await h.client.tick()
+    assert.equal(h.calls.installs, 0)
+    assert.equal(h.calls.shutdowns, 0)
+    assert.equal(h.client.status().state, "failed")
+    assert.equal(h.client.status().message, "download error [주소 숨김]")
+  }
 })
 
 test("a downloaded command replaced during maintenance cannot shut down the kiosk", async (t) => {

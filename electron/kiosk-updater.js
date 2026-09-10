@@ -1,6 +1,6 @@
 const fs = require("node:fs")
 const { check, ID, VERSION, releaseOf, requestOf, newer } = require("./update-protocol")
-const safeError = (error) => String(error.message).replace(/https?:\/\/\S+/g, "[주소 숨김]").slice(0, 250)
+const safeError = (error) => String(error.message).replace(/https?:[\\/]+\S+/g, "[주소 숨김]").slice(0, 250)
 
 // No update discovery on launch/quit: only an explicit signed device request.
 function createKioskUpdater({ deviceId, publicKey, version, stateFile, pollStatus, createUpdater, prepare, resume, shutdown, ready, recover = () => {}, arch = process.arch }) {

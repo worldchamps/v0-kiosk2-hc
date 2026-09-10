@@ -50,7 +50,7 @@ function createDeviceConnection(config, persist, fetcher = fetch) {
   async function pollStatus(state) {
     const report = { version: state.version, state: state.state, lastSeen: { ".sv": "timestamp" } }
     if (state.requestId) report.requestId = state.requestId
-    if (state.message) report.message = String(state.message).replace(/https?:\/\/\S+/g, "[주소 숨김]").slice(0, 250)
+    if (state.message) report.message = String(state.message).replace(/https?:[\\/]+\S+/g, "[주소 숨김]").slice(0, 250)
     await access("status/" + config.deviceId, "PUT", report)
     return (await access("requests/" + config.deviceId)) || { request: null }
   }

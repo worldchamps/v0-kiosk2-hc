@@ -21,9 +21,46 @@ test("custom updater uses only the signed file metadata, with no GitHub credenti
   const command = { downloadUrl: "https://release-assets.githubusercontent.com/file?sig=private", downloadExpiresAt: Date.now() + 600000 }
   const release = { version: "1.2.0", size: 123, sha512: "signed-hash" }
   const provider = new PrivateReleaseProvider({ command, release }, null, { executor: {} })
-  assert.deepEqual((await provider.getLatestVersion()).files, [{ url: command.downloadUrl, size: release.size, sha512: release.sha512 }])
+  assert.deepEqual((await provider.getLatestVersion()).files, [{ url: "installer.exe", size: release.size, sha512: release.sha512 }])
   assert.equal(provider.resolveFiles()[0].url.href, command.downloadUrl)
   assert.equal(provider.fileExtraDownloadHeaders, null)
+})
+
+test("actual NSIS downloader caches extensionless GitHub assets using a safe filename", async (t) => {
+  const fs = require("node:fs"), os = require("node:os"), path = require("node:path"), crypto = require("node:crypto")
+  const { NsisUpdater } = require("electron-updater/out/NsisUpdater")
+  const { DownloadedUpdateHelper } = require("electron-updater/out/DownloadedUpdateHelper")
+  const { CancellationToken } = require("builder-util-runtime")
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kiosk-nsis-download-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const bytes = Buffer.from("synthetic NSIS download; never execute")
+  const release = { version: "1.3.2", size: bytes.length, sha512: crypto.createHash("sha512").update(bytes).digest("base64") }
+  const command = { downloadUrl: "https://release-assets.githubusercontent.com/github-production-release-asset/1/asset-id?sig=synthetic-secret", downloadExpiresAt: Date.now() + 600000 }
+  const provider = new PrivateReleaseProvider({ command, release }, null, { executor: {} })
+  const updater = new NsisUpdater(null, { version: "1.3.1" })
+  updater.logger = null
+  updater.autoInstallOnAppQuit = false
+  updater.downloadedUpdateHelper = new DownloadedUpdateHelper(dir)
+  updater.configOnDisk = { value: Promise.resolve({}) }
+  let downloads = 0
+  updater.httpExecutor = { async download(url, destination, options) {
+    downloads++
+    assert.equal(url.href, command.downloadUrl)
+    assert.equal(options.sha512, release.sha512)
+    assert.equal(destination, path.join(dir, "pending", "temp-installer.exe"))
+    fs.writeFileSync(destination, bytes)
+  } }
+  const files = await updater.doDownloadUpdate({
+    updateInfoAndProvider: { info: await provider.getLatestVersion(), provider },
+    cancellationToken: new CancellationToken(), disableDifferentialDownload: true, disableWebInstaller: true,
+  })
+  assert.equal(downloads, 1)
+  assert.deepEqual(files, [path.join(dir, "pending", "installer.exe")])
+  assert.deepEqual(fs.readFileSync(files[0]), bytes)
+  const cached = fs.readFileSync(path.join(dir, "pending", "update-info.json"), "utf8")
+  assert.equal(JSON.parse(cached).fileName, "installer.exe")
+  assert.ok(!cached.includes("synthetic-secret"))
+  assert.equal(updater.quitAndInstallCalled, false)
 })
 test("device identity is persisted before first claim and refreshed without creating new users", async () => {
   const config = { projectId: cloud.projectId, deviceId: "qa-local-device", property: "property3", code: "a".repeat(32) }
@@ -58,6 +95,21 @@ test("failed refresh does not silently register a new device and errors do not e
   assert.equal(requests, 1)
   await assert.rejects(jsonRequest("https://example.test/?secret=sensitive", {}, async () => new Response("secret", { status: 403 })),
     (e) => !e.message.includes("secret") && e.status === 403)
+})
+
+test("device status hides asset URLs normalized into Windows paths", async () => {
+  const config = { deviceId: "qa-redact-device", auth: { uid: "qa-uid", refreshToken: "synthetic-refresh" } }
+  const reports = []
+  const connection = createDeviceConnection(config, () => {}, async (url, options) => {
+    if (url.includes("securetoken")) return new Response(JSON.stringify({ user_id: "qa-uid", refresh_token: "synthetic-refresh", id_token: "synthetic-token", expires_in: "3600" }))
+    if (options.method === "PUT") reports.push(JSON.parse(options.body))
+    return new Response("null")
+  })
+  for (const address of ["https://release-assets.githubusercontent.com/file?sig=synthetic-secret", "https:\\release-assets.githubusercontent.com\\file?sig=synthetic-secret"]) {
+    await connection.pollStatus({ version: "1.3.2", state: "failed", message: "ENOENT temp-" + address })
+  }
+  assert.equal(reports.length, 2)
+  for (const report of reports) assert.equal(report.message, "ENOENT temp-[주소 숨김]")
 })
 
 test("malformed cloud responses do not expose response bodies or credentials", async () => {
