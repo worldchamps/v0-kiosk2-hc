@@ -60,7 +60,8 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
         const value = JSON.parse(saved) as PaymentSession
         if (typeof value.isActive !== "boolean" || !Number.isFinite(value.acceptedAmount) || value.acceptedAmount < 0 ||
             !Number.isFinite(value.requiredAmount) || value.requiredAmount < 0 || !Array.isArray(value.acceptedBills) ||
-            value.acceptedBills.some(amount => !Number.isFinite(amount) || amount <= 0) || (!value.isActive && value.acceptedAmount > 0) ||
+            value.acceptedBills.some(amount => !Number.isFinite(amount) || amount <= 0) ||
+            (!value.isActive && (value.acceptedAmount > 0 || value.cardInFlight || value.pendingBooking || value.recoveryRequired || value.recoveryEvidence)) ||
             (value.pendingBooking && (typeof value.pendingBooking.requestId !== "string" || typeof value.pendingBooking.body !== "string"))) {
           throw new Error("Invalid saved payment")
         }
@@ -98,7 +99,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
 
   const startPayment = useCallback((requiredAmount: number, reservationData?: any, method?: "cash" | "card") => {
     const previous = current.current
-    if (!ready || storageError || requiredAmount <= 0 || previous.acceptedAmount > 0 || previous.cardInFlight ||
+    if (!ready || storageError || !Number.isSafeInteger(requiredAmount) || requiredAmount <= 0 || previous.acceptedAmount > 0 || previous.cardInFlight ||
         previous.pendingBooking || previous.recoveryRequired) return false
     return save({ ...initialSession, isActive: true, requiredAmount, reservationData, method, sessionStartTime: Date.now() })
   }, [ready, storageError, save])
@@ -114,6 +115,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
   const completePayment = useCallback(() => save(initialSession), [save])
   const recordCashReturned = useCallback((amount: number) => {
     const previous = current.current
+    if (!previous.isActive || !Number.isSafeInteger(amount) || amount <= 0 || amount > previous.acceptedAmount) return
     const acceptedAmount = Math.max(0, previous.acceptedAmount - amount)
     save({ ...previous, acceptedAmount, returnedAmount: (previous.returnedAmount || 0) + amount,
       overpaymentAmount: Math.max(0, acceptedAmount - previous.requiredAmount) })

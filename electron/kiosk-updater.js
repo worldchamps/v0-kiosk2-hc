@@ -1,11 +1,23 @@
 const fs = require("node:fs")
-const { check, releaseOf, requestOf, newer } = require("./update-protocol")
+const { check, ID, VERSION, releaseOf, requestOf, newer } = require("./update-protocol")
 const safeError = (error) => String(error.message).replace(/https?:\/\/\S+/g, "[주소 숨김]").slice(0, 250)
 
 // No update discovery on launch/quit: only an explicit signed device request.
 function createKioskUpdater({ deviceId, publicKey, version, stateFile, pollStatus, createUpdater, prepare, resume, shutdown, ready, recover = () => {}, arch = process.arch }) {
   let running = false, exiting = false, shutdownStarted = false, downloaded = null, state = { state: "online" }
-  if (fs.existsSync(stateFile)) state = JSON.parse(fs.readFileSync(stateFile, "utf8"))
+  let invalidHistory = false
+  try {
+    if (fs.existsSync(stateFile)) {
+      const saved = JSON.parse(fs.readFileSync(stateFile, "utf8"))
+      check(saved && ["online", "validating", "downloading", "waiting-idle", "installing", "completed", "failed"].includes(saved.state), "잘못된 업데이트 기록")
+      check(saved.state === "online" || (ID.test(saved.requestId || "") && VERSION.test(saved.targetVersion || "")), "불완전한 업데이트 기록")
+      state = saved
+    }
+  } catch {
+    // Preserve damaged history: resetting it could replay an installation after a crash.
+    invalidHistory = true
+    state = { state: "failed", message: "업데이트 기록을 읽을 수 없습니다. 키오스크는 계속 사용할 수 있으나 업데이트는 관리자 확인이 필요합니다." }
+  }
   const save = (value) => {
     state = value
     fs.writeFileSync(stateFile + ".tmp", JSON.stringify(value), { mode: 0o600 })
@@ -16,6 +28,7 @@ function createKioskUpdater({ deviceId, publicKey, version, stateFile, pollStatu
     if (running || exiting) return
     running = true
     try {
+      if (invalidHistory) { await poll().catch(() => {}); return }
       if (state.state === "installing") {
         if (version === state.targetVersion) {
           if (!ready()) return // version alone is not proof that the kiosk UI started

@@ -63,12 +63,13 @@ function normalizeRoomDigits(value: string) {
 }
 
 function getBuildingLetter(value: string) {
-  return value.trim().toUpperCase().match(/^([A-D])/)?.[1] ?? ""
+  return value.trim().toUpperCase().match(/^([A-D])(?:\s*동|[\s-]*\d)/)?.[1] ?? ""
 }
 
 function rawRooms(status: RawPmsStatus | null | undefined): RawPmsRoom[] {
   if (!status?.rooms) return []
-  return Array.isArray(status.rooms) ? status.rooms : Object.values(status.rooms)
+  const rooms = Array.isArray(status.rooms) ? status.rooms : Object.values(status.rooms)
+  return rooms.filter((room) => room && typeof room === "object" && room.room != null)
 }
 
 function normalizeTimestamp(value: unknown): string | null {
@@ -81,7 +82,8 @@ function normalizeTimestamp(value: unknown): string | null {
     return compact
   }
   if (typeof value === "number" && Number.isFinite(value)) {
-    return new Date(value < 10_000_000_000 ? value * 1000 : value).toISOString()
+    const date = new Date(value < 10_000_000_000 ? value * 1000 : value)
+    return Number.isFinite(date.getTime()) ? date.toISOString() : null
   }
   return null
 }
@@ -138,14 +140,14 @@ export function findPmsRateRoom(
     ?.rooms.filter((room) => normalizeRoomDigits(room.room) === targetDigits)
 
   if (!candidates?.length) return null
-  if (!targetBuilding || candidates.length === 1) return candidates[0]
+  if (!targetBuilding) return candidates.length === 1 ? candidates[0] : null
 
-  return (
-    candidates.find((room) => {
-      const normalizedType = room.roomType.toUpperCase().replace(/\s/g, "")
-      return normalizedType.startsWith(`${targetBuilding}동`) || normalizedType.startsWith(targetBuilding)
-    }) ?? candidates[0]
-  )
+  const buildingOf = (room: PmsRateRoom) => getBuildingLetter(room.room) || getBuildingLetter(room.roomType)
+  const matching = candidates.filter((room) => buildingOf(room) === targetBuilding)
+  if (matching.length) return matching.length === 1 ? matching[0] : null
+  // Legacy numeric-only PMS rows are usable only when their building is unambiguous.
+  const unspecified = candidates.filter((room) => !buildingOf(room))
+  return candidates.length === 1 && unspecified.length === 1 ? unspecified[0] : null
 }
 
 export async function getPmsRateRoom(roomCode: string, roomNumber = "") {

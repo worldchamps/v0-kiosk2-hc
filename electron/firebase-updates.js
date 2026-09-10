@@ -6,7 +6,8 @@ async function jsonRequest(url, options = {}, fetcher = fetch) {
   if (!response.ok) throw Object.assign(new Error("장비 연결 요청 오류 (" + response.status + ")"), { status: response.status })
   const text = await response.text()
   check(text.length < 65536, "업데이트 응답이 너무 큽니다.")
-  return JSON.parse(text)
+  try { return JSON.parse(text) }
+  catch { throw new Error("장비 연결 응답 형식이 올바르지 않습니다.") }
 }
 function createDeviceConnection(config, persist, fetcher = fetch) {
   check(ID.test(config.deviceId), "잘못된 장비 ID")

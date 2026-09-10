@@ -24,16 +24,16 @@ function getPublicBaseUrl(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { building, roomType, stayType } = await request.json()
+    const { building, roomType, stayType } = (await request.json().catch(() => null)) ?? {}
     const scope = getKioskScope()
     if (scope.building && ![scope.building, `${scope.building}동`, `BEACH ${scope.building}`]
       .includes(String(building || "").trim().toUpperCase())) {
       return NextResponse.json({ error: buildingRestrictionMessage(scope.building) }, { status: 403 })
     }
-    if (!building || !roomType || (stayType !== "overnight" && stayType !== "shortStay")) {
+    if (typeof building !== "string" || !building.trim() || typeof roomType !== "string" || !roomType.trim() ||
+        (stayType !== "overnight" && stayType !== "shortStay")) {
       return NextResponse.json({ error: "결제 상품 정보가 올바르지 않습니다." }, { status: 400 })
     }
-
     const amount = getOnSiteRate(building, roomType, stayType)
     if (!amount) {
       return NextResponse.json({ error: "예약 요금을 확인할 수 없습니다." }, { status: 400 })

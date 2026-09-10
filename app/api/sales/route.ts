@@ -45,7 +45,6 @@ export async function GET(request: NextRequest) {
         checkInDate: checkInDate,
         checkOutDate: checkOutDate,
         roomNumber: row[9] || "",
-        password: row[10] || "",
         checkInStatus: row[11] || "",
         checkInTime: row[12] || "",
       }

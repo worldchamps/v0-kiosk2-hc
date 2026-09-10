@@ -76,7 +76,7 @@ class Bac2400(SerialDevice):
         return self.send(self._command(0x73, 0x8C, [0x05, 0x01, 0, 0, 1, 0]))
 
     def dispense(self, count):
-        if count < 1 or count > 250:
+        if type(count) is not int or count < 1 or count > 250 or self.pending_payout or self.dispenser_running:
             return False
         self.pending_payout = {
             "count": count,
@@ -265,9 +265,13 @@ class Bac2400(SerialDevice):
         payout_counts = tlvs.get(0x15)
         if payout_counts and len(payout_counts) >= 4:
             self.last_payout_counts = list(payout_counts[:4])
+        else:
+            payout_counts = None
         statuses = tlvs.get(0x16)
         if statuses and len(statuses) >= 4:
             self.dispenser_statuses = list(statuses[:4])
+        else:
+            statuses = None
         running = tlvs.get(0x17)
         if running:
             self.dispenser_running = bool(running[0] & 0x01)
@@ -278,16 +282,22 @@ class Bac2400(SerialDevice):
             if bd1_status & 0x07:
                 logger.error("BD1 cannot dispense (status 0x%02X)", bd1_status)
                 self.pending_payout = None
-            elif self.pending_payout["phase"] == "checking":
+            elif self.pending_payout["phase"] == "checking" and payout_counts and statuses and running and not self.dispenser_running:
                 command = self._command(0x73, 0x8C, [0x05, 0x00, 0, 0, count, 0])
                 if self.send(command):
                     self.pending_payout["phase"] = "dispensing"
                     self.pending_payout["started"] = time.monotonic()
+                    self.pending_payout["previous_count"] = self.last_payout_counts[self.BD1]
+                    self.pending_payout["progress_observed"] = False
                 else:
                     self.pending_payout = None
-            elif self.last_payout_counts[self.BD1] >= count:
-                messages.append(self._legacy_message("dispenser", 0x64, count, 0x53))
-                self.pending_payout = None
+            elif self.pending_payout["phase"] == "dispensing":
+                # A cached total (or a status-only reply) is not evidence of this payout.
+                if self.dispenser_running or (payout_counts and self.last_payout_counts[self.BD1] != self.pending_payout["previous_count"]):
+                    self.pending_payout["progress_observed"] = True
+                if payout_counts and running and not self.dispenser_running and self.pending_payout["progress_observed"] and self.last_payout_counts[self.BD1] == count:
+                    messages.append(self._legacy_message("dispenser", 0x64, count, 0x53))
+                    self.pending_payout = None
 
         if self.pending_acceptor_connection and has_acceptor_data:
             messages.append(self._legacy_message("acceptor", 0x6D, 0x65, 0x13))

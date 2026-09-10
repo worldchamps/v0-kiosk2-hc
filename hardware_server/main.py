@@ -65,9 +65,12 @@ connected_clients = set()
 async def broadcast(message):
     if connected_clients:
         msg_str = json.dumps(message)
-        await asyncio.gather(
-            *[client.send(msg_str) for client in connected_clients]
-        )
+        clients = list(connected_clients)
+        results = await asyncio.gather(*[client.send(msg_str) for client in clients], return_exceptions=True)
+        for client, result in zip(clients, results):
+            if isinstance(result, Exception):
+                connected_clients.discard(client)
+                logger.warning("Removed disconnected broadcast client")
 
 
 def dispenser_callback(data):
@@ -133,8 +136,11 @@ async def handle_client(websocket, *args):
     logger.info(f"Client connected. Total clients: {len(connected_clients)}")
     try:
         async for message in websocket:
+            cmd_type = None
             try:
                 msg = json.loads(message)
+                if not isinstance(msg, dict):
+                    raise ValueError("Command must be an object")
                 cmd_type = msg.get("type")
 
                 if bac2400:
@@ -201,7 +207,7 @@ async def handle_client(websocket, *args):
     except Exception as exc:
         logger.error(f"Unexpected error in client handler: {exc}")
     finally:
-        connected_clients.remove(websocket)
+        connected_clients.discard(websocket)
         logger.info(f"Client removed. Total clients: {len(connected_clients)}")
 
 
@@ -226,7 +232,8 @@ async def main():
         logger.info("Property4 selected: SAM4S printer is managed by the Windows driver")
 
     logger.info("Starting WebSocket server on ws://localhost:8082")
-    async with websockets.serve(handle_client, "localhost", 8082):
+    # Only the native Electron bridge connects here; web pages must never issue cash/printer commands.
+    async with websockets.serve(handle_client, "localhost", 8082, origins=[None], max_size=65536):
         await asyncio.Future()
 
 

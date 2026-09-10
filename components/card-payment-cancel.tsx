@@ -28,12 +28,13 @@ export default function CardPaymentCancel() {
       const saved = window.localStorage.getItem(CANCEL_STORAGE_KEY)
       if (saved) {
         const pending = JSON.parse(saved)
-        if (typeof pending.reservationId !== "string" || !Number.isFinite(pending.amount)) throw new Error("Invalid cancellation")
+        if (typeof pending.reservationId !== "string" || !pending.reservationId.trim() ||
+            !Number.isSafeInteger(pending.amount) || pending.amount <= 0) throw new Error("Invalid cancellation")
         setPendingCancel(pending)
         setReservationId(pending.reservationId)
         setMessage("이전 카드 취소 확인이 필요합니다. 카드 취소를 반복하지 마세요.")
       }
-    } catch { setMessage("이전 취소 기록을 읽지 못했습니다. 관리자 확인이 필요합니다."); busyRef.current = true }
+    } catch { setMessage("이전 취소 기록을 읽지 못했습니다. 관리자 확인이 필요합니다."); busyRef.current = true; setBusy(true) }
   }, [])
 
   const saveCancelRecord = async (pending: PendingCancel) => {
@@ -73,9 +74,14 @@ export default function CardPaymentCancel() {
     try {
       const response = await fetch(
         `/api/admin/payment-cancel?reservationId=${encodeURIComponent(trimmedReservationId)}`,
+        { signal: AbortSignal.timeout(15000) },
       )
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || "결제 기록 조회에 실패했습니다.")
+      if (!data.payment || typeof data.payment.reservationId !== "string" || !data.payment.reservationId.trim() ||
+          typeof data.payment.paymentKey !== "string" || !data.payment.paymentKey ||
+          !Number.isSafeInteger(data.payment.amount) || data.payment.amount <= 0 ||
+          !["claimed", "canceled"].includes(data.payment.status)) throw new Error("결제 기록 조회 응답을 확인하지 못했습니다.")
       setPayment(data.payment)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "결제 기록 조회에 실패했습니다.")

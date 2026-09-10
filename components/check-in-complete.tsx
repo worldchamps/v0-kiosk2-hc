@@ -297,7 +297,7 @@ export default function CheckInComplete({
           </div>
           <div>
             <span>객실 비밀번호</span>
-            <strong>{revealedInfo.password}</strong>
+            <strong>{revealedInfo.password || "관리자에게 문의해주세요"}</strong>
           </div>
         </section>
       )}
@@ -306,7 +306,7 @@ export default function CheckInComplete({
         <ReceiptText aria-hidden="true" />
         <div>
           <h2>객실 안내지를 꼭 가져가세요</h2>
-          <p>객실번호와 비밀번호가 적혀 있습니다.</p>
+          <p>{revealedInfo?.password ? "객실번호와 비밀번호가 적혀 있습니다." : "객실번호를 확인하고 입실 방법은 관리자에게 문의해주세요."}</p>
         </div>
       </section>
 

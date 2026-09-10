@@ -65,7 +65,8 @@ export async function GET(request: Request) {
         building: room.category,
         roomNumber: room.roomNumber,
         roomType: room.roomType,
-        password: room.password,
+        // Door codes are released only by a successfully completed booking/check-in.
+        password: "",
         status: room.status,
         floor: room.floor,
         roomCode: room.matchingRoomNumber,

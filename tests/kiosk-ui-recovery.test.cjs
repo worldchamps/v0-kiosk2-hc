@@ -123,11 +123,11 @@ test('successful exact change is recorded before completing cash payment', async
 });
 
 async function onsite(stay = 'shortStay') {
-  let idle, responseMode = 'success', release; const posts = [], intervals = [];
+  let idle, responseMode = 'success', release, roomLookupFails = false, roomPayload; const posts = [], intervals = [];
   const session = { isActive: false, acceptedAmount: 0 };
   const observed = { cancelledApprovals: 0, completed: 0 };
   const payment = { paymentSession: session, ready: true, storageError: '',
-    startPayment: () => { session.isActive = true; return true; },
+    startPayment: (_amount, reservationData) => { session.isActive = true; session.reservationData = reservationData; return true; },
     cancelPayment: async () => { if (session.acceptedAmount || session.pendingBooking || session.recoveryRequired) return false; session.isActive = false; return true; },
     completePayment: () => { session.isActive = false; session.pendingBooking = undefined; session.recoveryRequired = undefined; observed.completed++; return true; },
     savePendingBooking: value => { session.pendingBooking = value; return true; }, requireRecovery: value => session.recoveryRequired = value,
@@ -142,13 +142,13 @@ async function onsite(stay = 'shortStay') {
   }, { window: { crypto: { randomUUID }, setInterval: fn => { intervals.push(fn); return intervals.length; }, clearInterval() {},
       electronAPI: { tossFront: { cancelPayment: async () => { observed.cancelledApprovals++; return { success: true }; } } } }, alert() {},
     fetch: async (_url, options) => {
-      if (!options?.method) return { ok: true, json: async () => ({ roomsByType: rooms.length ? { Standard: rooms } : {} }) };
+      if (!options?.method) return { ok: !roomLookupFails, status: roomLookupFails ? 503 : 200, json: async () => roomPayload === undefined ? ({ roomsByType: rooms.length ? { Standard: rooms } : {} }) : roomPayload };
       posts.push(options.body);
       if (responseMode === 'lost') throw new Error('Response lost after commit');
       if (responseMode === 'waiting') await new Promise(resolve => release = resolve);
       return { ok: true, status: responseMode === 'pending' ? 202 : 200,
         json: async () => responseMode === 'pending' ? { success: false, pending: true } : responseMode === 'reject' ?
-          { success: false, canCancelPayment: true, error: 'Room unavailable' } : { success: true, data: { roomCode: 'B901' } } };
+          { success: false, canCancelPayment: true, error: 'Room unavailable' } : { success: true, data: { roomCode: 'B901', password: responseMode === 'missing-key' ? undefined : responseMode === 'empty-key' ? '' : 'SERVER-TEST' } } };
     } });
   const render = () => h.render({ location: 'B', onNavigate() {} });
   const settle = async () => { await new Promise(resolve => setImmediate(resolve)); render(); };
@@ -157,7 +157,9 @@ async function onsite(stay = 'shortStay') {
   return { ...h, render, settle, click, posts, session, observed, mode: x => responseMode = x, release: () => release(),
     async roomList() { await click(stay === 'shortStay' ? '대실 잠시 이용' : '숙박 오늘 입실 · 내일 퇴실'); await click('Standard 선택'); },
     async pay() { await this.roomList(); await click('B901호 선택'); await click('확인하고 결제하기'); },
-    async idle() { await idle(); await settle(); }, async emptyRooms() { rooms = []; intervals[0](); await settle(); } };
+    async idle() { await idle(); await settle(); }, async emptyRooms() { rooms = []; intervals[0](); await settle(); },
+    async roomLookupFailure(value = true) { roomLookupFails = value; intervals[0](); await settle(); },
+    async malformedRooms(value) { roomPayload = value; intervals[0](); await settle(); } };
 }
 for (const stay of ['shortStay', 'overnight']) {
   test(`${stay}: room selection back preserves stay type`, async () => { const h = await onsite(stay); await h.roomList(); await h.click('돌아가기'); assert(h.visible('객실 타입을 선택해주세요')); });
@@ -247,7 +249,7 @@ test('amount mismatch preserves actual approval proof without booking, automatic
   assert.equal(h.button('이전 화면').disabled, true); assert.equal(h.button('결제수단 변경').disabled, true);
   assert.equal(requests, 1); assert.equal(cancels, 0); assert.equal(completions, 0);
 });
-test('existing reservation check-in 202 retains its screen and keys stay hidden until confirmed success', async () => {
+async function kiosk(scenario = {}) {
   let pending = true; const posts = [];
   const components = ['standby-screen', 'idle-screen', 'reservation-confirm', 'current-location', 'on-site-reservation',
     'reservation-details', 'check-in-complete', 'reservation-not-found', 'reservation-list', 'admin-keypad', 'property-mismatch-dialog', 'property-redirect-dialog'];
@@ -257,22 +259,207 @@ test('existing reservation check-in 202 retains its screen and keys stay hidden 
     '@/lib/audio-utils': { stopAllAudio() {}, pauseBGM() {}, resumeBGM() {} }, '@/components/print-queue-listener': { PrintQueueListener: 'PrintQueue' },
     '@/lib/property-utils': { getKioskPropertyId: () => 'property3', getPropertyDisplayName: x => x, propertyUsesElectron: () => true },
     '@/contexts/payment-context': { usePayment: () => ({ paymentSession: { isActive: false }, ready: true, storageError: '' }) },
-    '@/lib/reservation-qr': {}, '@/components/kiosk-progress': { KioskProgressScreen: 'Progress', RESERVATION_PROGRESS_STEPS: [] },
+    '@/lib/reservation-qr': load('lib/reservation-qr.ts').exports, '@/components/kiosk-progress': { KioskProgressScreen: 'Progress', RESERVATION_PROGRESS_STEPS: [] },
     '@/lib/kiosk-scope': { buildingRestrictionMessage: () => 'B only' },
   });
-  const h = load('components/kiosk-layout.tsx', deps, { window: { location: { search: '' } }, document: { body: { classList: { add() {}, remove() {} } } },
+  const h = load('components/kiosk-layout.tsx', deps, { window: { location: { search: '' }, electronAPI: { tossFront: { scanReservationQr: scenario.scan || (async () => ({success: true, value: 'AGAIN:RESERVATION:QA-ONLY'})) } } }, document: { body: { classList: { add() {}, remove() {} } } },
     fetch: async (url, options) => {
       if (url === '/api/kiosk-config') return { ok: true, json: async () => ({ property: 'property3', building: 'B' }) };
-      if (url.startsWith('/api/reservations')) return { ok: true, json: async () => ({ reservations: [{ reservationId: 'QA-ONLY', roomNumber: 'B901' }] }) };
+      if (url.startsWith('/api/reservations')) return scenario.lookup ? scenario.lookup(url, options) : { ok: true, json: async () => ({ reservations: [{ reservationId: 'QA-ONLY', roomNumber: 'B901', guestName: 'QA', roomType: 'Test', price: '30000', checkInDate: '2026-09-10', checkOutDate: '2026-09-11', password: '' }] }) };
       posts.push(options.body); return { ok: true, status: pending ? 202 : 200, json: async () => ({ success: !pending, pending, data: { roomNumber: 'B901', password: 'TEST' } }) };
     } });
   const render = () => h.render({ onChangeMode() {} }); const settle = async () => { await new Promise(resolve => setImmediate(resolve)); render(); };
   render(); for (const effect of h.effects) effect(); await settle();
-  await h.component('on-site-reservation').props.onNavigate('reservationConfirm'); await settle();
-  await h.component('reservation-confirm').props.onCheckReservation('QA-ONLY'); await settle();
-  assert.equal(await h.component('reservation-details').props.onCheckIn(), false); await settle();
+  const navigate = h.component('on-site-reservation').props.onNavigate;
+  await navigate('reservationConfirm'); await settle();
+  return { ...h, settle, render, navigate, posts, confirmCheckIn: () => pending = false };
+}
+test('existing reservation check-in 202 retains its screen and keys stay hidden until confirmed success', async () => {
+  const h = await kiosk();
+  await h.component('reservation-confirm').props.onCheckReservation('QA-ONLY'); await h.settle();
+  assert.equal(await h.component('reservation-details').props.onCheckIn(), false); await h.settle();
   assert.equal(h.component('reservation-details').props.revealedInfo.password, ''); assert.equal(h.component('check-in-complete'), undefined);
-  await h.component('reservation-details').props.onNavigate('idle'); await settle(); assert(h.component('reservation-details'));
-  pending = false; await h.button('이 예약의 체크인 처리 결과 다시 확인').onClick(); await settle();
-  assert(h.component('check-in-complete')); assert.equal(posts[0], posts[1]);
+  await h.component('reservation-details').props.onNavigate('idle'); await h.settle(); assert(h.component('reservation-details'));
+  h.confirmCheckIn(); await h.button('이 예약의 체크인 처리 결과 다시 확인').onClick(); await h.settle();
+  assert(h.component('check-in-complete')); assert.equal(h.posts[0], h.posts[1]);
+});
+test('inactive-looking persisted card evidence is corruption, not permission for a new sale', async () => {
+  const saved = { isActive: false, acceptedAmount: 0, requiredAmount: 30000, acceptedBills: [], sessionStartTime: 0, overpaymentAmount: 0, cardInFlight: true };
+  const h = await paymentContext(JSON.stringify(saved)); assert(h.value.storageError); assert.equal(h.value.startPayment(30000), false);
+});
+test('QR scan holds navigation and shares the synchronous duplicate guard with name lookup', async () => {
+  let scanCalls = 0, release;
+  const h = await kiosk({ scan: () => { scanCalls++; return new Promise(resolve => release = () => resolve({ success: true, value: 'AGAIN:RESERVATION:QA-ONLY' })); } });
+  const scan = h.component('reservation-confirm').props.onScanReservationQr;
+  const pending = scan(); await h.settle();
+  void scan(); await h.navigate('idle'); await h.settle();
+  assert.equal(scanCalls, 1); assert(h.component('reservation-confirm'));
+  release(); await pending; await h.settle(); assert(h.component('reservation-details'));
+});
+test('room-type refresh failure hides stale sale choices until lookup succeeds again', async () => {
+  const h = await onsite(); await h.click('대실 잠시 이용'); await h.roomLookupFailure();
+  assert(h.visible('객실 정보를 불러오지 못했습니다')); assert(!h.visible('이 객실 선택'));
+  await h.roomLookupFailure(false); assert(h.visible('객실 타입을 선택해주세요'));
+});
+
+test('on-site selection never stores or sends a pre-payment room password; completion uses only server data', async () => {
+  const h = await onsite(); await h.pay();
+  assert.equal(Object.hasOwn(h.session.reservationData, 'password'), false);
+  await h.component('PaymentScreen').props.onPaymentComplete({ method: 'CASH' }); await h.settle();
+  assert.equal(Object.hasOwn(JSON.parse(h.posts[0]), 'password'), false);
+  assert.equal(h.component('CheckInComplete').props.revealedInfo.password, 'SERVER-TEST');
+});
+test('missing completion key field keeps pending evidence; explicit empty server key remains a confirmed reservation', async () => {
+  const h = await onsite(); await h.pay(); h.mode('missing-key');
+  await h.component('PaymentScreen').props.onPaymentComplete({ method: 'CARD' }); await h.settle();
+  assert(h.session.pendingBooking); assert(h.session.recoveryRequired); assert.equal(h.observed.completed, 0);
+  assert.equal(h.component('CheckInComplete'), undefined); assert.equal(h.observed.cancelledApprovals, 0);
+  h.mode('empty-key'); await h.click('기존 결제 처리 결과 다시 확인');
+  assert.equal(h.observed.completed, 1); assert.equal(h.component('CheckInComplete').props.revealedInfo.password, '');
+});
+test('invalid price or cash-return amount cannot create or rewrite a monetary session', async () => {
+  const h = await paymentContext();
+  for (const amount of [NaN, Infinity, -1, 0, 1.5]) assert.equal(h.value.startPayment(amount), false, String(amount));
+  assert(h.value.startPayment(30000)); h.value.addBill(10000);
+  for (const amount of [NaN, Infinity, -10000, 0, 10001, 1.5]) {
+    h.value.recordCashReturned(amount); assert.equal(h.value.paymentSession.acceptedAmount, 10000, String(amount));
+  }
+});
+test('name lookup ignores blank input and encodes Unicode and query punctuation without widening search', async () => {
+  const urls = [];
+  const h = await kiosk({ lookup: async (url, options) => { urls.push(url); assert(options.signal); return { ok: true, json: async () => ({ reservations: [] }) }; } });
+  const find = h.component('reservation-confirm').props.onCheckReservation;
+  await find('  '); assert.equal(urls.length, 0);
+  await find('테스트 &searchAll=true'); await h.settle();
+  const url = new URL(urls[0], 'http://test.invalid');
+  assert.equal(url.searchParams.get('name'), '테스트 &searchAll=true'); assert.equal(url.searchParams.get('searchAll'), null);
+  assert.equal(h.component('reservation-not-found').props.lookupFailed, false);
+});
+for (const malformed of [{}, { reservations: 'invalid' }, { reservations: [null] }]) {
+  test('malformed name lookup becomes an explicit error, not missing-reservation or a blank details screen: ' + JSON.stringify(malformed), async () => {
+    const h = await kiosk({ lookup: async () => ({ ok: true, json: async () => malformed }) });
+    await h.component('reservation-confirm').props.onCheckReservation('QA'); await h.settle();
+    assert.equal(h.component('reservation-not-found')?.props.lookupFailed, true); assert.equal(h.component('reservation-details'), undefined);
+  });
+}
+for (const value of ['wrong-prefix', 'AGAIN:RESERVATION:', 'AGAIN:RESERVATION:a:b', 'AGAIN:RESERVATION:a b']) {
+  test('invalid QR is rejected before an API lookup: ' + value, async () => {
+    let lookups = 0;
+    const h = await kiosk({ scan: async () => ({ success: true, value }), lookup: async () => { lookups++; throw new Error('Unexpected lookup'); } });
+    await h.component('reservation-confirm').props.onScanReservationQr(); await h.settle();
+    assert.equal(lookups, 0); assert(h.component('reservation-confirm')); assert.equal(h.component('reservation-confirm').props.loading, false);
+  });
+}
+test('name lookup timeout releases duplicate guard for a later retry and uses connection-error UI', async () => {
+  let calls = 0;
+  const h = await kiosk({ lookup: async () => { calls++; throw new Error('Simulated timeout'); } });
+  await h.component('reservation-confirm').props.onCheckReservation('QA'); await h.settle();
+  assert.equal(h.component('reservation-not-found').props.lookupFailed, true);
+  await h.navigate('reservationConfirm'); await h.settle();
+  await h.component('reservation-confirm').props.onCheckReservation('QA'); await h.settle(); assert.equal(calls, 2);
+});
+test('cash/card method switching before hardware enable neither completes nor refunds and keeps the current amount', async () => {
+  const h = cashScreen(0, true);
+  for (let i = 0; i < 3; i++) {
+    await h.button('결제수단 변경').onClick(); h.render(); h.button('카드 결제 30,000원').onClick(); h.render();
+    assert.equal(h.component('Front').props.requiredAmount, 30000);
+    h.component('Front').props.onBack(); h.render(); h.button('현금 결제 30,000원').onClick(); h.render();
+  }
+  assert.equal(h.calls.complete, 0); assert.equal(h.calls.cancelled, 0); assert.deepEqual(h.calls.dispense, []);
+});
+
+for (const payload of [{}, { roomsByType: { Standard: null } }, { roomsByType: { Standard: [null] } }]) {
+  test('malformed available-room response is a lookup error, not an empty or crashed sale screen: ' + JSON.stringify(payload), async () => {
+    const h = await onsite(); await h.malformedRooms(payload);
+    assert(h.visible('객실 정보를 불러오지 못했습니다')); assert.equal(h.component('PaymentScreen'), undefined);
+  });
+}
+test('cash-return validation rejects all invalid values without losing the original liability', async () => {
+  const h = await paymentContext(); h.value.startPayment(30000); h.value.addBill(10000);
+  for (const amount of [NaN, Infinity, -10000, 0, 10001, 1.5]) {
+    h.value.recordCashReturned(amount); assert.equal(h.value.paymentSession.acceptedAmount, 10000, String(amount));
+  }
+});
+for (const extra of [
+  { pendingBooking: { requestId: 'first', body: '{"requestId":"second"}' } },
+  { acceptedBills: [null] },
+  { acceptedAmount: -1 },
+]) {
+  test('corrupted saved payment fails closed: ' + JSON.stringify(extra), async () => {
+    const h = await paymentContext(JSON.stringify({ isActive: true, requiredAmount: 30000, acceptedAmount: 0, acceptedBills: [], ...extra }));
+    assert(h.value.storageError); assert.equal(h.value.startPayment(30000), false);
+  });
+}
+async function cancellationPanel(scenario = {}, localStorage = storage()) {
+  const calls = { terminal: 0, get: 0, patch: 0 };
+  const reservationId = 'ONSITE-TEST';
+  const h = load('components/card-payment-cancel.tsx', {}, { window: { localStorage, electronAPI: { tossFront: {
+    cancelPayment: async () => { calls.terminal++; assert(localStorage.map.has('kiosk-pending-card-cancel-v1')); return scenario.cancel ? scenario.cancel() : { success: true, cancel: { cancelProof: { signature: 'test' } } }; },
+  } } }, fetch: async (_url, options) => {
+    if (options?.method === 'PATCH') { calls.patch++; return scenario.patch ? scenario.patch() : { ok: true, json: async () => ({ success: true }) }; }
+    calls.get++; return scenario.lookup ? scenario.lookup(options) : { ok: true, json: async () => ({ payment: { reservationId, amount: 30000, status: 'claimed', paymentKey: 'test' } }) };
+  } });
+  let tree = h.render(); for (const effect of h.effects) effect(); tree = h.render();
+  const lookup = async () => { nodes(tree).find(n => n.type === 'input').props.onChange({ target: { value: reservationId } }); h.render(); await h.button('조회').onClick(); tree = h.render(); };
+  return { ...h, calls, localStorage, lookup };
+}
+test('lost physical cancellation response survives restart and cannot issue another terminal cancellation', async () => {
+  let release;
+  const h = await cancellationPanel({ cancel: () => new Promise((_, reject) => { release = () => reject(new Error('Lost terminal reply')); }) }); await h.lookup();
+  const cancel = h.button('이 결제 승인취소').onClick;
+  const pending = cancel(); await cancel(); assert.equal(h.calls.terminal, 1);
+  release(); await pending; h.render(); await h.button('이 결제 승인취소').onClick(); h.render();
+  assert.equal(h.calls.terminal, 1); assert.equal(h.calls.patch, 0);
+  const restored = await cancellationPanel({}, h.localStorage); assert(restored.visible('단말기 취소 결과를 관리자와 확인해주세요'));
+  await restored.button('조회').onClick(); assert.equal(restored.calls.terminal, 0); assert.equal(restored.calls.get, 0);
+});
+test('lost cancellation record response survives restart and retries signed record only', async () => {
+  const h = await cancellationPanel({ patch: () => { throw new Error('Response lost after record commit'); } }); await h.lookup();
+  await h.button('이 결제 승인취소').onClick(); h.render(); assert.equal(h.calls.terminal, 1); assert.equal(h.calls.patch, 1);
+  const restored = await cancellationPanel({}, h.localStorage);
+  await restored.button('취소 기록 저장만 다시 시도').onClick(); restored.render();
+  assert.equal(restored.calls.terminal, 0); assert.equal(restored.calls.patch, 1); assert.equal(h.localStorage.map.size, 0);
+});
+test('corrupted cancellation storage visibly disables lookup as well as guarding its handler', async () => {
+  const h = await cancellationPanel({}, storage({ 'kiosk-pending-card-cancel-v1': '{bad' }));
+  assert(h.visible('이전 취소 기록을 읽지 못했습니다')); assert.equal(h.button('조회').disabled, true);
+  await h.button('조회').onClick(); assert.equal(h.calls.get, 0);
+});
+test('malformed cancellation lookup cannot render an actionable payment or throw', async () => {
+  const h = await cancellationPanel({ lookup: () => ({ ok: true, json: async () => ({ payment: {} }) }) });
+  await h.lookup(); assert(h.visible('결제 기록 조회')); assert(!h.visible('이 결제 승인취소')); assert.equal(h.calls.terminal, 0);
+});
+test('cancellation lookup sets a bounded request signal and timeout restores its input', async () => {
+  let signal;
+  const h = await cancellationPanel({ lookup: options => { signal = options?.signal; throw new Error('Lookup timed out'); } });
+  await h.lookup(); assert(signal); assert.equal(h.button('조회').disabled, false); assert(h.visible('결제 기록 조회에 실패했습니다')); assert.equal(h.calls.terminal, 0);
+});
+test('confirmed empty password displays assistance, never a false password-printed claim', () => {
+  const h = load('components/check-in-complete.tsx', {
+    'next/image': { default: 'img' }, '@/lib/printer-utils-unified': {}, '@/lib/location-utils': { getBuildingZoomImagePath: () => '/test.png' },
+    '@/lib/audio-utils': {}, '@/hooks/use-idle-timer': { useIdleTimer() {} }, '@/lib/property-utils': {},
+  });
+  h.render({ reservation: { roomNumber: 'B901', password: '' }, revealedInfo: { roomNumber: 'B901', password: '', floor: '9' } });
+  assert(h.visible('결제와 체크인이 완료되었습니다')); assert(h.visible('관리자에게 문의해주세요')); assert(!h.visible('객실번호와 비밀번호가 적혀 있습니다'));
+});
+test('reservation input ignores whitespace and disables keyboard/scan while loading', () => {
+  let checks = 0;
+  const h = load('components/reservation-confirm.tsx', { './korean-keyboard': { default: 'Keyboard' }, '@/lib/location-utils': { getLocationTitle: () => 'B' },
+    '@/lib/audio-utils': {}, '@/hooks/use-idle-timer': { useIdleTimer() {} }, '@/lib/property-utils': {} });
+  const props = { guestName: '  ', onCheckReservation: () => checks++, onScanReservationQr() {}, onNavigate() {}, setGuestName() {} };
+  h.render(props); assert.equal(h.button('예약 확인하기').disabled, true); h.component('Keyboard').props.onEnter(); assert.equal(checks, 0);
+  h.render({ ...props, guestName: '테스트', loading: true }); assert.equal(h.component('Keyboard').props.disabled, true);
+  h.component('Keyboard').props.onEnter(); assert.equal(checks, 0);
+  assert.equal(h.button('예약 QR 스캔 문자 또는 예약 사이트의 QR을 보여주세요').disabled, true);
+  h.render({ ...props, guestName: '테스트' }); h.component('Keyboard').props.onEnter(); assert.equal(checks, 1);
+});
+test('actual idle hook schedules 60 seconds, resets on touch, and removes listeners/timer on unmount', () => {
+  const timers = new Map(), listeners = new Map(); let timerId = 0, calls = 0;
+  const h = load('hooks/use-idle-timer.ts', {}, {
+    setTimeout(fn, duration) { const id = ++timerId; timers.set(id, { fn, duration }); return id; }, clearTimeout: id => timers.delete(id),
+    document: { addEventListener: (key, fn) => listeners.set(key, fn), removeEventListener: key => listeners.delete(key) },
+  });
+  h.render({ onIdle: () => calls++ }, 'useIdleTimer'); const cleanup = h.effects[0]();
+  assert.equal(timers.get(1).duration, 60000); listeners.get('touchstart')(); assert(!timers.has(1)); assert.equal(timers.get(2).duration, 60000);
+  timers.get(2).fn(); assert.equal(calls, 1); cleanup(); assert.equal(listeners.size, 0); assert(!timers.has(2));
 });

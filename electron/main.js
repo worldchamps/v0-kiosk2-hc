@@ -8,6 +8,7 @@ if (!app.isPackaged) {
 }
 const { spawn } = require("child_process")
 const http = require("http")
+const { allowLocalRequest } = require("./local-http-policy")
 const path = require("path")
 const { SerialPort } = require("serialport")
 const overlayButtonModule = require("./overlay-button")
@@ -79,6 +80,11 @@ async function startNextServer() {
   await nextApp.prepare()
 
   nextServer = http.createServer((req, res) => {
+    if (!allowLocalRequest(req)) {
+      res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" })
+      res.end("허용되지 않은 키오스크 요청입니다.")
+      return
+    }
     if (global.kioskMaintenance) {
       res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" })
       res.end("키오스크 프로그램을 업데이트하고 있습니다.")

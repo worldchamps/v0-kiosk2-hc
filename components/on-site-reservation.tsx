@@ -41,7 +41,6 @@ interface AvailableRoom {
   roomNumber: string
   roomType: string
   status: string
-  password: string
   floor: string
   roomCode: string
   rates: PmsRoomRates | null
@@ -135,7 +134,6 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
         if (showLoading) {
           setLoading(true)
         }
-        setRoomsError("")
 
         const params = new URLSearchParams({ t: String(Date.now()) })
         if (location) {
@@ -143,6 +141,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
         }
         const response = await fetch(`/api/available-rooms?${params.toString()}`, {
           cache: "no-store",
+          signal: AbortSignal.timeout(15000),
         })
 
         if (!response.ok) {
@@ -150,7 +149,14 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
         }
 
         const data = await response.json()
-        setRoomsByType(data.roomsByType || {})
+        const rooms = data?.roomsByType
+        if (!rooms || typeof rooms !== "object" || Array.isArray(rooms) ||
+            Object.values(rooms).some(list => !Array.isArray(list) ||
+              list.some(room => !room || typeof room.roomCode !== "string" || typeof room.roomType !== "string"))) {
+          throw new Error("Invalid available-room response")
+        }
+        setRoomsByType(rooms)
+        setRoomsError("")
         setLastUpdated(new Date())
       } catch (error) {
         console.error("Error fetching available rooms:", error)
@@ -249,7 +255,6 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
       building: room.building,
       checkInDate,
       checkOutDate,
-      password: room.password,
       stayType: selectedStay.type,
       stayTypeLabel: selectedStay.label,
       rates: room.rates?.[selectedStay.type] ?? null,
@@ -288,7 +293,6 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
       building: selectedRoom.building,
       checkInDate,
       checkOutDate,
-      password: selectedRoom.password,
       stayType: selectedStay.type,
       stayTypeLabel: selectedStay.label,
       rates: selectedRoom.rates?.[selectedStay.type] ?? null,
@@ -319,6 +323,11 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
       })
       const data = await response.json()
       if (response.ok && data.success === true && data.data) {
+        if (typeof data.data.roomCode !== "string" || !data.data.roomCode.trim() ||
+            typeof data.data.password !== "string") {
+          requireRecovery("예약은 처리되었지만 객실 입실 정보를 확인하지 못했습니다. 다시 결제하지 말고 관리자에게 문의해주세요.")
+          return
+        }
         if (completePayment() === false) return
         setReservationData(data.data)
         setStep("complete")
@@ -359,7 +368,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
     const booking: PendingBooking = { requestId, body: JSON.stringify({ requestId, guestName, phoneNumber,
       roomNumber: selectedRoom?.roomCode, roomCode: selectedRoom?.roomCode, roomType: selectedRoom?.roomType,
       building: selectedRoom?.building, price: payment.method === "CARD" ? selectedRates?.card ?? 0 : selectedRates?.cash ?? 0,
-      checkInDate, checkOutDate, password: selectedRoom?.password, stayType: selectedStay?.type,
+      checkInDate, checkOutDate, stayType: selectedStay?.type,
       stayTypeLabel: selectedStay?.label, payment }) }
     if (!savePendingBooking(booking)) return
     await submitPendingBooking(booking)
@@ -382,6 +391,14 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
           {submitting ? "처리 결과 확인 중..." : "기존 결제 처리 결과 다시 확인"}
         </Button>}
       <p className="text-2xl">새 결제나 추가 현금 투입을 하지 마세요. 관리자 문의 010-5126-4644</p>
+    </div>
+  }
+
+  if (roomsError && step !== "stayType" && step !== "payment" && step !== "complete") {
+    return <div className="kiosk-content-container space-y-6 p-8" role="alert">
+      <p className="text-2xl">{roomsError}</p>
+      <Button onClick={() => fetchAvailableRooms()} disabled={loading}>다시 불러오기</Button>
+      <Button onClick={resetToHome}>처음으로</Button>
     </div>
   }
 
@@ -869,8 +886,8 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
         <CheckInComplete
           reservation={reservationData}
           revealedInfo={{
-            roomNumber: reservationData.roomCode || selectedRoom?.roomCode || "",
-            password: reservationData.password || selectedRoom?.password || "",
+            roomNumber: reservationData.roomCode,
+            password: reservationData.password,
             floor: selectedRoom?.floor || "",
           }}
           kioskLocation={location as any}

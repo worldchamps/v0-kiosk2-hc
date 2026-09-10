@@ -59,3 +59,48 @@ test("failed refresh does not silently register a new device and errors do not e
   await assert.rejects(jsonRequest("https://example.test/?secret=sensitive", {}, async () => new Response("secret", { status: 403 })),
     (e) => !e.message.includes("secret") && e.status === 403)
 })
+
+test("malformed cloud responses do not expose response bodies or credentials", async () => {
+  await assert.rejects(jsonRequest("https://example.test", {}, async () => new Response("private-refresh-token")),
+    error => !error.message.includes("private-refresh-token") && /응답/.test(error.message))
+  await assert.rejects(jsonRequest("https://example.test", {}, async () => new Response("x".repeat(65536))), /너무 큽니다/)
+})
+
+test("pairing rejection preserves the same identity and never silently claims another device", async () => {
+  const config = { projectId: cloud.projectId, deviceId: "qa-local-expired", property: "property3", code: "c".repeat(32) }
+  let signups = 0, claims = 0, saved = 0
+  const transport = async (url, options) => {
+    if (url.includes("accounts:signUp")) {
+      signups++
+      return new Response(JSON.stringify({ localId: "qa-uid", refreshToken: "qa-refresh", idToken: "qa-token", expiresIn: "3600" }))
+    }
+    if (options.method === "PUT") claims++
+    return new Response("null", { status: 403 })
+  }
+  const connection = createDeviceConnection(config, () => saved++, transport)
+  await assert.rejects(connection.pair(), /403/)
+  await assert.rejects(connection.pair(), /403/)
+  assert.equal(signups, 1)
+  assert.equal(saved, 1)
+  assert.equal(claims, 2)
+  assert.equal(config.auth.uid, "qa-uid")
+})
+
+test("the installed electron-updater rejects a corrupted cache by actual file hash", async (t) => {
+  const fs = require("node:fs"), os = require("node:os"), path = require("node:path"), crypto = require("node:crypto")
+  const { DownloadedUpdateHelper } = require("electron-updater/out/DownloadedUpdateHelper")
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kiosk-qa-cache-"))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const good = Buffer.from("synthetic installer bytes; never execute")
+  const sha512 = crypto.createHash("sha512").update(good).digest("base64")
+  const helper = new DownloadedUpdateHelper(dir)
+  const pending = path.join(dir, "pending")
+  fs.mkdirSync(pending)
+  fs.writeFileSync(path.join(pending, "installer.exe"), good)
+  fs.writeFileSync(path.join(pending, "update-info.json"), JSON.stringify({ fileName: "installer.exe", sha512 }))
+  const info = { info: { sha512, size: good.length } }, logger = { info() {}, warn() {} }
+  assert.equal(await helper.getValidCachedUpdateFile(info, logger), path.join(pending, "installer.exe"))
+  fs.writeFileSync(path.join(pending, "installer.exe"), "corrupted")
+  assert.equal(await helper.getValidCachedUpdateFile(info, logger), null)
+  assert.equal(fs.existsSync(path.join(pending, "installer.exe")), false)
+})

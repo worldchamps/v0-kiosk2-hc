@@ -29,6 +29,7 @@ class SerialDevice:
                 self.port,
                 self.baudrate,
                 timeout=self.timeout,
+                write_timeout=self.timeout,
                 parity=self.parity,
             )
             logger.info(
@@ -72,7 +73,9 @@ class SerialDevice:
     def send(self, data):
         if self.ser and self.ser.is_open:
             try:
-                self.ser.write(data)
+                if self.ser.write(data) != len(data):
+                    logger.error(f"[{self.name}] Incomplete serial write")
+                    return False
                 logger.info(f"[{self.name}] Sent: {data.hex().upper()}")
                 return True
             except Exception as exc:

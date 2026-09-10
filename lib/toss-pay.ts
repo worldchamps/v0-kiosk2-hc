@@ -31,6 +31,7 @@ async function requestToss<T>(path: string, body: Record<string, unknown>): Prom
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     cache: "no-store",
+    signal: AbortSignal.timeout(15000),
   })
 
   const payload = (await response.json().catch(() => null)) as (T & {
@@ -70,11 +71,18 @@ export function createTossPayment(input: {
   })
 }
 
-export function getTossPaymentStatus(payToken: string) {
-  return requestToss<TossPaymentStatus>("/status", {
+export async function getTossPaymentStatus(payToken: string) {
+  if (typeof payToken !== "string" || !payToken.trim() || payToken.length > 50) {
+    throw new Error("결제 토큰이 올바르지 않습니다.")
+  }
+  const status = await requestToss<TossPaymentStatus>("/status", {
     apiKey: getTossPayApiKey(),
     payToken,
   })
+  if (status.payToken !== payToken) {
+    throw new Error("결제 토큰이 일치하지 않습니다.")
+  }
+  return status
 }
 
 export async function verifyCompletedCardPayment(input: {
@@ -82,6 +90,10 @@ export async function verifyCompletedCardPayment(input: {
   orderNo: string
   expectedAmount: number
 }) {
+  if (typeof input.orderNo !== "string" || !input.orderNo.trim() || input.orderNo.length > 50 ||
+      !Number.isSafeInteger(input.expectedAmount) || input.expectedAmount <= 0) {
+    throw new Error("결제 주문번호 또는 금액이 올바르지 않습니다.")
+  }
   const status = await getTossPaymentStatus(input.payToken)
 
   if (status.payStatus !== "PAY_COMPLETE") {

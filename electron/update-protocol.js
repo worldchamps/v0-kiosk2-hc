@@ -48,6 +48,7 @@ function newer(next, current) {
   return false
 }
 function safeToInstall(status, now = Date.now()) {
-  return status.safe === true && now - status.at < 10000 && now - status.lastActivity >= 60000
+  return status?.safe === true && Number.isFinite(status.at) && Number.isFinite(status.lastActivity) &&
+    status.at <= now && now - status.at < 10000 && now - status.lastActivity >= 60000
 }
 module.exports = { APP_ID, ID, VERSION, digest, check, checkArch, releaseTag, httpsBase, sign, verify, releaseOf, requestOf, newer, safeToInstall }

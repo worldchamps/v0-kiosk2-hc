@@ -9,7 +9,8 @@ export async function POST(request: NextRequest) {
       body.status !== "PAY_COMPLETE" ||
       !body.payToken ||
       !body.orderNo ||
-      !Number.isFinite(Number(body.amount))
+      (typeof body.amount !== "number" && typeof body.amount !== "string") ||
+      !Number.isSafeInteger(Number(body.amount)) || Number(body.amount) <= 0
     ) {
       return NextResponse.json({ error: "잘못된 결제 콜백입니다." }, { status: 400 })
     }
@@ -22,7 +23,6 @@ export async function POST(request: NextRequest) {
 
     console.info("[Toss Pay] Verified payment callback:", {
       orderNo: body.orderNo,
-      payToken: body.payToken,
       amount: body.amount,
     })
     return NextResponse.json({ success: true })

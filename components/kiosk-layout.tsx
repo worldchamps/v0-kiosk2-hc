@@ -36,6 +36,13 @@ interface KioskLayoutProps {
   initialLocation?: KioskLocation
 }
 
+function getReservations(data: { reservations?: unknown } | null): Reservation[] {
+  const reservations = data?.reservations
+  if (!Array.isArray(reservations) || reservations.some(value => !value || typeof value.reservationId !== "string" ||
+      !value.reservationId.trim() || typeof value.guestName !== "string")) throw new Error("Invalid reservation lookup response")
+  return reservations
+}
+
 export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayoutProps) {
   const [currentScreen, setCurrentScreen] = useState("onSiteReservation")
   const [homeSessionKey, setHomeSessionKey] = useState(0)
@@ -278,6 +285,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       }
 
       const data = await response.json()
+      data.reservations = getReservations(data)
 
       if (data.reservations && data.reservations.length > 0) {
         if (data.reservations.length > 1) {
@@ -305,6 +313,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         }
 
         const allPropertiesData = await allPropertiesResponse.json()
+        allPropertiesData.reservations = getReservations(allPropertiesData)
 
         if (allPropertiesData.reservations && allPropertiesData.reservations.length > 0) {
           const foundReservation = allPropertiesData.reservations[0]
@@ -345,16 +354,19 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     }
 
     const data = await response.json()
-    return data.reservations || []
+    return getReservations(data)
   }
 
   const handleScanReservationQr = async () => {
+    if (lookupSubmitting.current) return
     const front = window.electronAPI?.tossFront
     if (!front) {
       setError("토스 프론트는 키오스크 앱에서만 사용할 수 있습니다.")
       return
     }
 
+    lookupSubmitting.current = true
+    setLookupError(false)
     setLoading(true)
     setError("")
 
@@ -382,6 +394,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       const allPropertyReservations = await findReservationById(reservationId, true)
       if (allPropertyReservations.length > 0) {
         const foundReservation = allPropertyReservations[0]
+        if (!foundReservation.property) throw new Error("예약 숙소 정보를 확인하지 못했습니다.")
         setGuestName(foundReservation.guestName || "")
         setRedirectTargetProperty(foundReservation.property)
         setShowPropertyRedirect(true)
@@ -392,6 +405,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       console.error("[v0] Reservation QR scan error:", err)
       setError(err instanceof Error ? err.message : "QR 예약 확인 중 오류가 발생했습니다.")
     } finally {
+      lookupSubmitting.current = false
       setLoading(false)
     }
   }

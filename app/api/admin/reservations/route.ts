@@ -41,7 +41,6 @@ export async function GET(request: NextRequest) {
         checkInDate: checkInDate,
         checkOutDate: checkOutDate,
         roomNumber: row[SHEET_COLUMNS.ROOM_NUMBER] || "",
-        password: row[SHEET_COLUMNS.PASSWORD] || "",
         checkInStatus: row[SHEET_COLUMNS.CHECK_IN_STATUS] || "",
         checkInTime: row[SHEET_COLUMNS.CHECK_IN_TIME] || "",
       }

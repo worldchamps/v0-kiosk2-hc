@@ -12,6 +12,8 @@ npm.cmd run test:qa
 npm.cmd run typecheck
 npm.cmd run test:toss-front
 npm.cmd run build
+npm.cmd audit --omit=dev
+npm.cmd audit
 git diff --check
 ```
 
@@ -21,6 +23,17 @@ git diff --check
 - 대실·숙박 정상 흐름뿐 아니라 돌아가기, 다른 객실 선택, 품절, 조회 실패, 중복 클릭, 응답 지연·유실, 미확정 결제, 재시작 복구를 검사한다.
 - API 검사는 실제 라우트와 저장 로직에 가짜 Firebase/Sheets 전송을 연결한다. 프로덕션 Firebase 동시성이나 실장비의 검증을 대체하지 않는다.
 - 설치파일 게시에는 별도로 동일 새 버전의 ia32/x64 빌드와 각 패키지 검증이 필요하다. 이미 게시한 버전은 덮어쓰지 않는다.
+- Python 장비 계약도 설치파일에 사용할 각 아키텍처의 Python으로 `python tests/hardware-server-contract.py`를 실행한다. 실제 시리얼 장비 대신 모의 전송과 임시 loopback WebSocket을 사용한다. 설치파일 빌드 래퍼가 이 검사를 필수 실행한다.
+- 의존성 검사 실패는 기능 검사와 별도 미해결 항목이다. Electron은 개발 의존성으로 선언되어도 설치파일에 포함되므로 `--omit=dev` 검사만으로 보안 검증을 마치지 않는다. 자동 `audit fix --force`나 호환성 미검증 주버전 변경을 하지 않는다.
+
+## 비현장 확장 검사와 보안 경계
+
+- 실제 API handler를 모의 저장소·결제 응답과 연결해 잘못된 요청, 다른 동 요금, 중복·유실·오염 응답을 검사한다. 객실 조회 단계에서는 비밀번호를 공개하지 않는다.
+- 정상 완료 응답의 비밀번호가 빈 문자열이면 기존 계약대로 예약은 확정하되 관리자 문의로 안내한다. 선택 전 객실 정보의 비밀번호로 대체하지 않는다.
+- 설치형 로컬 HTTP 서버는 허용한 loopback Host, 동일 Origin, JSON 변경 요청만 받는다. Python 장비 WebSocket은 Origin 없는 native 클라이언트만 받는다. 같은 PC의 임의 native 프로그램까지 인증하는 기능은 아니며, 직접 실행하는 `next dev`/`next start`에는 설치형 서버의 HTTP 가드가 없다.
+- 업데이트 이력이 손상되면 원본을 보존하고 자동 설치를 중단한다. 일반 키오스크 이용은 유지하되 업데이트는 관리자 확인이 필요하다.
+- BAC-2400은 동시 지급과 이전 응답을 새 지급 성공으로 오인하는 것을 막는다. 현재 지급의 수량·상태 증거가 불충분하면 성공으로 처리하지 않는다. 실제 누적/회차별 카운터 규약과 부분 지급은 장비에서 별도로 검증한다.
+- QA 설치파일은 별도 디렉터리·시험 버전·시험 공개키로 생성한다. NSIS 추출, PE 아키텍처, 내장 Python self-test, SerialPort와 Next 등 내장 모듈 로딩, loopback API 실행을 검사한다. 압축 해제와 실행 검사만으로 Windows 설치·제거·재부팅 업데이트 성공을 주장하지 않는다.
 
 ## 화면 수동 검사
 

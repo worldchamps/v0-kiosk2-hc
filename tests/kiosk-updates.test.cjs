@@ -166,3 +166,72 @@ test("packaging excludes local secrets and includes bundled hardware and public 
   assert.ok(pkg.build.extraResources.some((entry) => entry.to === "hardware"))
   assert.ok(pkg.build.extraResources.some((entry) => entry.to === "update-public.pem"))
 })
+
+test("invalid signatures and expired requests never download or install", async (t) => {
+  for (const kind of ["expired", "signature", "release-signature"]) {
+    const h = updaterHarness(t)
+    h.idle()
+    if (kind === "expired") h.remote.request = sign({ ...h.request, expiresAt: Date.now() - 1 }, keys.privateKey)
+    else h.remote[kind === "signature" ? "request" : "release"].signature = Buffer.alloc(64).toString("base64")
+    await h.client.tick()
+    assert.equal(h.calls.downloads, 0)
+    assert.equal(h.calls.installs, 0)
+  }
+})
+
+test("concurrent ticks and an already completed command cannot repeat installation", async (t) => {
+  const h = updaterHarness(t)
+  h.idle()
+  await Promise.all([h.client.tick(), h.client.tick(), h.client.tick()])
+  assert.equal(h.calls.installs, 1)
+  const reboot = createKioskUpdater({ ...h.options, version: release.version })
+  await Promise.all([reboot.tick(), reboot.tick()])
+  await reboot.tick()
+  assert.equal(reboot.status().state, "completed")
+  assert.equal(h.calls.installs, 1)
+})
+
+test("download rejection never invokes shutdown and does not retry the failed command", async (t) => {
+  const h = updaterHarness(t)
+  h.idle()
+  h.native.downloadUpdate = async () => { throw new Error("checksum mismatch https://example.test/private?token=secret") }
+  await h.client.tick()
+  await h.client.tick()
+  assert.equal(h.calls.installs, 0)
+  assert.equal(h.calls.shutdowns, 0)
+  assert.equal(h.client.status().state, "failed")
+  assert.ok(!h.client.status().message.includes("secret"))
+})
+
+test("a downloaded command replaced during maintenance cannot shut down the kiosk", async (t) => {
+  const h = updaterHarness(t, { prepare: async () => {
+    h.remote.request = sign({ ...h.request, id: crypto.randomUUID() }, keys.privateKey)
+    return true
+  } })
+  await h.client.tick()
+  assert.equal(h.calls.installs, 0)
+  assert.equal(h.calls.shutdowns, 0)
+  assert.equal(h.calls.resumes, 1)
+})
+
+test("corrupt persisted update history disables updates without crashing or replaying installation", async (t) => {
+  const h = updaterHarness(t)
+  for (const broken of ["{broken", "null", "[]", '{"state":"installing"}']) {
+    fs.writeFileSync(h.stateFile, broken)
+    const client = createKioskUpdater(h.options)
+    h.idle()
+    await client.tick()
+    assert.equal(client.status().state, "failed")
+    assert.equal(h.calls.downloads, 0)
+    assert.equal(h.calls.installs, 0)
+    assert.equal(fs.readFileSync(h.stateFile, "utf8"), broken)
+  }
+})
+
+test("idle proof rejects future or non-finite timestamps", () => {
+  const now = 100000
+  for (const at of [now + 1, Infinity, NaN, "100000"])
+    assert.equal(safeToInstall({ safe: true, at, lastActivity: 0 }, now), false)
+  for (const lastActivity of [-Infinity, NaN, "0"])
+    assert.equal(safeToInstall({ safe: true, at: now, lastActivity }, now), false)
+})

@@ -33,6 +33,7 @@ async function main() {
   fs.mkdirSync(".local", { recursive: true })
   fs.writeFileSync(".local/update-public.pem", key.export({ type: "spki", format: "pem" }))
   run(process.execPath, ["scripts/test-kiosk.cjs"])
+  run(python, ["tests/hardware-server-contract.py"])
   const sdk = process.env[`KIOSK_BIXOLON_SDK_FILE_${arch.toUpperCase()}`] || process.env.KIOSK_BIXOLON_SDK_FILE
   if (sdk && peArchitecture(sdk) !== arch) throw new Error("Bixolon SDK DLL architecture does not match the installer")
   // SerialPort ships N-API binaries for both Windows architectures. Rebuilding
