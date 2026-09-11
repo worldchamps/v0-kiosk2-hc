@@ -38,7 +38,14 @@ function createKioskUpdater({ deviceId, publicKey, version, stateFile, pollStatu
       // An offline kiosk waits without consuming/failing its pending request.
       let received
       try { received = await poll() } catch { return }
-      if (!received.request) { downloaded = null; return }
+      if (!received.request) {
+        downloaded = null
+        if (["validating", "downloading", "waiting-idle"].includes(state.state)) {
+          save({ state: "online", message: "업데이트 요청이 해제되어 대기를 종료했습니다." })
+          await poll().catch(() => {})
+        }
+        return
+      }
       let command
       try { command = requestOf(received.request, publicKey, deviceId) } catch { downloaded = null; return }
       if (state.requestId === command.id && ["completed", "failed"].includes(state.state)) return
@@ -71,7 +78,15 @@ function createKioskUpdater({ deviceId, publicKey, version, stateFile, pollStatu
         downloaded = { id: command.id, updater }
         save({ state: "waiting-idle", requestId: command.id, targetVersion: command.version })
       }
-      if (!(await prepare())) return
+      const prepared = await prepare()
+      // Only explicit true grants installation. A diagnostic string must never
+      // become a truthy bypass of the renderer/hardware safety handshake.
+      if (prepared !== true) {
+        const message = typeof prepared === "string" ? safeError({ message: prepared }) : "키오스크의 안전한 설치 상태 확인 대기"
+        if (state.message !== message) save({ ...state, state: "waiting-idle", message })
+        await poll().catch(() => {})
+        return
+      }
       try {
         // Revalidate after download and AFTER locking out new guest activity.
         const latest = await poll()

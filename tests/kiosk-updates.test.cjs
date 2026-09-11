@@ -237,3 +237,54 @@ test("idle proof rejects future or non-finite timestamps", () => {
   for (const lastActivity of [-Infinity, NaN, "0"])
     assert.equal(safeToInstall({ safe: true, at: now, lastActivity }, now), false)
 })
+
+test("a readable wait reason is reported, never mistaken for installation permission", async (t) => {
+  let result = "첫 화면 또는 결제·체크인 미확정 상태 해제 대기"
+  const h = updaterHarness(t, { prepare: async () => result })
+  await h.client.tick()
+  assert.equal(h.calls.installs, 0)
+  assert.equal(h.calls.shutdowns, 0)
+  assert.equal(h.client.status().message, result)
+  assert.equal(h.calls.reports.at(-1).message, result)
+  result = true
+  await h.client.tick()
+  assert.equal(h.calls.installs, 1)
+  assert.equal(h.client.status().message, undefined)
+})
+
+test("unexpected prepare results fail closed and diagnostic URLs are redacted", async (t) => {
+  for (const result of [false, undefined, null, 1, {}, "wait https://example.test/private?token=secret"]) {
+    const h = updaterHarness(t, { prepare: async () => result })
+    await h.client.tick()
+    assert.equal(h.calls.installs, 0)
+    assert.equal(h.calls.shutdowns, 0)
+    assert.equal(h.client.status().state, "waiting-idle")
+    assert.equal(h.client.status().message.includes("secret"), false)
+  }
+})
+
+test("a canceled pending request clears the waiting status without claiming installation completed", async (t) => {
+  const h = updaterHarness(t)
+  await h.client.tick()
+  h.remote.request = null
+  await h.client.tick()
+  assert.equal(h.client.status().state, "online")
+  assert.equal(h.client.status().requestId, undefined)
+  assert.equal(h.calls.reports.at(-1).state, "online")
+  assert.equal(h.calls.installs, 0)
+  const reboot = createKioskUpdater({ ...h.options, version: "1.3.4" })
+  await reboot.tick()
+  assert.equal(reboot.status().state, "online")
+})
+
+test("network failure while reporting an idle reason preserves the pending update for retry", async (t) => {
+  let calls = 0
+  const h = updaterHarness(t, { prepare: async () => "장비 요청 완료 대기",
+    pollStatus: async () => { if (++calls === 3) throw new Error("offline"); return h.remote } })
+  await h.client.tick()
+  assert.equal(h.client.status().state, "waiting-idle")
+  await h.client.tick()
+  assert.equal(h.client.status().state, "waiting-idle")
+  assert.equal(h.calls.downloads, 1)
+  assert.equal(h.calls.installs, 0)
+})

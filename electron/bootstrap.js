@@ -53,9 +53,19 @@ if (!app.isPackaged) {
       if (localSender(event) && event.sender === renderer && ack?.nonce === nonce) ack.resolve(true)
     })
     const resume = () => { locked = false; global.kioskMaintenance = false; renderer?.send("kiosk:update-resume") }
+    const installationBlocker = () => {
+      if (!renderer || renderer.isDestroyed() || !heartbeat.at || Date.now() - heartbeat.at >= 10000 || heartbeat.at > Date.now())
+        return "키오스크 화면 응답 확인 대기"
+      if (!heartbeat.safe) return "첫 화면 또는 결제·체크인 미확정 상태 해제 대기"
+      if (!safeToInstall(heartbeat)) return "마지막 화면 조작 후 60초 유휴 확인 대기"
+      if (activeOperations || Date.now() - lastOperation < 10000) return "장비 요청 완료 후 10초 대기"
+      if (global.kioskHttpActive > 0) return "예약·화면 요청 처리 완료 대기"
+      if (!global.kioskHardwareReady?.()) return "장비 제어 프로그램 연결 또는 진행 중 장비 요청 완료 대기"
+      return ""
+    }
     const prepare = async () => {
-      if (!safeToInstall(heartbeat) || activeOperations || Date.now() - lastOperation < 10000 ||
-        global.kioskHttpActive > 0 || !global.kioskHardwareReady?.() || !renderer || renderer.isDestroyed()) return false
+      const blocker = installationBlocker()
+      if (blocker) return blocker
       const nonce = require("node:crypto").randomUUID()
       const confirmed = await new Promise((resolve) => {
         const timer = setTimeout(() => resolve(false), 3000)
@@ -63,7 +73,8 @@ if (!app.isPackaged) {
         renderer.send("kiosk:update-prepare", nonce)
       })
       ack = null
-      if (!confirmed || !safeToInstall(heartbeat) || activeOperations || global.kioskHttpActive > 0 || !global.kioskHardwareReady?.()) { resume(); return false }
+      const changed = installationBlocker()
+      if (!confirmed || changed) { resume(); return changed || "화면의 업데이트 전환 확인 응답 대기" }
       locked = true
       global.kioskMaintenance = true
       return true

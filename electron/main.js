@@ -1101,8 +1101,11 @@ ipcMain.handle("printer:print-test", async () => {
   }
 })
 
+// Terminal authentication gates payments, not an otherwise idle software update.
+// Unresolved payments remain blocked by the renderer journal and active IPC;
+// outstanding terminal requests and the owned hardware process must still drain.
 global.kioskHardwareReady = () => hardwareBridge.isConnected && !!hardwareServerProcess &&
-  tossFrontBridge.pending.size === 0 && (!tossFrontBridge.configured || tossFrontBridge.authenticated)
+  tossFrontBridge.pending.size === 0
 
 global.shutdownKiosk = async () => {
   tossFrontBridge.close()
