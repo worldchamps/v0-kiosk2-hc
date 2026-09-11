@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs"
 import vm from "node:vm"
 import ts from "typescript"
 import * as crypto from "node:crypto"
+import * as firebaseTransaction from "../lib/firebase-transaction.ts"
 
 function load(file: string, dependencies: Record<string, unknown>, env = {}) {
   const exports: Record<string, any> = {}
@@ -18,17 +19,29 @@ function load(file: string, dependencies: Record<string, unknown>, env = {}) {
 
 function harness() {
   const records = new Map<string, any>()
+  const listeners = new Map<string, Set<unknown>>()
   const clone = (value: any) => value ? structuredClone(value) : null
   let sheetWrites = 0, commits = 0
   let writeMode = "ok", commitMode = "ok"
   let hold: Promise<void> | undefined
   let rowStatus = "", rowTime = ""
   const database = { ref(path = "") { return {
+    on: (_event: string, listener: unknown) => {
+      if (!listeners.has(path)) listeners.set(path, new Set())
+      listeners.get(path)!.add(listener)
+    },
+    off: (_event: string, listener: unknown) => { listeners.get(path)?.delete(listener) },
     once: async () => ({ val: () => clone(records.get(path)) }),
     transaction: async (callback: any) => {
-      const next = callback(clone(records.get(path)))
+      // Firebase discards one-shot read caches without a remaining listener.
+      // undefined aborts locally, before any server value can be delivered.
+      let current = listeners.get(path)?.size ? clone(records.get(path)) : null
+      let next = callback(current)
+      if (next !== undefined && !listeners.get(path)?.size && records.has(path)) {
+        current = clone(records.get(path)); next = callback(current)
+      }
       if (next !== undefined) records.set(path, clone(next))
-      return { committed: next !== undefined, snapshot: { val: () => clone(records.get(path)) } }
+      return { committed: next !== undefined, snapshot: { val: () => clone(next === undefined ? current : next) } }
     },
     update: async (updates: any) => {
       assert.equal(path, ""); commits++
@@ -39,6 +52,7 @@ function harness() {
   } } }
   const { completeReservationCheckIn } = load("../lib/check-in-operation.ts", {
     crypto, "@/lib/firebase-admin": { getDB: () => database },
+    "@/lib/firebase-transaction": firebaseTransaction,
   })
   const base = { property: "property3", reservationId: "test-reservation", roomNumber: "B121",
     guestName: "Test", checkInDate: "26.09.09/15:00", password: "fake-password", floor: "1",
@@ -54,6 +68,7 @@ function harness() {
     setCommitMode: (value: string) => { commitMode = value },
     holdWrite: (value: Promise<void>) => { hold = value },
     get sheetWrites() { return sheetWrites }, get commits() { return commits },
+    get listenerCount() { return [...listeners.values()].reduce((sum, set) => sum + set.size, 0) },
     queues: () => [...records.keys()].filter(k => k.startsWith("pms_queue/")),
   }
 }
@@ -66,6 +81,7 @@ test("check-in writes L/M once and atomically records a '-' queue; retry after c
   h.records.delete(h.queues()[0])
   assert.equal((await h.run()).success, true)
   assert.equal(h.sheetWrites, 1); assert.equal(h.commits, 1); assert.equal(h.queues().length, 0)
+  assert.equal(h.listenerCount, 0)
 })
 
 test("concurrent same-reservation requests write and enqueue only once", async () => {
@@ -94,6 +110,20 @@ test("uncertain Sheets write absent from read stays pending and never writes aga
   assert.equal((await h.run()).pending, true)
   assert.equal((await h.run()).pending, true)
   assert.equal(h.sheetWrites, 1); assert.equal(h.commits, 0)
+})
+
+test("a new guest completes without changing or replaying an earlier pending guest", async () => {
+  const h = harness(); h.setWriteMode("after")
+  assert.equal((await h.run()).pending, true)
+  const [oldPath, oldRecord] = [...h.records.entries()][0]
+  const before = structuredClone(oldRecord)
+  h.setWriteMode("ok")
+  const next = await h.run({ reservationId: "next-guest", roomNumber: "B122", currentStatus: "", currentCheckInTime: "" })
+  assert.equal(next.success, true)
+  assert.equal(next.data.roomNumber, "B122")
+  assert.deepEqual(h.records.get(oldPath), before)
+  assert.equal(h.sheetWrites, 2); assert.equal(h.commits, 1); assert.equal(h.queues().length, 1)
+  assert.equal(h.listenerCount, 0)
 })
 
 test("atomic commit failure before applying stays pending and is not blindly replayed", async () => {
@@ -130,6 +160,7 @@ test("operation is bound to the original room and schedule", async () => {
 test("a conflicting operation winning between first read and transaction cannot leak another room's result", async () => {
   const record = { state: "complete", property: "property3", roomNumber: "B122", checkInDate: "26.09.09/15:00", data: { password: "other-room" } }
   const { completeReservationCheckIn } = load("../lib/check-in-operation.ts", { crypto,
+    "@/lib/firebase-transaction": firebaseTransaction,
     "@/lib/firebase-admin": { getDB: () => ({ ref: () => ({
       once: async () => ({ val: () => null }),
       transaction: async () => ({ committed: false, snapshot: { val: () => record } }),

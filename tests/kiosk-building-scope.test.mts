@@ -7,6 +7,7 @@ import * as scope from "../lib/kiosk-scope.ts"
 import * as properties from "../lib/property-utils.ts"
 import * as dates from "../lib/date-utils.ts"
 import * as sales from "../lib/kiosk-sales-config.ts"
+import * as firebaseTransaction from "../lib/firebase-transaction.ts"
 
 // Real handlers with in-memory dependencies. No customer data, payment,
 // Firebase writes, PC commands, or printers are contacted by these tests.
@@ -50,6 +51,7 @@ function harness(building: string | undefined = "A", property = "property3") {
     append: async () => { effects.push("booking") },
   }
   const dependencies: Record<string, any> = {
+    "@/lib/firebase-transaction": firebaseTransaction,
     "next/server": { NextResponse: Response },
     "next/headers": { headers: async () => new Headers() },
     "@/lib/kiosk-scope": { ...scope, getKioskScope: () => scope.getKioskScope(env) },
@@ -77,6 +79,8 @@ function harness(building: string | undefined = "A", property = "property3") {
       readOnSiteBooking: async () => null, beginOnSiteBooking: async () => true,
       claimOnSiteRoom: async () => true, rejectOnSiteBooking: async () => {},
       bookingRecordRef: (key: string) => ({
+        on: () => {}, off: () => {},
+        once: async () => ({ val: () => bookingRecords.get(key) }),
         set: async (value: any) => { bookingRecords.set(key, structuredClone(value)) },
         transaction: async (callback: (current: any) => any) => {
           const next = callback(bookingRecords.get(key))

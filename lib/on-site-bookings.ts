@@ -1,5 +1,6 @@
 import { createHash } from "crypto"
 import { getDB, getPaymentClaim } from "@/lib/firebase-admin"
+import { transactionWithReadCache } from "@/lib/firebase-transaction"
 import { normalizeDate, resolveReservationSheetDateTime } from "@/lib/date-utils"
 import type { PropertyId } from "@/lib/property-utils"
 
@@ -64,7 +65,7 @@ export async function claimOnSiteRoom(record: OnSiteBookingRecord) {
 
 export async function rejectOnSiteBooking(record: OnSiteBookingRecord, error: string, canCancelPayment: boolean) {
   // Release only this request's claim, never a concurrent winner's claim.
-  await roomClaimRef(record).transaction(current => current?.key === record.key
+  await transactionWithReadCache(roomClaimRef(record), current => current?.key === record.key
     ? { ...current, state: "released" } : undefined)
   await bookingRecordRef(record.key).update({ state: "rejected", error, canCancelPayment })
 }
@@ -83,7 +84,7 @@ export async function finalizeOnSiteBooking(record: OnSiteBookingRecord): Promis
     return record
   }
   const ref = bookingRecordRef(record.key)
-  const claimed = await ref.transaction(current => current?.state === "saved" ? { ...current, state: "committing" } : undefined)
+  const claimed = await transactionWithReadCache(ref, current => current?.state === "saved" ? { ...current, state: "committing" } : undefined)
   if (!claimed.committed) return (await readOnSiteBooking(record.key)) || record
 
   // Room data can be replaced by PMS synchronisation: resolve its current key.
@@ -115,7 +116,7 @@ export async function resumeOnSiteBooking(record: OnSiteBookingRecord, readRows:
     // A timed-out Sheets append may have succeeded. Never append a second row.
     const matches = (await readRows()).filter(row => row[2] === record.reservationId)
     if (matches.length === 1 && record.sheetRow.every((value, index) => String(matches[0][index] ?? "") === String(value))) {
-      const result = await bookingRecordRef(record.key).transaction(current => current?.state === "saving"
+      const result = await transactionWithReadCache(bookingRecordRef(record.key), current => current?.state === "saving"
         ? { ...current, state: "saved" } : undefined)
       record = result.snapshot.val() || record
     }

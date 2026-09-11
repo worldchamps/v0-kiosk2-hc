@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server"
 import { randomUUID } from "crypto"
 import { createSheetsClient } from "@/lib/google-sheets"
 import { claimPayment, releasePaymentClaim, getPaymentClaim } from "@/lib/firebase-admin"
+import { transactionWithReadCache } from "@/lib/firebase-transaction"
 import { getRoomInfoByMatchingNumber } from "@/lib/firebase-beach-rooms"
 import { getPropertyFromRoomNumber } from "@/lib/property-utils"
 import { isShortStayAvailable, isShortStayRestrictedProperty } from "@/lib/short-stay-policy"
@@ -188,7 +189,7 @@ export async function POST(request: NextRequest) {
       requestBody: { values: [record.sheetRow] } }, { timeout: 15000, retry: false })
     // A retry may have reconciled the visible row while this append response
     // was delayed. Never rewind complete/committing or recreate a consumed job.
-    const saved = await bookingRecordRef(key).transaction(current => current?.state === "saving"
+    const saved = await transactionWithReadCache(bookingRecordRef(key), current => current?.state === "saving"
       ? { ...current, state: "saved" } : undefined)
     record = saved.snapshot.val() || record
     if (!record) return pending()

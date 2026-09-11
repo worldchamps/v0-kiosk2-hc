@@ -16,6 +16,7 @@ function harness(options = {}) {
     status: '공실', floor: 'TEST', password: 'NOT-A-REAL-CODE', category: 'Beach B', roomType: 'QA' } } } };
   let price = 30000, appendCount = 0, queueCount = 0, now = '2026-09-10T01:00:00Z';
   const rows = copy(options.rows || []), effects = [];
+  const listeners = new Map();
   const get = key => key.split('/').filter(Boolean).reduce((value, name) => value?.[name], state) ?? null;
   const set = (target, key, value) => {
     const names = key.split('/').filter(Boolean); const last = names.pop();
@@ -25,11 +26,20 @@ function harness(options = {}) {
   const snapshot = value => ({ val: () => copy(value), exists: () => value != null });
   const db = { ref(key = '') {
     return {
+      on: (_event, listener) => {
+        if (!listeners.has(key)) listeners.set(key, new Set());
+        listeners.get(key).add(listener);
+      },
+      off: (_event, listener) => { listeners.get(key)?.delete(listener); },
       once: async () => snapshot(get(key)),
       child: name => db.ref([key, name].filter(Boolean).join('/')),
       transaction: async callback => {
-        const value = callback(copy(get(key)));
-        if (value === undefined) return { committed: false, snapshot: snapshot(get(key)) };
+        let current = listeners.get(key)?.size ? copy(get(key)) : null;
+        let value = callback(current);
+        if (value !== undefined && !listeners.get(key)?.size && get(key) !== null) {
+          current = copy(get(key)); value = callback(current);
+        }
+        if (value === undefined) return { committed: false, snapshot: snapshot(current) };
         set(state, key, value); return { committed: true, snapshot: snapshot(value) };
       },
       set: async value => { set(state, key, value); },
@@ -83,7 +93,7 @@ function harness(options = {}) {
       } });
     return exports;
   };
-  for (const name of ['property-utils', 'kiosk-scope', 'date-utils', 'firebase-admin', 'on-site-bookings', 'firebase-beach-rooms']) {
+  for (const name of ['property-utils', 'kiosk-scope', 'date-utils', 'firebase-admin', 'firebase-transaction', 'on-site-bookings', 'firebase-beach-rooms']) {
     dependencies['@/lib/' + name] = load('lib/' + name + '.ts');
   }
   const post = load('app/api/on-site-booking/route.ts').POST;
@@ -219,6 +229,7 @@ test('invalid card proof cannot write or claim a room', async () => {
 test('existing reservation overlap and two-hour cleaning buffer block a sale', async () => {
   const row = ['', 'QA', 'existing', '', '', 30000, '', '26.09.10/15:00', '26.09.11/11:00', 'B901', '', ''];
   const h = harness({ rows: [row] }); assert.equal((await h.post()).status, 409); assert.equal(h.rows.length, 1);
+  assert.equal(h.get('kiosk_room_claims/property3/B901/state'), 'released');
   const conflicts = h.modules['@/lib/on-site-bookings'].roomScheduleConflicts;
   assert.equal(conflicts([row], 'B901', '26.09.11/12:59', '26.09.11/16:00'), true);
   assert.equal(conflicts([row], 'B901', '26.09.11/13:00', '26.09.11/16:00'), false);

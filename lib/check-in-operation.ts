@@ -1,5 +1,6 @@
 import { createHash } from "crypto"
 import { getDB } from "@/lib/firebase-admin"
+import { transactionWithReadCache } from "@/lib/firebase-transaction"
 
 type CheckInData = {
   reservationId: string
@@ -74,7 +75,7 @@ export async function completeReservationCheckIn(input: Input) {
     return pending()
   }
   try {
-    const committing = await ref.transaction((current: CheckInRecord | null) =>
+    const committing = await transactionWithReadCache(ref, (current: CheckInRecord | null) =>
       current?.state === "saving" && matchesInput(current) ? { ...current, state: "committing" } : undefined)
     if (!committing.committed) {
       const latest = committing.snapshot.val() as CheckInRecord | null
