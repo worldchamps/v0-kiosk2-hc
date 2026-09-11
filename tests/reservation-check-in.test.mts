@@ -76,8 +76,12 @@ function createApiHarness(checkInDate: string, now: string) {
     checkInDate, "26.09.07/11:00", "A101", "test-password", "", "", "1"]
   const writes: any[] = []
   const queue: any[] = []
+  let beforeWriteRead = () => {}
   const values = {
-    get: async () => ({ data: { values: [row] } }),
+    get: async (request: any) => {
+      if (request.range !== "Reservations!A2:N") beforeWriteRead()
+      return { data: { values: [structuredClone(row)] } }
+    },
     batchUpdate: async (request: any) => { writes.push(request) },
   }
   const dependencies = {
@@ -108,6 +112,7 @@ function createApiHarness(checkInDate: string, now: string) {
   const { GET } = loadModule("../app/api/reservations/route.ts", dependencies)
   return {
     row, writes, queue,
+    beforeWriteRead: (callback: () => void) => { beforeWriteRead = callback },
     search: () => GET(new Request("http://test.local/api/reservations?reservationId=test-reservation")),
     checkIn: (extra = {}) => POST(new Request("http://test.local/api/check-in", {
       method: "POST",
@@ -160,6 +165,35 @@ test("an H-column change after lookup is enforced at submission; bad H never wri
   assert.equal((await invalid.json()).code, "INVALID_CHECK_IN_TIME")
   assert.equal(api.writes.length, 0)
   assert.equal(api.queue.length, 0)
+})
+
+test("a moved or edited target row is never overwritten by a delayed check-in write", async () => {
+  for (const [column, value] of [
+    [0, "other-property"], [1, "Other Guest"], [2, "other-reservation"],
+    [7, "26.09.06/17:30"], [8, "26.09.06/18:00"], [9, "B122"],
+  ] as const) {
+    const api = createApiHarness("26.09.06/15:00", "2026-09-06T06:00:00Z")
+    api.beforeWriteRead(() => { api.row[column] = value })
+    assert.notEqual((await api.checkIn()).status, 200)
+    assert.equal(api.writes.length, 0); assert.equal(api.queue.length, 0)
+  }
+})
+
+test("a manual or partial check-in appearing before the write is preserved", async () => {
+  for (const [status, time] of [["Canceled", ""], ["Checked In", "other-time"], ["Checked In", ""], ["", "other-time"]]) {
+    const api = createApiHarness("26.09.06/15:00", "2026-09-06T06:00:00Z")
+    api.beforeWriteRead(() => { api.row[11] = status; api.row[12] = time })
+    assert.notEqual((await api.checkIn()).status, 200)
+    assert.equal(api.writes.length, 0); assert.equal(api.queue.length, 0)
+  }
+})
+
+test("an identical assignment already visible in the fresh read is not written a second time", async () => {
+  const now = "2026-09-06T06:00:00Z"
+  const api = createApiHarness("26.09.06/15:00", now)
+  api.beforeWriteRead(() => { api.row[11] = "Checked In"; api.row[12] = new Date(now).toISOString() })
+  assert.equal((await api.checkIn()).status, 200)
+  assert.equal(api.writes.length, 0); assert.equal(api.queue.length, 1)
 })
 
 test("cancelled, checked-out and unknown terminal statuses cannot be checked in through direct POST", async () => {

@@ -6,18 +6,23 @@ import ts from "typescript"
 import * as crypto from "node:crypto"
 import * as firebaseTransaction from "../lib/firebase-transaction.ts"
 
-function load(file: string, dependencies: Record<string, unknown>, env = {}) {
+function load(file: string, dependencies: Record<string, unknown>, env = {}, clock = Date) {
   const exports: Record<string, any> = {}
   const source = ts.transpileModule(readFileSync(new URL(file, import.meta.url), "utf8"), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText
   vm.runInNewContext(source, { exports, require(name: string) {
     assert.ok(name in dependencies, `Unexpected dependency ${name}`); return dependencies[name]
-  }, process: { env }, console: { log() {}, error() {} }, Date, URL, Buffer })
+  }, process: { env }, console: { log() {}, error() {} }, Date: clock, URL, Buffer })
   return exports
 }
 
 function harness() {
+  let now = Date.now()
+  const clock = new Proxy(Date, {
+    construct: (target, args) => Reflect.construct(target, args.length ? args : [now]),
+    get: (target, key) => key === "now" ? () => now : Reflect.get(target, key),
+  })
   const records = new Map<string, any>()
   const listeners = new Map<string, Set<unknown>>()
   const clone = (value: any) => value ? structuredClone(value) : null
@@ -53,7 +58,7 @@ function harness() {
   const { completeReservationCheckIn } = load("../lib/check-in-operation.ts", {
     crypto, "@/lib/firebase-admin": { getDB: () => database },
     "@/lib/firebase-transaction": firebaseTransaction,
-  })
+  }, {}, clock)
   const base = { property: "property3", reservationId: "test-reservation", roomNumber: "B121",
     guestName: "Test", checkInDate: "26.09.09/15:00", password: "fake-password", floor: "1",
     writeCheckIn: async (time: string) => {
@@ -66,6 +71,7 @@ function harness() {
     run: (extra = {}) => completeReservationCheckIn({ ...base, currentStatus: rowStatus, currentCheckInTime: rowTime, ...extra }),
     setWriteMode: (value: string) => { writeMode = value },
     setCommitMode: (value: string) => { commitMode = value },
+    advance: (ms: number) => { now += ms },
     holdWrite: (value: Promise<void>) => { hold = value },
     get sheetWrites() { return sheetWrites }, get commits() { return commits },
     get listenerCount() { return [...listeners.values()].reduce((sum, set) => sum + set.size, 0) },
@@ -105,11 +111,77 @@ test("lost Sheets response recovers only from exact freshly read status/time, wi
   assert.equal(h.sheetWrites, 1); assert.equal(h.commits, 1)
 })
 
-test("uncertain Sheets write absent from read stays pending and never writes again", async () => {
+test("a failed write with fresh empty status/time retries the same timestamp after its lease", async () => {
   const h = harness(); h.setWriteMode("before")
   assert.equal((await h.run()).pending, true)
+  const original = structuredClone([...h.records.values()][0])
   assert.equal((await h.run()).pending, true)
   assert.equal(h.sheetWrites, 1); assert.equal(h.commits, 0)
+  h.advance(59999); h.setWriteMode("ok")
+  assert.equal((await h.run()).pending, true)
+  assert.equal(h.sheetWrites, 1)
+  h.advance(2)
+  const result = await h.run()
+  assert.equal(result.success, true)
+  assert.equal(result.data.checkInTime, original.data.checkInTime)
+  assert.equal(h.sheetWrites, 2); assert.equal(h.commits, 1); assert.equal(h.queues().length, 1)
+  h.records.delete(h.queues()[0])
+  assert.equal((await h.run()).success, true)
+  assert.equal(h.sheetWrites, 2); assert.equal(h.commits, 1); assert.equal(h.queues().length, 0)
+})
+
+test("legacy saving records with empty Sheets fields recover without deleting their identity", async () => {
+  const h = harness(); h.setWriteMode("before")
+  await h.run()
+  const [key, record] = [...h.records.entries()][0]
+  delete record.writeAttemptAt
+  delete record.writeAttemptId
+  delete record.lastWriteError
+  const originalData = structuredClone(record.data)
+  h.advance(60001); h.setWriteMode("ok")
+  assert.equal((await h.run()).success, true)
+  assert.deepEqual(h.records.get(key).data, originalData)
+  assert.equal(h.sheetWrites, 2); assert.equal(h.commits, 1)
+})
+
+test("simultaneous recovery attempts share one write lease and one room command", async () => {
+  const h = harness(); h.setWriteMode("before")
+  await h.run(); h.advance(60001); h.setWriteMode("ok")
+  let release!: () => void
+  h.holdWrite(new Promise<void>(r => { release = r }))
+  const first = h.run()
+  await new Promise(r => setImmediate(r))
+  assert.equal((await h.run()).pending, true)
+  release()
+  assert.equal((await first).success, true)
+  assert.equal(h.sheetWrites, 2); assert.equal(h.commits, 1)
+})
+
+test("recovery never overwrites partial, canceled, or different recorded check-ins", async () => {
+  for (const input of [
+    { currentStatus: "Checked In", currentCheckInTime: "" },
+    { currentStatus: "", currentCheckInTime: "other-time" },
+    { currentStatus: "Checked In", currentCheckInTime: "other-time" },
+    { currentStatus: "Canceled", currentCheckInTime: "" },
+  ]) {
+    const h = harness(); h.setWriteMode("before")
+    await h.run(); h.advance(60001); h.setWriteMode("ok")
+    assert.equal((await h.run(input)).pending, true)
+    assert.equal(h.sheetWrites, 1); assert.equal(h.commits, 0)
+  }
+})
+
+test("write failures report a sanitized actionable reason instead of an endless generic pending message", async () => {
+  const h = harness()
+  const result = await h.run({ writeCheckIn: async () => {
+    throw Object.assign(new Error("private credential detail https://private.invalid/token"), { response: { status: 403 } })
+  } })
+  assert.equal(result.pending, true)
+  assert.match(result.error, /권한/)
+  assert.doesNotMatch(result.error, /private|credential|https/)
+  assert.equal(h.commits, 0)
+  const again = await h.run()
+  assert.match(again.error, /권한/)
 })
 
 test("a new guest completes without changing or replaying an earlier pending guest", async () => {

@@ -63,12 +63,29 @@ export async function POST(request: NextRequest) {
       property: scope.property, reservationId, roomNumber, checkInDate,
       guestName: field(SHEET_COLUMNS.GUEST_NAME), password: field(SHEET_COLUMNS.PASSWORD), floor: field(SHEET_COLUMNS.FLOOR),
       currentStatus: status, currentCheckInTime: field(SHEET_COLUMNS.CHECK_IN_TIME),
-      writeCheckIn: (checkInTime) => sheets.spreadsheets.values.batchUpdate({
-        spreadsheetId, requestBody: { valueInputOption: "RAW", data: [
-          { range: `Reservations!L${index + 2}`, values: [["Checked In"]] },
-          { range: `Reservations!M${index + 2}`, values: [[checkInTime]] },
-        ] },
-      }, { timeout: 15000, retry: false }),
+      writeCheckIn: async (checkInTime) => {
+        // Revalidate the target row immediately before an initial or retried
+        // cell assignment. A moved row or a manual change is not ours to edit.
+        const fresh = await sheets.spreadsheets.values.get({
+          spreadsheetId, range: `Reservations!A${index + 2}:N${index + 2}`,
+        }, { timeout: 15000, retry: false })
+        const current = fresh.data.values?.[0] || []
+        const changed = () => Object.assign(new Error("Reservation row changed before saving"), { code: "CHECK_IN_ROW_CHANGED" })
+        for (const column of [SHEET_COLUMNS.PLACE, SHEET_COLUMNS.GUEST_NAME, SHEET_COLUMNS.RESERVATION_ID,
+          SHEET_COLUMNS.ROOM_NUMBER, SHEET_COLUMNS.CHECK_IN_DATE, SHEET_COLUMNS.CHECK_OUT_DATE]) {
+          if (String(current[column] || "") !== field(column)) throw changed()
+        }
+        const currentStatus = String(current[SHEET_COLUMNS.CHECK_IN_STATUS] || "").trim()
+        const currentTime = String(current[SHEET_COLUMNS.CHECK_IN_TIME] || "")
+        if (/^checked\s*in$/i.test(currentStatus) && currentTime === checkInTime) return
+        if (currentStatus || currentTime.trim()) throw changed()
+        await sheets.spreadsheets.values.batchUpdate({
+          spreadsheetId, requestBody: { valueInputOption: "RAW", data: [
+            { range: `Reservations!L${index + 2}`, values: [["Checked In"]] },
+            { range: `Reservations!M${index + 2}`, values: [[checkInTime]] },
+          ] },
+        }, { timeout: 15000, retry: false })
+      },
     })
     return NextResponse.json(result, { status: result.success ? 200 : "pending" in result && result.pending ? 202 : 409 })
   } catch (error) {

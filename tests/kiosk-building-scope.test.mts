@@ -46,7 +46,10 @@ function harness(building: string | undefined = "A", property = "property3") {
   const rows = [reservation("A131"), reservation("B121"), reservation("D211"), reservation("")]
   const rooms = [room("A131"), room("B121"), room("D211")]
   const values = {
-    get: async () => ({ data: { values: rows } }),
+    get: async (request: { range: string }) => {
+      const singleRow = /^Reservations!A(\d+):N\1$/.exec(request.range)
+      return { data: { values: structuredClone(singleRow ? rows.slice(Number(singleRow[1]) - 2, Number(singleRow[1]) - 1) : rows) } }
+    },
     batchUpdate: async () => { effects.push("check-in") },
     append: async () => { effects.push("booking") },
   }
