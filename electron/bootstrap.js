@@ -23,11 +23,13 @@ if (!app.isPackaged) {
     app.setLoginItemSettings({ openAtLogin: true, path: app.getPath("exe") })
     let heartbeat = { safe: false, at: 0, lastActivity: Date.now() }, locked = false, renderer = null, ack = null
     let activeOperations = 0, lastOperation = Date.now()
+    global.kioskActiveOperations = () => activeOperations
     const originalHandle = ipcMain.handle.bind(ipcMain)
     // Existing printer/payment IPC must drain before installation. Block new
     // hardware calls after the renderer has entered maintenance mode.
     ipcMain.handle = (channel, listener) => originalHandle(channel, async (event, ...args) => {
       if (locked) throw new Error("프로그램 업데이트 중입니다.")
+      if (global.kioskPaymentRecoveryActive) throw new Error("관리자 결제 복구 중입니다.")
       activeOperations++
       lastOperation = Date.now()
       try { return await listener(event, ...args) }

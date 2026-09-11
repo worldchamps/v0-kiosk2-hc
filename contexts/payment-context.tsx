@@ -39,6 +39,7 @@ interface PaymentContextType {
   setCardInFlight: (busy: boolean) => boolean
   requireRecovery: (message: string, evidence?: PaymentSession["recoveryEvidence"]) => void
   savePendingBooking: (booking: PendingBooking) => boolean
+  resolveRecovery: (password: string, resolution: "zero_cash" | "operator_resolved", note: string) => Promise<{ success: boolean; error?: string }>
 }
 
 const PaymentContext = createContext<PaymentContextType | undefined>(undefined)
@@ -52,6 +53,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
   const current = useRef(paymentSession)
   const [ready, setReady] = useState(false)
   const [storageError, setStorageError] = useState("")
+  const recoveryBusy = useRef(false)
 
   useEffect(() => {
     try {
@@ -135,8 +137,34 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
   }, [save])
   const isPaymentComplete = useCallback(() => paymentSession.isActive && paymentSession.acceptedAmount >= paymentSession.requiredAmount, [paymentSession])
 
+  const resolveRecovery = useCallback(async (password: string, resolution: "zero_cash" | "operator_resolved", note: string) => {
+    if (recoveryBusy.current) return { success: false, error: "복구 기록을 보관하고 있습니다." }
+    recoveryBusy.current = true
+    try {
+      const api = window.electronAPI?.paymentRecovery
+      if (!api) return { success: false, error: "관리자 복구를 지원하는 설치형 키오스크에서 실행해주세요." }
+      const expectedRaw = window.localStorage.getItem(STORAGE_KEY)
+      const expectedSession = JSON.stringify(current.current)
+      const result = await api.archive({ password, expectedRaw, memorySnapshot: expectedSession, resolution, note, confirmed: true })
+      if (!result.success || !result.archiveId) return { success: false, error: result.error || "복구 기록 보관을 확인하지 못했습니다." }
+      if (window.localStorage.getItem(STORAGE_KEY) !== expectedRaw || JSON.stringify(current.current) !== expectedSession) {
+        return { success: false, error: "결제 기록이 변경되어 잠금을 유지합니다. 다시 확인해주세요." }
+      }
+      // Do not call save(initialSession) here: its failure path could replace a
+      // malformed original record. A failed removal must preserve it verbatim.
+      window.localStorage.removeItem(STORAGE_KEY)
+      if (window.localStorage.getItem(STORAGE_KEY) !== null) throw new Error("Removal not confirmed")
+      current.current = { ...initialSession }
+      setPaymentSession(current.current)
+      setStorageError("")
+      return { success: true }
+    } catch {
+      return { success: false, error: "잠금 해제를 확인하지 못했습니다. 보관 기록은 유지됩니다. 다시 확인해주세요." }
+    } finally { recoveryBusy.current = false }
+  }, [])
+
   return <PaymentContext.Provider value={{ paymentSession, ready, storageError, startPayment, addBill, recordCashReturned,
-    completePayment, cancelPayment, isPaymentComplete, setCardInFlight, requireRecovery, savePendingBooking }}>
+    completePayment, cancelPayment, isPaymentComplete, setCardInFlight, requireRecovery, savePendingBooking, resolveRecovery }}>
     {children}
   </PaymentContext.Provider>
 }

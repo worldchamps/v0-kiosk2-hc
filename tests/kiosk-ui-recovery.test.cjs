@@ -19,7 +19,8 @@ function load(file, extra = {}, globals = {}) {
     useEffect(fn) { renderEffects.push(fn); if (first) effects.push(fn); }, useCallback: fn => { callbacks.push(fn); return fn; },
     createContext: () => ({ Provider: 'Provider' }), useContext: () => undefined,
   };
-  const deps = { react, 'react/jsx-runtime': { jsx: element, jsxs: element }, 'lucide-react': {}, ...extra };
+  const deps = { react, 'react/jsx-runtime': { jsx: element, jsxs: element }, 'lucide-react': {},
+    '@/components/payment-recovery-panel': { default: 'PaymentRecoveryPanel' }, ...extra };
   for (const name of ['button', 'card', 'input', 'label', 'alert']) deps['@/components/ui/' + name] ||= {
     Button: 'button', Card: 'div', CardContent: 'div', CardHeader: 'div', CardTitle: 'h2', Input: 'input', Label: 'label', Alert: 'div', AlertDescription: 'p',
   };
@@ -42,9 +43,9 @@ function storage(seed) {
   return { map, break() { broken = true; }, getItem: k => map.get(k) || null,
     setItem(k, v) { if (broken) throw new Error('disk full'); map.set(k, v); }, removeItem(k) { if (broken) throw new Error('disk full'); map.delete(k); } };
 }
-async function paymentContext(saved) {
+async function paymentContext(saved, electronAPI) {
   const localStorage = storage(saved ? { 'kiosk-payment-recovery-v1': saved } : {});
-  const h = load('contexts/payment-context.tsx', {}, { window: { localStorage } });
+  const h = load('contexts/payment-context.tsx', {}, { window: { localStorage, electronAPI } });
   const render = () => h.render({ children: null }, 'PaymentProvider').props.value;
   render(); for (const effect of h.effects) await effect();
   return { localStorage, render, get value() { return render(); } };
@@ -68,6 +69,49 @@ test('restart preserves cash and pending body, requires recovery, and malformed 
 test('storage failure when clearing a session preserves its cash evidence and prevents completion', async () => {
   const h = await paymentContext(); h.value.startPayment(30000, {}, 'cash'); h.value.addBill(10000); h.localStorage.break();
   assert.equal(h.value.completePayment(), false); assert.equal(h.value.paymentSession.acceptedAmount, 10000); assert(h.value.storageError);
+});
+
+test('admin recovery archives the exact raw snapshot before clearing only its journal', async () => {
+  const raw = JSON.stringify({ isActive: true, method: 'cash', acceptedAmount: 0, acceptedBills: [], requiredAmount: 30000,
+    sessionStartTime: 123, recoveryRequired: 'Synthetic stop failure' });
+  let seen;
+  const h = await paymentContext(raw, { paymentRecovery: { archive: async input => {
+    seen = input; assert.equal(h.localStorage.getItem('kiosk-payment-recovery-v1'), raw);
+    return { success: true, archiveId: 'synthetic-archive' };
+  } } });
+  h.localStorage.setItem('unrelated-setting', 'keep');
+  assert.equal((await h.value.resolveRecovery('operator-test', 'zero_cash', '현금 미투입 취소')).success, true);
+  assert.equal(seen.expectedRaw, raw); assert.equal(h.value.paymentSession.isActive, false);
+  assert.equal(h.localStorage.getItem('kiosk-payment-recovery-v1'), null);
+  assert.equal(h.localStorage.getItem('unrelated-setting'), 'keep');
+});
+
+for (const scenario of ['archive-failure', 'lost-response', 'changed-record', 'remove-failure']) {
+  test(`admin recovery ${scenario} never clears unresolved evidence`, async () => {
+    const raw = JSON.stringify({ isActive: true, acceptedAmount: 10000, acceptedBills: [10000], requiredAmount: 30000 });
+    const h = await paymentContext(raw, { paymentRecovery: { archive: async () => {
+      if (scenario === 'archive-failure') return { success: false, error: 'Storage failed' };
+      if (scenario === 'lost-response') throw Error('IPC lost');
+      if (scenario === 'changed-record') h.localStorage.setItem('kiosk-payment-recovery-v1', raw + ' ');
+      if (scenario === 'remove-failure') h.localStorage.break();
+      return { success: true, archiveId: 'synthetic-archive' };
+    } } });
+    assert.equal((await h.value.resolveRecovery('operator-test', 'operator_resolved', '관리자 정산 완료')).success, false);
+    assert.equal(h.localStorage.getItem('kiosk-payment-recovery-v1'), scenario === 'changed-record' ? raw + ' ' : raw);
+    assert.equal(h.value.paymentSession.acceptedAmount, 10000);
+  });
+}
+
+test('admin recovery duplicate clicks share one archive and corrupted evidence remains verbatim until success', async () => {
+  let release, calls = 0;
+  const raw = '{malformed-evidence';
+  const h = await paymentContext(raw, { paymentRecovery: { archive: () => { calls++; return new Promise(resolve => { release = resolve; }); } } });
+  const first = h.value.resolveRecovery('operator-test', 'operator_resolved', '관리자 정산 완료');
+  assert.equal((await h.value.resolveRecovery('operator-test', 'operator_resolved', '관리자 정산 완료')).success, false);
+  assert.equal(calls, 1); assert.equal(h.localStorage.getItem('kiosk-payment-recovery-v1'), raw);
+  release({ success: true, archiveId: 'synthetic-archive' });
+  assert.equal((await first).success, true); assert.equal(h.value.storageError, '');
+  assert.equal(h.value.paymentSession.isActive, false);
 });
 test('mismatched approval evidence survives restart and cannot be cleared by navigation cancellation', async () => {
   const h = await paymentContext(); h.value.startPayment(30000, {}, 'card'); h.value.setCardInFlight(true);

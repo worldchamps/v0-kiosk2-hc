@@ -9,6 +9,7 @@ let ws = null
 let reconnectTimer = null
 let onMessageCallback = null
 let onStatusCallback = null
+const messageListeners = new Set()
 
 function connect() {
     if (ws && (ws.readyState === 0 || ws.readyState === 1)) return
@@ -31,6 +32,7 @@ function connect() {
         ws.on('message', (data) => {
             try {
                 const message = JSON.parse(data.toString())
+                for (const listener of messageListeners) listener(message)
                 if (onMessageCallback) onMessageCallback(message)
             } catch (e) {
                 console.error("[HARDWARE_BRIDGE] Error parsing message:", e)
@@ -70,6 +72,7 @@ module.exports = {
     connect,
     send,
     onMessage: (cb) => { onMessageCallback = cb },
+    subscribeMessage: (cb) => { messageListeners.add(cb); return () => messageListeners.delete(cb) },
     onStatus: (cb) => { onStatusCallback = cb },
     get isConnected() { return ws && ws.readyState === 1 },
     retryConnection: () => {

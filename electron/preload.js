@@ -40,6 +40,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // 환경 설정
   getPropertyId: () => ipcRenderer.invoke("get-property-id"),
   getOverlayMode: () => ipcRenderer.invoke("get-overlay-mode"),
+  paymentRecovery: {
+    authorize: password => ipcRenderer.invoke("payment-recovery:authorize", password),
+    archive: input => ipcRenderer.invoke("payment-recovery:archive", input),
+  },
 
   // 토스 프론트 결제 단말기
   tossFront: {

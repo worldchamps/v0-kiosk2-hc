@@ -15,6 +15,7 @@ const overlayButtonModule = require("./overlay-button")
 const bixolonPrinter = require("./bixolon-printer")
 const hardwareBridge = require("./hardware-server-bridge")
 const tossFrontBridge = require("./toss-front-bridge")
+const { createPaymentRecovery } = require("./payment-recovery")
 const { buildSam4sPrintLines, findSam4sPrinter } = require("./sam4s-receipt")
 
 let mainWindow
@@ -27,6 +28,36 @@ let billAcceptorConnecting = false
 let billDispenserConnecting = false
 let hardwareServerProcess = null
 let nextServer = null
+let lastAcceptorCommand = 0
+
+const paymentRecovery = createPaymentRecovery({
+  app, safeStorage: require("electron").safeStorage,
+  isIdle: () => tossFrontBridge.pending.size === 0 && !global.kioskHttpActive &&
+    (global.kioskActiveOperations?.() || 1) === 1 && Date.now() - lastAcceptorCommand > 3500,
+  setBusy: value => { global.kioskPaymentRecoveryActive = value },
+  stopCash: () => new Promise(resolve => {
+    if (!hardwareBridge.isConnected) { resolve(false); return }
+    let timer, settled = false, unsubscribe = () => {}
+    const finish = result => { if (settled) return; settled = true; clearTimeout(timer); unsubscribe(); resolve(result) }
+    unsubscribe = hardwareBridge.subscribeMessage(message => {
+      if (message.type === "acceptor_ok" && Number.isInteger(message.data) && message.data >= 0 && message.data <= 255) finish(true)
+      else if (message.type === "acceptor_ng") finish(false)
+      else if (message.type === "acceptor_raw") {
+        const p = message.packet
+        if (Array.isArray(p) && p.length === 5 && p[0] === 0x24 && p[4] === ((p[1] + p[2] + p[3]) & 0xff)) {
+          if (p[1] === 0x4f && p[2] === 0x4b) finish(true)
+          else if (p[1] === 0x4e && p[2] === 0x47) finish(false)
+        }
+      }
+    })
+    timer = setTimeout(() => finish(false), 3000)
+    lastAcceptorCommand = Date.now()
+    try { if (!hardwareBridge.send({ type: "raw_acceptor", data: [0x24, 0x53, 0x43, 0x1c, 0xb2] })) finish(false) }
+    catch { finish(false) }
+  }),
+})
+ipcMain.handle("payment-recovery:authorize", (event, password) => paymentRecovery.authorize(event, password))
+ipcMain.handle("payment-recovery:archive", (event, input) => paymentRecovery.archive(event, input))
 
 tossFrontBridge.on("status", (status) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -88,6 +119,11 @@ async function startNextServer() {
     if (global.kioskMaintenance) {
       res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" })
       res.end("키오스크 프로그램을 업데이트하고 있습니다.")
+      return
+    }
+    if (global.kioskPaymentRecoveryActive && !["GET", "HEAD"].includes(req.method)) {
+      res.writeHead(503, { "Content-Type": "application/json; charset=utf-8" })
+      res.end(JSON.stringify({ error: "관리자 결제 복구 중입니다. 잠시 후 다시 확인해주세요." }))
       return
     }
     global.kioskHttpActive = (global.kioskHttpActive || 0) + 1
@@ -556,6 +592,7 @@ async function connectPrinter() {
 }
 
 ipcMain.handle("send-to-bill-acceptor", async (event, command) => {
+  lastAcceptorCommand = Date.now()
   const success = hardwareBridge.send({ type: "raw_acceptor", data: Array.from(command) })
   return { success }
 })

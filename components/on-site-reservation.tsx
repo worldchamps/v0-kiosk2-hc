@@ -25,6 +25,7 @@ import { getRoomImagePath } from "@/lib/room-utils"
 import { sortRoomTypes } from "@/lib/room-type-order"
 import { usePayment, type PendingBooking } from "@/contexts/payment-context"
 import PaymentScreen from "@/components/payment-screen"
+import PaymentRecoveryPanel from "@/components/payment-recovery-panel"
 import type { CompletedPayment } from "@/lib/payment-types"
 import CheckInComplete from "@/components/check-in-complete"
 import { KioskProgressScreen, ON_SITE_PROGRESS_STEPS } from "@/components/kiosk-progress"
@@ -391,6 +392,13 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
           {submitting ? "처리 결과 확인 중..." : "기존 결제 처리 결과 다시 확인"}
         </Button>}
       <p className="text-2xl">새 결제나 추가 현금 투입을 하지 마세요. 관리자 문의 010-5126-4644</p>
+      <PaymentRecoveryPanel disabled={submitting} onResolved={() => {
+        requestIdRef.current = ""
+        setBookingError(""); setGuestName(""); setPhoneNumber("")
+        setSelectedStay(null); setSelectedRoomType(""); setSelectedRoom(null); setReservationData(null)
+        setStep("stayType")
+        void fetchAvailableRooms(false)
+      }} />
     </div>
   }
 

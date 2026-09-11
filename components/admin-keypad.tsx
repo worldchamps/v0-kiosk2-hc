@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { X, ArrowLeft, Check, Printer, Banknote, DollarSign } from "lucide-react"
 import { autoConnectPrinter, isPrinterConnected } from "@/lib/printer-utils-unified"
@@ -10,12 +10,16 @@ import { connectBillDispenser, isBillDispenserConnected } from "@/lib/bill-dispe
 interface AdminKeypadProps {
   onClose: () => void
   onConfirm: (password: string) => void
-  adminPassword: string
+  adminPassword?: string
+  verifyPassword?: (password: string) => Promise<boolean>
+  showDevices?: boolean
 }
 
-export default function AdminKeypad({ onClose, onConfirm, adminPassword }: AdminKeypadProps) {
+export default function AdminKeypad({ onClose, onConfirm, adminPassword, verifyPassword, showDevices = true }: AdminKeypadProps) {
   const [input, setInput] = useState("")
   const [error, setError] = useState("")
+  const [verifying, setVerifying] = useState(false)
+  const verifyingRef = useRef(false)
 
   const [printerConnected, setPrinterConnected] = useState(false)
   const [acceptorConnected, setAcceptorConnected] = useState(false)
@@ -97,27 +101,34 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
   }
 
   const handleKeyPress = (key: string) => {
-    setInput((prev) => prev + key)
+    if (verifyingRef.current) return
+    setInput((prev) => (prev + key).slice(0, 128))
     setError("")
   }
 
   const handleBackspace = () => {
+    if (verifyingRef.current) return
     setInput((prev) => prev.slice(0, -1))
     setError("")
   }
 
-  const handleConfirm = () => {
-    if (input === adminPassword) {
-      onConfirm(input)
-    } else {
-      setError("비밀번호가 일치하지 않습니다.")
+  const handleConfirm = async () => {
+    if (verifyingRef.current || !input) return
+    verifyingRef.current = true
+    setVerifying(true)
+    try {
+      const valid = verifyPassword ? await verifyPassword(input) : Boolean(adminPassword && input === adminPassword)
+      if (valid) onConfirm(input)
+      else { setError("비밀번호가 일치하지 않습니다."); setInput("") }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "관리자 인증을 확인하지 못했습니다.")
       setInput("")
-    }
+    } finally { verifyingRef.current = false; setVerifying(false) }
   }
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose()
+      if (e.key === "Escape" && !verifyingRef.current) onClose()
     }
 
     window.addEventListener("keydown", handleKeyDown)
@@ -129,12 +140,12 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
       <div className="w-full max-w-2xl p-6 bg-white rounded-lg shadow-lg">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-2xl font-bold">관리자 인증</h2>
-          <Button variant="ghost" size="icon" onClick={onClose}>
+          <Button variant="ghost" size="icon" onClick={onClose} disabled={verifying} aria-label="관리자 인증 닫기">
             <X className="h-6 w-6" />
           </Button>
         </div>
 
-        <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+        {showDevices && <div className="mb-6 p-4 bg-gray-50 rounded-lg">
           <h3 className="text-lg font-semibold mb-3">디바이스 연결</h3>
           <div className="grid grid-cols-3 gap-3">
             <Button
@@ -187,12 +198,12 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
               </span>
             </Button>
           </div>
-        </div>
+        </div>}
 
         <div className="relative mb-6">
-          <div className="h-16 border-2 rounded-lg flex items-center px-4 bg-gray-50">
-            <div className="text-2xl font-mono tracking-widest">{input.replace(/./g, "•")}</div>
-          </div>
+          <input aria-label="관리자 비밀번호" type="password" autoComplete="off" maxLength={128}
+            className="h-16 w-full border-2 rounded-lg px-4 bg-gray-50 text-2xl" value={input} disabled={verifying}
+            onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === "Enter") void handleConfirm() }} />
           {error && <p className="text-red-500 mt-2">{error}</p>}
         </div>
 
@@ -217,9 +228,9 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword }: Admin
               <ArrowLeft className="h-5 w-5 mr-1" />
               지우기
             </Button>
-            <Button className="flex-1 h-12 bg-green-600 hover:bg-green-700" onClick={handleConfirm}>
+            <Button className="flex-1 h-12 bg-green-600 hover:bg-green-700" onClick={handleConfirm} disabled={verifying || !input}>
               <Check className="h-5 w-5 mr-1" />
-              확인
+              {verifying ? "확인 중..." : "확인"}
             </Button>
           </div>
         </div>
