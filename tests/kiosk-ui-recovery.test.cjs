@@ -10,13 +10,13 @@ const { randomUUID } = require('node:crypto');
 const text = n => n == null || typeof n === 'boolean' ? '' : Array.isArray(n) ? n.map(text).join(' ') : typeof n !== 'object' ? String(n) : text(n.props?.children);
 const nodes = n => !n || typeof n !== 'object' ? [] : Array.isArray(n) ? n.flatMap(nodes) : [n, ...nodes(n.props?.children)];
 function load(file, extra = {}, globals = {}) {
-  const values = [], effects = [], callbacks = []; let index = 0, first = true;
+  const values = [], effects = [], renderEffects = [], callbacks = []; let index = 0, first = true;
   const element = (type, props) => ({ type, props });
   const react = {
     useState(initial) { const i = index++; if (!(i in values)) values[i] = typeof initial === 'function' ? initial() : initial;
       return [values[i], v => values[i] = typeof v === 'function' ? v(values[i]) : v]; },
     useRef(initial) { const i = index++; if (!(i in values)) values[i] = { current: initial }; return values[i]; },
-    useEffect(fn) { if (first) effects.push(fn); }, useCallback: fn => { callbacks.push(fn); return fn; },
+    useEffect(fn) { renderEffects.push(fn); if (first) effects.push(fn); }, useCallback: fn => { callbacks.push(fn); return fn; },
     createContext: () => ({ Provider: 'Provider' }), useContext: () => undefined,
   };
   const deps = { react, 'react/jsx-runtime': { jsx: element, jsxs: element }, 'lucide-react': {}, ...extra };
@@ -30,8 +30,8 @@ function load(file, extra = {}, globals = {}) {
   vm.runInNewContext(compiled, { exports, require(name) { assert(name in deps, `Unexpected dependency ${name}`); return deps[name]; },
     console: { log() {}, warn() {}, error() {} }, Date, URL, URLSearchParams, AbortSignal, ...globals });
   let tree;
-  return { exports, effects, callbacks,
-    render(props = {}, name = 'default') { index = 0; callbacks.length = 0; tree = exports[name](props); first = false; return tree; },
+  return { exports, effects, renderEffects, callbacks,
+    render(props = {}, name = 'default') { index = 0; callbacks.length = 0; renderEffects.length = 0; tree = exports[name](props); first = false; return tree; },
     button(label) { const matches = nodes(tree).filter(n => n.type === 'button' && (n.props['aria-label'] || text(n).trim()) === label); assert.equal(matches.length, 1, `Button ${label}; actual ${text(tree)}`); return matches[0].props; },
     component(type) { return nodes(tree).find(n => n.type === type); },
     visible(value) { return text(tree).includes(value); },
@@ -77,8 +77,8 @@ test('mismatched approval evidence survives restart and cannot be cleared by nav
   assert.equal(JSON.stringify(restored.value.paymentSession.recoveryEvidence), JSON.stringify(evidence));
   assert.equal(await restored.value.cancelPayment(), false); assert.equal(restored.value.startPayment(30000), false);
 });
-function cashScreen(amount, dispenseResult) {
-  const calls = { dispense: [], cancelled: 0, complete: 0, recovery: '', returned: 0 };
+function cashScreen(amount, dispenseResult, acceptor = {}) {
+  const calls = { dispense: [], cancelled: 0, complete: 0, recovery: '', returned: 0, polling: 0 };
   const paymentSession = { isActive: true, acceptedAmount: amount, acceptedBills: amount ? [amount] : [], requiredAmount: 30000, overpaymentAmount: Math.max(0, amount - 30000) };
   const payment = { paymentSession, startPayment: () => true, addBill() {}, isPaymentComplete: () => amount >= 30000,
     cancelPayment: async () => { calls.cancelled++; return true; }, requireRecovery: message => calls.recovery = message,
@@ -86,10 +86,10 @@ function cashScreen(amount, dispenseResult) {
   const h = load('components/payment-screen.tsx', {
     '@/contexts/payment-context': { usePayment: () => payment }, '@/components/toss-front-card-payment': { default: 'Front' },
     '@/lib/bill-acceptor-utils': { initializeDevice: async () => true, setEventCallback() {}, setConfig: async () => true, isBillAcceptorConnected: () => true,
-      connectBillAcceptor: async () => true, enableAcceptance: async () => true, getBillData: async () => 0x32, getStatus: async () => 0x0b },
+      connectBillAcceptor: async () => true, enableAcceptance: async () => true, getBillData: async () => 0x32, getStatus: async () => 0x0b, ...acceptor },
     '@/lib/bill-dispenser-utils': { dispenseBills: async n => { calls.dispense.push(n); return dispenseResult; }, connectBillDispenser: async () => true, isBillDispenserConnected: () => true },
     '@/lib/printer-utils': { printReceipt() {} },
-  }, { window: {}, setTimeout: fn => { fn(); return 1; }, clearInterval() {}, setInterval() {} });
+  }, { window: {}, setTimeout: fn => { fn(); return 1; }, clearInterval() {}, setInterval() { calls.polling++; return 1; } });
   const props = { cardAmount: 30000, cashAmount: 30000, onCancel: () => calls.cancelled++, onPaymentComplete: () => calls.complete++ };
   const render = () => h.render(props);
   render(); h.button('현금 결제 30,000원').onClick(); render();
@@ -109,6 +109,65 @@ test('exact cash refund is verified before cancellation and records the returned
 test('zero cash before any acceptor enable attempt can cancel without a hardware refund', async () => {
   const h = cashScreen(0, false); await h.button('취소').onClick();
   assert.deepEqual(h.calls.dispense, []); assert.equal(h.calls.cancelled, 2); assert.equal(h.calls.recovery, '');
+});
+
+for (const action of ['취소', '결제수단 변경']) {
+  test(`zero-cash ${action} waits for the in-flight enable acknowledgement before stopping`, async () => {
+    let releaseEnable, enabling = false, stops = 0;
+    const h = cashScreen(0, false, {
+      enableAcceptance: () => { enabling = true; return new Promise(resolve => { releaseEnable = () => { enabling = false; resolve(true); }; }); },
+      // The real acceptor has one outstanding OK response slot. A stop sent
+      // while enable is pending is rejected locally, not a physical refund failure.
+      initializeDevice: async () => { stops++; return !enabling; },
+      setConfig: async () => { stops++; return !enabling; },
+    });
+    h.renderEffects.at(-1)(); // Start the actual cash initialization effect.
+    assert.equal(enabling, true);
+    const cancelling = h.button(action).onClick();
+    await Promise.resolve();
+    assert.equal(stops, 0, 'must drain enable before sending another OK-returning command');
+    releaseEnable(); await cancelling;
+    assert.equal(h.calls.recovery, ''); assert.deepEqual(h.calls.dispense, []);
+    assert.equal(h.calls.polling, 0, 'late enable must not restart cash polling during cancellation');
+    if (action === '취소') assert.equal(h.calls.cancelled, 2);
+    else { h.render(); assert(h.visible('결제 방법') || h.visible('현금 결제')); }
+  });
+}
+
+test('cancel during acceptor connection never enables cash acceptance after navigation', async () => {
+  let releaseConnection, enables = 0;
+  const h = cashScreen(0, false, {
+    isBillAcceptorConnected: () => false,
+    connectBillAcceptor: () => new Promise(resolve => { releaseConnection = resolve; }),
+    enableAcceptance: async () => { enables++; return true; },
+  });
+  h.renderEffects.at(-1)();
+  const cancelling = h.button('취소').onClick();
+  await Promise.resolve();
+  assert.equal(h.calls.cancelled, 0, 'navigation must wait for initialization to settle');
+  releaseConnection(true); await cancelling;
+  assert.equal(enables, 0); assert.equal(h.calls.polling, 0);
+  assert.equal(h.calls.cancelled, 2); assert.equal(h.calls.recovery, '');
+});
+
+test('confirmed zero-cash cancellation does not send a duplicate stop on unmount', async () => {
+  let stops = 0;
+  const h = cashScreen(0, false, { setConfig: async () => { stops++; return true; } });
+  const cleanup = h.renderEffects.at(-1)();
+  await Promise.resolve();
+  await h.button('취소').onClick();
+  const confirmedStops = stops;
+  cleanup(); await Promise.resolve();
+  assert.equal(stops, confirmedStops);
+  assert.equal(h.calls.cancelled, 2); assert.equal(h.calls.recovery, '');
+});
+
+test('zero-cash cancellation still blocks when acceptor shutdown is not confirmed', async () => {
+  const h = cashScreen(0, false, { initializeDevice: async () => false });
+  h.renderEffects.at(-1)(); await Promise.resolve();
+  await h.button('취소').onClick();
+  assert(h.calls.recovery); assert.equal(h.calls.cancelled, 0);
+  assert.deepEqual(h.calls.dispense, []);
 });
 for (const [amount, result] of [[35000, true], [50000, false]]) {
   test(`cash completion ${amount}/${result} cannot complete with unreturned change`, async () => {

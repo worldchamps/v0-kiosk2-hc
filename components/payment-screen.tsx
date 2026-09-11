@@ -47,6 +47,7 @@ export default function PaymentScreen({
   const [isCancelling, setIsCancelling] = useState(false)
   const cancellingRef = useRef(false)
   const acceptanceAttemptedRef = useRef(false)
+  const cashInitializationRef = useRef<Promise<void> | null>(null)
   const latestSession = useRef(paymentSession)
   latestSession.current = paymentSession
   const completionCallback = useRef(onPaymentComplete)
@@ -79,6 +80,7 @@ export default function PaymentScreen({
     try {
       setStatusMessage("결제를 마무리하고 있습니다...")
       if (!await initializeDevice() || !await setConfig(0x1c)) throw new Error("Acceptor shutdown not confirmed")
+      acceptanceAttemptedRef.current = false
     } catch (e) {
       console.error("[v0] Error initializing device during completion:", e)
       requireRecovery("지폐 투입구 종료를 확인하지 못했습니다. 관리자에게 문의해주세요.")
@@ -217,7 +219,7 @@ export default function PaymentScreen({
         if (!isBillAcceptorConnected()) {
           setStatusMessage("현금 결제를 준비하고 있습니다...")
           const connected = await connectBillAcceptor()
-          if (!isMounted) return
+          if (!isMounted || cancellingRef.current) return
 
           if (!connected) {
             setError("현금 결제를 준비하지 못했습니다. 문의전화로 연락해주세요.")
@@ -226,17 +228,21 @@ export default function PaymentScreen({
           }
         }
 
+        if (!isMounted || cancellingRef.current) return
         console.log("[v0] Bill acceptor connected")
         setStatusMessage("지폐 투입구를 준비하고 있습니다...")
         acceptanceAttemptedRef.current = true
         if (!await enableAcceptance()) throw new Error("Acceptor enable not confirmed")
+        // Cancellation drains this promise before stopping the acceptor. A late
+        // enable acknowledgement must not start polling or reopen this flow.
+        if (!isMounted || cancellingRef.current) return
         console.log("[v0] Bill acceptance enabled")
 
         setStatusMessage(largeBillsOnly ? "1만원권 또는 5만원권을 투입해주세요..." : "지폐를 투입해주세요...")
         setIsConnecting(false)
         setIsProcessing(true)
 
-        if (isMounted) {
+        if (isMounted && !cancellingRef.current) {
           console.log("[v0] Starting Polling Loop")
           pollingRef.current = setInterval(() => {
             if (!paymentCompleteRef.current) pollDeviceStatus()
@@ -252,7 +258,8 @@ export default function PaymentScreen({
       }
     }
 
-    initializePayment()
+    const initialization = initializePayment()
+    cashInitializationRef.current = initialization
 
     return () => {
       isMounted = false
@@ -261,7 +268,9 @@ export default function PaymentScreen({
         clearInterval(pollingRef.current)
         pollingRef.current = null
       }
-      setConfig(0x1c) // Disable on exit
+      // Explicit cancellation/completion already confirmed shutdown. On other
+      // exits, wait for enable to settle so the shared OK response cannot clash.
+      if (acceptanceAttemptedRef.current) void initialization.then(() => setConfig(0x1c))
     }
   }, [paymentMethod, pollDeviceStatus, largeBillsOnly])
 
@@ -280,6 +289,9 @@ export default function PaymentScreen({
     setStatusMessage("결제 취소 중...")
 
     try {
+      // Enable, reset and config share one acknowledgement slot. Do not send a
+      // stop while initialization owns it, even when no cash has been inserted.
+      await cashInitializationRef.current
       // No enable command and no cash means there is no physical operation to reverse.
       if (!acceptanceAttemptedRef.current && latestSession.current.acceptedAmount === 0) {
         if (await cancelPayment()) onCancel()
@@ -288,6 +300,7 @@ export default function PaymentScreen({
       setEventCallback(null)
       console.log("[v0] Initializing bill acceptor for cancellation...")
       if (!await initializeDevice() || !await setConfig(0x1c)) throw new Error("Acceptor shutdown not confirmed")
+      acceptanceAttemptedRef.current = false
 
       const acceptedAmount = latestSession.current.acceptedAmount
       if (acceptedAmount > 0) {
@@ -330,6 +343,7 @@ export default function PaymentScreen({
     cancellingRef.current = true
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null }
     try {
+      await cashInitializationRef.current
       if (acceptanceAttemptedRef.current && !await setConfig(0x1c)) {
         requireRecovery("지폐 투입구 종료를 확인하지 못했습니다. 추가 결제하지 말고 관리자에게 문의해주세요.")
         return
