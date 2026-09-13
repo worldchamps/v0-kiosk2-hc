@@ -7,6 +7,16 @@ class TossFrontBridge extends EventEmitter {
   constructor() {
     super()
     this.url = process.env.TOSS_FRONT_WS_URL?.trim() || ""
+    // Operators sometimes paste just the LAN IP shown on the Front screen.
+    if (/^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$/.test(this.url)) this.url = `ws://${this.url}`
+    try {
+      const address = new URL(this.url)
+      if (address.protocol === "ws:") {
+        if (!address.port) address.port = "9000"
+        if (address.pathname === "/") address.pathname = "/kiosk"
+        this.url = address.toString()
+      }
+    } catch { /* Configuration errors are surfaced as connection status, not startup crashes. */ }
     this.pairingKey = process.env.TOSS_FRONT_PAIRING_KEY?.trim() || ""
     this.transport = (process.env.TOSS_FRONT_TRANSPORT?.trim().toLowerCase() || "auto")
     this.serialPath = process.env.TOSS_FRONT_SERIAL_PATH?.trim() || ""
@@ -20,6 +30,10 @@ class TossFrontBridge extends EventEmitter {
     this.reconnectAttempts = 0
     this.pending = new Map()
     this.closed = false
+    this.lastError = undefined
+    this.authTimer = null
+    this.heartbeatTimer = null
+    this.pongTimer = null
   }
 
   get websocketConfigured() {
@@ -44,11 +58,33 @@ class TossFrontBridge extends EventEmitter {
       url: this.url,
       serialPath: this.serialPath,
       serialBaudRate: this.serialBaudRate,
+      error: this.lastError,
     }
   }
 
   emitStatus(error) {
-    this.emit("status", { ...this.status, error })
+    if (error) this.lastError = error
+    else if (this.authenticated) this.lastError = undefined
+    this.emit("status", this.status)
+  }
+
+  clearConnectionTimers() {
+    clearTimeout(this.authTimer)
+    clearInterval(this.heartbeatTimer)
+    clearTimeout(this.pongTimer)
+    this.authTimer = this.heartbeatTimer = this.pongTimer = null
+  }
+
+  authenticateConnection() {
+    clearTimeout(this.authTimer)
+    this.sendRaw({ type: "AUTH", pairingKey: this.pairingKey })
+    this.authTimer = setTimeout(() => {
+      this.authTimer = null
+      if (this.authenticated || this.closed) return
+      this.emitStatus("토스 프론트 인증 응답이 없습니다. 프론트 플러그인 실행 상태와 페어링 키를 확인해주세요.")
+      if (this.activeTransport === "websocket") this.ws?.terminate()
+      else this.reconnect()
+    }, 5000)
   }
 
   resolveTransportPreference() {
@@ -121,16 +157,33 @@ class TossFrontBridge extends EventEmitter {
 
   connectWebSocket() {
     try {
+      const address = new URL(this.url)
+      if (!["ws:", "wss:"].includes(address.protocol) || address.username || address.password) {
+        throw new Error("토스 프론트 주소는 ws://프론트-IP:9000/kiosk 형식으로 설정해주세요.")
+      }
       const socket = new WebSocket(this.url, { handshakeTimeout: 10000, maxPayload: 1024 * 1024 })
       this.ws = socket
       this.activeTransport = "websocket"
 
       socket.on("open", () => {
         if (this.ws !== socket) return
-        this.reconnectAttempts = 0
         this.authenticated = false
-        this.sendRaw({ type: "AUTH", pairingKey: this.pairingKey })
+        this.authenticateConnection()
+        // A disconnected LAN cable can leave TCP apparently open for minutes.
+        this.heartbeatTimer = setInterval(() => {
+          if (this.ws !== socket || this.pongTimer) return
+          this.pongTimer = setTimeout(() => {
+            this.pongTimer = null
+            if (this.ws === socket) { this.emitStatus("토스 프론트 네트워크 응답이 끊겨 다시 연결합니다."); socket.terminate() }
+          }, 5000)
+          socket.ping()
+        }, 10000)
         this.emitStatus()
+      })
+
+      socket.on("pong", () => {
+        if (this.ws !== socket) return
+        clearTimeout(this.pongTimer); this.pongTimer = null
       })
 
       socket.on("message", (raw) => {
@@ -139,6 +192,7 @@ class TossFrontBridge extends EventEmitter {
 
       socket.on("close", () => {
         if (this.ws !== socket) return
+        this.clearConnectionTimers()
         this.ws = null
         this.authenticated = false
         this.activeTransport = null
@@ -148,7 +202,11 @@ class TossFrontBridge extends EventEmitter {
       })
 
       socket.on("error", (error) => {
-        if (this.ws === socket) this.emitStatus(error.message)
+        if (this.ws === socket) this.emitStatus(error.code === "ECONNREFUSED"
+          ? "프론트 주소에서 연결을 거절했습니다. IP·9000 포트와 프론트 플러그인 실행 상태를 확인해주세요."
+          : error.code === "ETIMEDOUT" || error.code === "EHOSTUNREACH"
+            ? "프론트에 도달하지 못했습니다. IP 변경·공유기·게스트망 분리 여부를 확인해주세요."
+            : error.message)
       })
     } catch (error) {
       this.activeTransport = null
@@ -175,6 +233,7 @@ class TossFrontBridge extends EventEmitter {
 
       port.on("close", () => {
         if (this.serialPort !== port) return
+        this.clearConnectionTimers()
         this.serialPort = null
         this.serialBuffer = ""
         this.authenticated = false
@@ -199,9 +258,8 @@ class TossFrontBridge extends EventEmitter {
           return
         }
 
-        this.reconnectAttempts = 0
         this.authenticated = false
-        this.sendRaw({ type: "AUTH", pairingKey: this.pairingKey })
+        this.authenticateConnection()
         this.emitStatus()
       })
     } catch (error) {
@@ -212,6 +270,9 @@ class TossFrontBridge extends EventEmitter {
   }
 
   reconnect() {
+    // A connection button must never interrupt an approval already sent.
+    if (this.pending.size) { this.emitStatus("결제 응답을 확인하는 동안 재연결할 수 없습니다."); return }
+    this.clearConnectionTimers()
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
@@ -224,6 +285,7 @@ class TossFrontBridge extends EventEmitter {
     const previousSocket = this.ws
     this.ws = null
     previousSocket?.removeAllListeners()
+    previousSocket?.on("error", () => {})
     previousSocket?.close()
 
     const previousSerial = this.serialPort
@@ -249,7 +311,9 @@ class TossFrontBridge extends EventEmitter {
   }
 
   close() {
+    this.clearConnectionTimers()
     this.closed = true
+    this.authenticated = false
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     this.reconnectTimer = null
     this.rejectPending("토스 프론트 연결이 종료되었습니다.")
@@ -309,6 +373,14 @@ class TossFrontBridge extends EventEmitter {
 
   async requestPayment({ amount, paymentKey }) {
     if (!Number.isInteger(amount) || amount <= 0) throw new Error("결제 금액이 올바르지 않습니다.")
+    if (!this.authenticated) {
+      try { await this.waitForAuthentication(10000) }
+      catch (error) {
+        // No PAYMENT_REQUEST has been sent, so this failure cannot be approved.
+        error.code = "PAYMENT_NOT_APPROVED"
+        throw error
+      }
+    }
     const stablePaymentKey = paymentKey || `KIOSK-${Date.now()}-${randomUUID()}`
 
     try {
@@ -416,8 +488,11 @@ class TossFrontBridge extends EventEmitter {
     }
 
     if (message.type === "AUTH_RESULT") {
+      clearTimeout(this.authTimer); this.authTimer = null
       this.authenticated = message.success === true
+      if (this.authenticated) this.reconnectAttempts = 0
       this.emitStatus(this.authenticated ? undefined : "토스 프론트 페어링 키가 일치하지 않습니다.")
+      if (!this.authenticated && this.activeTransport === "websocket") this.ws?.terminate()
       return
     }
 

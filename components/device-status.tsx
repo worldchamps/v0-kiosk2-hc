@@ -6,7 +6,7 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { CheckCircle, XCircle, RefreshCw, Printer, Banknote, DollarSign } from "lucide-react"
+import { CheckCircle, XCircle, RefreshCw, Printer, Banknote, DollarSign, CreditCard } from "lucide-react"
 import { isBillAcceptorConnected } from "@/lib/bill-acceptor-utils"
 import { isBillDispenserConnected } from "@/lib/bill-dispenser-utils"
 import { autoConnectPrinter } from "@/lib/printer-utils-unified"
@@ -28,6 +28,12 @@ export default function DeviceStatus() {
 
     try {
       const statuses: DeviceStatus[] = []
+      const front = await window.electronAPI?.tossFront?.getStatus()
+      statuses.push({
+        name: "토스프론트", port: front?.transport === "serial" ? front.serialPath || "미설정" : front?.url || "주소 미설정",
+        connected: front?.authenticated === true, icon: <CreditCard className="h-5 w-5" />,
+        details: front?.error || (front?.authenticated ? "단말기 인증 완료" : front?.connected ? "네트워크 연결됨 · 단말기 인증 대기" : "단말기 주소·전원·프론트 플러그인을 확인하세요."),
+      })
 
       const transportConnected = await autoConnectPrinter()
       statuses.push({
