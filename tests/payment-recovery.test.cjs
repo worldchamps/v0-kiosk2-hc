@@ -6,6 +6,7 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 const vm = require('node:vm')
 const { createPaymentRecovery, STORAGE_KEY } = require('../electron/payment-recovery')
+const { incidentSignature, verifyIncident, incidentFromArchive, createCashIncidentDelivery } = require('../electron/cash-incidents')
 
 const existingPassword = fs.readFileSync(path.join(__dirname, '../components/kiosk-layout.tsx'), 'utf8')
   .match(/const adminPassword = "([^"]+)"/)[1]
@@ -64,6 +65,70 @@ test('zero cash is encrypted, fsynced and round-trip verified before unlock perm
   assert.deepEqual(await h.archive(), result)
   assert.equal(fs.readdirSync(path.dirname(file)).length, 1)
   assert(fs.readFileSync(file).equals(encrypted))
+})
+
+test('cash error archives without an administrator code and never calls booking, payout or refund', async () => {
+  const h = fixture({ ...base, acceptedAmount: 50000, acceptedBills: [50000], recoveryRequired: '거스름돈 반환 확인 필요' })
+  const result = await h.service.archive(h.event, { expectedRaw: h.original, memorySnapshot: h.original }, true)
+  assert.equal(result.success, true)
+  assert.equal(h.calls.stop, 1)
+  const record = JSON.parse(h.safeStorage.decryptString(fs.readFileSync(path.join(h.directory, 'payment-recovery-archive', result.archiveId + '.bin'))))
+  assert.equal(record.kind, 'cash-incident-awaiting-review')
+  assert.equal(record.financialCommandsSent, 0)
+  const incident = incidentFromArchive(record)
+  assert.equal(incident.receivedAmount, 50000)
+  assert.equal(incident.expectedChange, 20000)
+  assert.equal(incident.bookingCreated, false)
+  assert.equal(incident.refundConfirmed, false)
+  assert.equal(incident.status, 'needs_review')
+  assert.equal(h.raw(), h.original)
+})
+
+test('automatic cash recovery cannot clear card evidence, pending bookings, wrong frames or an unconfirmed inlet', async () => {
+  for (const extra of [{ method: 'card' }, { cardInFlight: true }, { pendingBooking: {} }, { recoveryEvidence: {} }]) {
+    const h = fixture({ ...base, ...extra })
+    assert.equal((await h.service.archive(h.event, { expectedRaw: h.original, memorySnapshot: h.original }, true)).success, false)
+  }
+  const h = fixture()
+  const input = { expectedRaw: h.original, memorySnapshot: h.original }
+  assert.equal((await h.service.archive({ ...h.event, senderFrame: { url: 'https://outside.invalid/' } }, input, true)).success, false)
+  h.setStop(false)
+  assert.equal((await h.service.archive(h.event, input, true)).success, false)
+  assert.equal(h.raw(), h.original)
+})
+
+test('cash incident survives offline delivery, retries the same ID and sends no raw guest data', async (t) => {
+  const h = fixture({ ...base, acceptedAmount: 50000, acceptedBills: [50000], reservationData: { roomNumber: 'D213', phoneNumber: 'private-phone', password: 'private-room-key' } })
+  const previous = process.env.FIREBASE_PRIVATE_KEY
+  process.env.FIREBASE_PRIVATE_KEY = 'synthetic-delivery-key'
+  t.after(() => { if (previous === undefined) delete process.env.FIREBASE_PRIVATE_KEY; else process.env.FIREBASE_PRIVATE_KEY = previous })
+  const saved = await h.service.archive(h.event, { expectedRaw: h.original, memorySnapshot: h.original }, true)
+  // A damaged older archive must remain available for review without blocking later records.
+  const damaged = path.join(h.directory, 'payment-recovery-archive', '0'.repeat(64) + '.bin')
+  fs.writeFileSync(damaged, 'unreadable encrypted record')
+  let offline = true
+  const calls = []
+  const deliver = createCashIncidentDelivery({ app: { getPath: () => h.directory }, safeStorage: h.safeStorage,
+    fetcher: async (url, options) => {
+      calls.push({ url, ...options })
+      if (offline) throw new Error('offline')
+      return { ok: true, json: async () => ({ success: true, id: JSON.parse(options.body).id }) }
+    } })
+  await deliver()
+  assert.equal(fs.existsSync(path.join(h.directory, 'payment-recovery-archive', saved.archiveId + '.bin.sent')), false)
+  offline = false
+  await deliver(); await deliver()
+  assert.equal(calls.length, 2)
+  assert.equal(fs.readFileSync(damaged, 'utf8'), 'unreadable encrypted record')
+  assert.equal(calls[0].body, calls[1].body)
+  assert(!calls[1].body.includes('private-phone')); assert(!calls[1].body.includes('private-room-key'))
+  const body = JSON.parse(calls[1].body), signature = calls[1].headers['x-kiosk-incident-signature']
+  assert.equal(signature, incidentSignature(body, process.env.FIREBASE_PRIVATE_KEY))
+  const scoped = { ...body, property: 'property1', building: 'D' }
+  const proof = incidentSignature(scoped, process.env.FIREBASE_PRIVATE_KEY)
+  assert(verifyIncident(scoped, proof, process.env.FIREBASE_PRIVATE_KEY, { property: 'property1' }))
+  assert(!verifyIncident({ ...scoped, receivedAmount: 0 }, proof, process.env.FIREBASE_PRIVATE_KEY, { property: 'property1' }))
+  assert(!verifyIncident(scoped, proof, process.env.FIREBASE_PRIVATE_KEY, { property: 'property3', building: 'A' }))
 })
 
 test('reviewed card-only failure does not require a cash device or send financial commands', async () => {
@@ -150,7 +215,8 @@ function nativeWiring() {
   const hardwareBridge = { isConnected: true, subscribeMessage: fn => { listener = fn; return () => { cleanups++; listener = null } },
     send: value => { sends.push(JSON.parse(JSON.stringify(value))); return true } }
   const tossFrontBridge = { pending: new Map() }
-  vm.runInNewContext(snippet, { app: {}, require: () => ({ safeStorage: {} }), createPaymentRecovery: options => { captured = options; return {} },
+  vm.runInNewContext(snippet, { app: { whenReady: () => ({ then() {} }) }, require: () => ({ safeStorage: {} }),
+    createCashIncidentDelivery: () => async () => {}, createPaymentRecovery: options => { captured = options; return {} },
     hardwareBridge, tossFrontBridge, global: state, ipcMain: { handle() {} }, Date: { now: () => clock },
     setTimeout: fn => { timeout = fn; return 1 }, clearTimeout: () => { timeout = null } })
   return { get options() { return captured }, hardwareBridge, tossFrontBridge, state, sends,

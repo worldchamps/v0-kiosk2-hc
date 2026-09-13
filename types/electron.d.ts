@@ -32,6 +32,7 @@ export interface ElectronAPI {
   getPropertyId: () => Promise<string>
   getOverlayMode: () => Promise<boolean>
   paymentRecovery: {
+    reportCash: (input: { expectedRaw: string | null; memorySnapshot: string }) => Promise<{ success: boolean; archiveId?: string; error?: string }>
     authorize: (password: string) => Promise<{ success: boolean; error?: string }>
     archive: (input: { password: string; expectedRaw: string | null; memorySnapshot: string; confirmed: boolean; resolution: "zero_cash" | "operator_resolved"; note: string }) =>
       Promise<{ success: boolean; archiveId?: string; error?: string }>

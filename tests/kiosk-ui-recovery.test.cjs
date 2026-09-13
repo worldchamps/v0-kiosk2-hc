@@ -50,6 +50,40 @@ async function paymentContext(saved, electronAPI) {
   render(); for (const effect of h.effects) await effect();
   return { localStorage, render, get value() { return render(); } };
 }
+test('cash auto recovery clears only the archived session without asking for an administrator code', async () => {
+  let request;
+  const saved = JSON.stringify({ isActive: true, method: 'cash', acceptedAmount: 50000, requiredAmount: 30000,
+    acceptedBills: [50000], sessionStartTime: 1789147000000, recoveryRequired: '잔돈 반환 확인 필요' });
+  const h = await paymentContext(saved, { paymentRecovery: { reportCash: async input => { request = input; return { success: true, archiveId: 'saved-test' }; } } });
+  h.localStorage.map.set('device-settings', 'keep');
+  assert.equal((await h.value.reportCashRecovery()).success, true);
+  assert.equal(request.password, undefined);
+  assert.equal(request.expectedRaw, saved);
+  assert.equal(h.value.paymentSession.isActive, false);
+  assert.equal(h.localStorage.getItem('device-settings'), 'keep');
+});
+test('cash auto recovery keeps original evidence if native archival fails', async () => {
+  const saved = JSON.stringify({ isActive: true, method: 'cash', acceptedAmount: 50000, requiredAmount: 30000,
+    acceptedBills: [50000], sessionStartTime: 1789147000000, recoveryRequired: '잔돈 반환 확인 필요' });
+  const h = await paymentContext(saved, { paymentRecovery: { reportCash: async () => ({ success: false, error: 'disk unavailable' }) } });
+  assert.equal((await h.value.reportCashRecovery()).success, false);
+  assert.equal(h.localStorage.getItem('kiosk-payment-recovery-v1'), saved);
+  assert.equal(h.value.paymentSession.acceptedAmount, 50000);
+});
+test('cash recovery panel automatically records and returns home without completing a booking', async () => {
+  let timer, records = 0, returned = 0;
+  const h = load('components/payment-recovery-panel.tsx', {
+    '@/components/admin-keypad': { default: 'AdminKeypad' },
+    '@/contexts/payment-context': { usePayment: () => ({ paymentSession: { isActive: true, method: 'cash',
+      acceptedAmount: 50000, acceptedBills: [50000], recoveryRequired: '잔돈 반환 확인 필요' },
+      storageError: '', reportCashRecovery: async () => { records++; return { success: true }; } }) },
+  }, { setTimeout(fn) { timer = fn; return 1; }, clearTimeout() {} });
+  h.render({ onResolved: () => returned++ });
+  assert(h.visible('입실을 중단')); assert(!h.component('AdminKeypad')); assert(!h.visible('관리자 복구'));
+  for (const effect of h.effects) effect();
+  timer(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(records, 1); assert.equal(returned, 1);
+});
 test('payment session persists cash and refuses navigation cancellation or another sale before full refund', async () => {
   const h = await paymentContext(); assert(h.value.startPayment(30000, {}, 'cash'));
   h.value.addBill(10000); assert.equal(await h.value.cancelPayment(), false);

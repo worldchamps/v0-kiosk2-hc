@@ -22,6 +22,7 @@ export interface PaymentSession {
   method?: "cash" | "card"
   cardInFlight?: boolean
   recoveryRequired?: string
+  cashAutoReturn?: boolean
   recoveryEvidence?: { expectedAmount: number; payment: CompletedPayment }
   pendingBooking?: PendingBooking
 }
@@ -40,6 +41,7 @@ interface PaymentContextType {
   requireRecovery: (message: string, evidence?: PaymentSession["recoveryEvidence"]) => void
   savePendingBooking: (booking: PendingBooking) => boolean
   resolveRecovery: (password: string, resolution: "zero_cash" | "operator_resolved", note: string) => Promise<{ success: boolean; error?: string }>
+  reportCashRecovery: () => Promise<{ success: boolean; error?: string }>
 }
 
 const PaymentContext = createContext<PaymentContextType | undefined>(undefined)
@@ -70,6 +72,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
         if (value.pendingBooking && JSON.parse(value.pendingBooking.body)?.requestId !== value.pendingBooking.requestId) throw new Error("Invalid pending request")
         if (value.isActive) {
           // A restart cannot establish whether a physical payment finished.
+          value.cashAutoReturn = value.cashAutoReturn !== false && Boolean(value.recoveryRequired)
           value.recoveryRequired ||= "이전 결제 확인이 필요합니다. 관리자에게 문의해주세요."
           current.current = value
           setPaymentSession(value)
@@ -137,7 +140,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
   }, [save])
   const isPaymentComplete = useCallback(() => paymentSession.isActive && paymentSession.acceptedAmount >= paymentSession.requiredAmount, [paymentSession])
 
-  const resolveRecovery = useCallback(async (password: string, resolution: "zero_cash" | "operator_resolved", note: string) => {
+  const finishRecovery = useCallback(async (password?: string, resolution?: "zero_cash" | "operator_resolved", note?: string) => {
     if (recoveryBusy.current) return { success: false, error: "복구 기록을 보관하고 있습니다." }
     recoveryBusy.current = true
     try {
@@ -145,7 +148,9 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
       if (!api) return { success: false, error: "관리자 복구를 지원하는 설치형 키오스크에서 실행해주세요." }
       const expectedRaw = window.localStorage.getItem(STORAGE_KEY)
       const expectedSession = JSON.stringify(current.current)
-      const result = await api.archive({ password, expectedRaw, memorySnapshot: expectedSession, resolution, note, confirmed: true })
+      const result = password === undefined
+        ? await api.reportCash({ expectedRaw, memorySnapshot: expectedSession })
+        : await api.archive({ password, expectedRaw, memorySnapshot: expectedSession, resolution: resolution!, note: note!, confirmed: true })
       if (!result.success || !result.archiveId) return { success: false, error: result.error || "복구 기록 보관을 확인하지 못했습니다." }
       if (window.localStorage.getItem(STORAGE_KEY) !== expectedRaw || JSON.stringify(current.current) !== expectedSession) {
         return { success: false, error: "결제 기록이 변경되어 잠금을 유지합니다. 다시 확인해주세요." }
@@ -162,9 +167,12 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
       return { success: false, error: "잠금 해제를 확인하지 못했습니다. 보관 기록은 유지됩니다. 다시 확인해주세요." }
     } finally { recoveryBusy.current = false }
   }, [])
+  const resolveRecovery = useCallback((password: string, resolution: "zero_cash" | "operator_resolved", note: string) =>
+    finishRecovery(password, resolution, note), [finishRecovery])
+  const reportCashRecovery = useCallback(() => finishRecovery(), [finishRecovery])
 
   return <PaymentContext.Provider value={{ paymentSession, ready, storageError, startPayment, addBill, recordCashReturned,
-    completePayment, cancelPayment, isPaymentComplete, setCardInFlight, requireRecovery, savePendingBooking, resolveRecovery }}>
+    completePayment, cancelPayment, isPaymentComplete, setCardInFlight, requireRecovery, savePendingBooking, resolveRecovery, reportCashRecovery }}>
     {children}
   </PaymentContext.Provider>
 }

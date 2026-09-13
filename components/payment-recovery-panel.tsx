@@ -1,12 +1,12 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import AdminKeypad from "@/components/admin-keypad"
 import { usePayment } from "@/contexts/payment-context"
 
 export default function PaymentRecoveryPanel({ disabled = false, onResolved }: { disabled?: boolean; onResolved: () => void }) {
-  const { paymentSession: session, storageError, resolveRecovery } = usePayment()
+  const { paymentSession: session, storageError, resolveRecovery, reportCashRecovery } = usePayment()
   const [open, setOpen] = useState(false)
   const [password, setPassword] = useState("")
   const [confirmed, setConfirmed] = useState(false)
@@ -14,6 +14,29 @@ export default function PaymentRecoveryPanel({ disabled = false, onResolved }: {
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
+  const automaticCash = !storageError && session.isActive && session.method === "cash" &&
+    session.cashAutoReturn !== false && !!session.recoveryRequired && !session.cardInFlight && !session.recoveryEvidence && !session.pendingBooking
+  const resolvedCallback = useRef(onResolved)
+  resolvedCallback.current = onResolved
+  useEffect(() => {
+    if (!automaticCash || disabled) return
+    let cancelled = false, timer: ReturnType<typeof setTimeout>
+    const report = async () => {
+      if (cancelled || busyRef.current) return
+      busyRef.current = true
+      try {
+        const result = await reportCashRecovery()
+        if (cancelled) return
+        if (result.success) { resolvedCallback.current(); return }
+        setError(result.error || "현금 오류 기록을 보관하고 있습니다.")
+      } catch { if (!cancelled) setError("현금 오류 기록을 다시 확인하고 있습니다.") }
+      finally { busyRef.current = false }
+      if (!cancelled) timer = setTimeout(() => void report(), 5000)
+    }
+    // Let the last physical command finish before requesting native archival.
+    timer = setTimeout(() => void report(), 4000)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [automaticCash, disabled, reportCashRecovery])
   const zeroCash = !storageError && session.method === "cash" && session.acceptedAmount === 0 &&
     session.acceptedBills.length === 0 && !session.returnedAmount && !session.cardInFlight &&
     !session.recoveryEvidence && !session.pendingBooking
@@ -28,6 +51,11 @@ export default function PaymentRecoveryPanel({ disabled = false, onResolved }: {
     } catch { setError("복구 응답을 확인하지 못했습니다. 다시 결제하지 말고 복구를 다시 확인해주세요.") }
     finally { busyRef.current = false; setBusy(false) }
   }
+  if (automaticCash) return <section role="status" className="rounded-xl bg-blue-50 p-6 text-2xl space-y-3">
+    <p>입실을 중단하고 현금 오류 기록을 남긴 뒤 처음 화면으로 돌아갑니다.</p>
+    <p>추가 현금 투입은 하지 마세요. 반환 확인이 필요한 금액은 관리자가 확인합니다.</p>
+    {error && <p className="text-lg text-red-700">{error}</p>}
+  </section>
   if (!open) return <Button variant="outline" className="h-20 w-full text-2xl" disabled={disabled} onClick={() => setOpen(true)}>관리자 복구</Button>
   if (!password) return <AdminKeypad showDevices={false} onClose={close} onConfirm={setPassword} verifyPassword={async value => {
     const result = await window.electronAPI?.paymentRecovery?.authorize(value)

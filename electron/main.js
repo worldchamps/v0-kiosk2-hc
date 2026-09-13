@@ -16,6 +16,7 @@ const bixolonPrinter = require("./bixolon-printer")
 const hardwareBridge = require("./hardware-server-bridge")
 const tossFrontBridge = require("./toss-front-bridge")
 const { createPaymentRecovery } = require("./payment-recovery")
+const { createCashIncidentDelivery } = require("./cash-incidents")
 const { buildSam4sPrintLines, findSam4sPrinter } = require("./sam4s-receipt")
 
 let mainWindow
@@ -58,6 +59,16 @@ const paymentRecovery = createPaymentRecovery({
 })
 ipcMain.handle("payment-recovery:authorize", (event, password) => paymentRecovery.authorize(event, password))
 ipcMain.handle("payment-recovery:archive", (event, input) => paymentRecovery.archive(event, input))
+const deliverCashIncidents = createCashIncidentDelivery({ app, safeStorage: require("electron").safeStorage })
+ipcMain.handle("payment-recovery:report-cash", async (event, input) => {
+  const result = await paymentRecovery.archive(event, input, true)
+  if (result.success) void deliverCashIncidents()
+  return result
+})
+app.whenReady().then(() => {
+  void deliverCashIncidents()
+  setInterval(() => void deliverCashIncidents(), 30000).unref()
+})
 
 tossFrontBridge.on("status", (status) => {
   if (mainWindow && !mainWindow.isDestroyed()) {

@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   paymentRecovery: {
     authorize: password => ipcRenderer.invoke("payment-recovery:authorize", password),
     archive: input => ipcRenderer.invoke("payment-recovery:archive", input),
+    reportCash: input => ipcRenderer.invoke("payment-recovery:report-cash", input),
   },
 
   // 토스 프론트 결제 단말기
