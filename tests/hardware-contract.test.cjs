@@ -9,7 +9,7 @@ const root = path.join(__dirname, "..")
 const packet = (a, b, c) => [0x24, a, b, c, (a + b + c) & 0xff]
 
 // Real renderer utilities, fake IPC only. No Electron app, network, COM or printer is opened.
-function load(relative, electronAPI, dependencies = {}, timers = new Set()) {
+function load(relative, electronAPI, dependencies = {}, timers = new Set(), runtime = {}) {
   const source = fs.readFileSync(path.join(root, relative), "utf8")
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const exports = {}
@@ -27,11 +27,12 @@ function load(relative, electronAPI, dependencies = {}, timers = new Set()) {
       return timer
     },
     clearTimeout(timer) { timers.delete(timer); clearTimeout(timer) },
+    ...runtime,
   })
   return { api: exports, timers }
 }
 
-function device(kind) {
+function device(kind, runtime = {}) {
   const suffix = kind === "acceptor" ? "Acceptor" : "Dispenser"
   let onData, onStatus
   let response = () => packet(0x6d, 0x65, 0x13)
@@ -53,7 +54,7 @@ function device(kind) {
       return result
     },
   }
-  const loaded = load(`lib/bill-${kind}-utils.ts`, ipc)
+  const loaded = load(`lib/bill-${kind}-utils.ts`, ipc, {}, new Set(), runtime)
   return {
     ...loaded,
     connect: () => loaded.api["connectBill" + suffix](),
@@ -158,6 +159,83 @@ test('acceptor records NG, timeout and transport failure outcomes', async () => 
   assert.equal(await h.api.setConfig(0x1c), false)
   assert.equal(h.api.getBillAcceptorCommandLog().at(-1).error, 'send_failed')
   assert.equal(h.timers.size, 0)
+})
+
+test('cash shutdown waits for reset settling and a fresh ready status before STOP', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+  const h = device('acceptor', { setTimeout, clearTimeout, Date })
+  await h.connect()
+  const commands = []
+  let readyAt, finished = false, result
+  h.respond(command => {
+    commands.push({ bytes: command, at: Date.now() })
+    if (command[1] === 0x52) { readyAt = Date.now() + 3000; return packet(0x4f, 0x4b, 0x61) }
+    // D211: reset ACK is immediate but the device ignores the next STOP while restarting.
+    if (Date.now() < readyAt) return null
+    if (command[1] === 0x47) return packet(0x67, 0x61, 0x01)
+    return packet(0x4f, 0x4b, 0x63)
+  })
+  const shutdown = (async () => {
+    result = await h.api.initializeDevice() && await h.api.setConfig(0x1c)
+    finished = true
+  })()
+  const settle = () => new Promise(resolve => setImmediate(resolve))
+  await settle()
+  assert.deepEqual(commands.map(c => c.bytes[1]), [0x52], 'RST ACK alone must not permit STOP')
+  t.mock.timers.tick(3499); await settle()
+  assert.equal(finished, false)
+  assert.equal(commands.length, 1)
+  t.mock.timers.tick(1); await settle(); await shutdown
+  assert.equal(result, true)
+  assert.deepEqual(commands.map(c => c.bytes[1]), [0x52, 0x47, 0x53])
+  assert(commands[2].at - commands[0].at >= 3500)
+})
+
+for (const [label, response, expected] of [
+  ['ready to accept', packet(0x67, 0x61, 0x02), true],
+  ['device error', packet(0x67, 0x61, 0x0c), false],
+  ['still stacking', packet(0x67, 0x61, 0x0b), false],
+  ['missing status response', null, false],
+]) {
+  test(`reset readiness is bounded and requires a known idle state: ${label}`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+    const h = device('acceptor', { setTimeout, clearTimeout, Date })
+    await h.connect()
+    let resets = 0, polls = 0, done = false, actual
+    h.respond(command => {
+      if (command[1] === 0x52) { resets++; return packet(0x4f, 0x4b, 0x61) }
+      assert.equal(command[1], 0x47, 'readiness may only query status, never enable or return cash')
+      polls++; return response
+    })
+    const pending = h.api.initializeDevice().then(value => { actual = value; done = true })
+    await new Promise(resolve => setImmediate(resolve))
+    for (let elapsed = 0; !done && elapsed < 15000; elapsed += 500) {
+      t.mock.timers.tick(500)
+      await new Promise(resolve => setImmediate(resolve))
+    }
+    assert.equal(done, true, 'reset readiness must not wait forever')
+    await pending
+    assert.equal(actual, expected)
+    assert.equal(resets, 1, 'do not repeat reset')
+    assert(polls >= 1 && polls <= 3)
+  })
+}
+
+test('reset can become ready on a later status query without a second reset', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+  const h = device('acceptor', { setTimeout, clearTimeout, Date })
+  await h.connect()
+  let resets = 0, polls = 0, ready = false
+  h.respond(command => {
+    if (command[1] === 0x52) { resets++; return packet(0x4f, 0x4b, 0x61) }
+    polls++; return packet(0x67, 0x61, polls === 1 ? 0x04 : 0x01)
+  })
+  const pending = h.api.initializeDevice().then(value => { ready = value })
+  await new Promise(resolve => setImmediate(resolve))
+  t.mock.timers.tick(3500); await new Promise(resolve => setImmediate(resolve))
+  assert.equal(ready, false); assert.equal(polls, 1)
+  t.mock.timers.tick(500); await new Promise(resolve => setImmediate(resolve)); await pending
+  assert.equal(ready, true); assert.equal(polls, 2); assert.equal(resets, 1)
 })
 
 test("dispenser: integer count and the existing response command/count must match", async () => {

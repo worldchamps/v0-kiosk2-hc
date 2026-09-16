@@ -275,6 +275,25 @@ test('successful exact change is recorded before completing cash payment', async
   assert.deepEqual(h.calls.dispense, [1]); assert.equal(h.calls.returned, 10000); assert.equal(h.calls.complete, 1);
 });
 
+for (const action of ['completion', 'cancellation']) {
+  test(`cash ${action} waits for reset readiness and STOP before booking or returning money`, async () => {
+    let ready, stopped, stopCalls = 0;
+    const h = cashScreen(30000, true, {
+      initializeDevice: () => new Promise(resolve => { ready = resolve; }),
+      setConfig: () => { stopCalls++; return new Promise(resolve => { stopped = resolve; }); },
+    });
+    const pending = action === 'completion' ? h.callbacks[0](30000) : h.button('취소').onClick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(stopCalls, 0); assert.equal(h.calls.complete, 0); assert.equal(h.calls.cancelled, 0);
+    assert.deepEqual(h.calls.dispense, []);
+    ready(true); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(stopCalls, 1); assert.equal(h.calls.complete, 0); assert.deepEqual(h.calls.dispense, []);
+    stopped(true); await pending;
+    if (action === 'completion') { assert.equal(h.calls.complete, 1); assert.deepEqual(h.calls.dispense, []); }
+    else { assert.equal(h.calls.complete, 0); assert.deepEqual(h.calls.dispense, [3]); assert.equal(h.calls.returned, 30000); }
+  });
+}
+
 async function onsite(stay = 'shortStay') {
   let idle, responseMode = 'success', release, roomLookupFails = false, roomPayload; const posts = [], intervals = [];
   const session = { isActive: false, acceptedAmount: 0 };

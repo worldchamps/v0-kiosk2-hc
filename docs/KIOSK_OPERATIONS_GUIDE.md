@@ -401,6 +401,10 @@ python hardware_server\test_bixolon_korean.py --port COM2
 1.3.8부터 관리자 모드의 **현금 통신 점검**에서 초기화/투입 중지 응답을 돈 없이 각각 확인하고
 저장된 통신 기록을 읽을 수 있습니다. [절차와 로그 해석](CASH_DIAGNOSTICS.md)을 따릅니다.
 
+1.3.9부터 현금 결제 완료/취소 시 초기화 후 최소 3.5초를 기다리고 장비의 대기 상태를 조회합니다.
+준비 상태와 투입 중지 응답이 확인되어야 입실 또는 현금 반환 절차로 진행합니다.
+`[RESET]`은 초기화 응답 또는 준비 상태 미확인, `[STOP]`은 투입 중지 응답 미확인을 뜻합니다.
+
 - Electron이 Hardware Server를 자동 시작하고 `ws://localhost:8082`에 연결합니다.
 - property4는 `BAC2400_PORT`의 BAC-2400 V1.3 통합 보드로 BV1/BD1을 제어합니다.
 - 다른 property는 `ACCEPTOR_PORT`와 `DISPENSER_PORT`를 각각 사용합니다.

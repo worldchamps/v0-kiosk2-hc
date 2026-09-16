@@ -80,7 +80,7 @@ export default function PaymentScreen({
     try {
       setStatusMessage("결제를 마무리하고 있습니다...")
       if (!await initializeDevice()) {
-        requireRecovery("지폐인식기 초기화 응답을 확인하지 못했습니다. 관리자에게 문의해주세요. [RESET]")
+        requireRecovery("지폐인식기 초기화·준비 상태를 확인하지 못했습니다. 관리자에게 문의해주세요. [RESET]")
         return
       }
       if (!await setConfig(0x1c)) {
@@ -307,7 +307,7 @@ export default function PaymentScreen({
       setEventCallback(null)
       console.log("[v0] Initializing bill acceptor for cancellation...")
       if (!await initializeDevice()) {
-        requireRecovery("현금 취소 중 초기화 응답을 확인하지 못했습니다. 관리자에게 문의해주세요. [RESET]")
+        requireRecovery("현금 취소 중 초기화·준비 상태를 확인하지 못했습니다. 관리자에게 문의해주세요. [RESET]")
         return
       }
       if (!await setConfig(0x1c)) {

@@ -331,7 +331,20 @@ export async function setConfig(config: number): Promise<boolean> {
 export async function initializeDevice(): Promise<boolean> {
   const packet = createPacket(0x52, 0x53, 0x54) // 'R' 'S' 'T'
   const res = await sendCommand(packet, 0x4f, 0x4b, 3000)
-  return res ? (res[1] === 0x4f && res[2] === 0x4b) : false
+  if (!res || res[1] !== 0x4f || res[2] !== 0x4b) return false
+  currentStatus = null
+  lastConfig = null
+  // D211 trace: RST acknowledges before restart finishes; immediate SC is lost,
+  // while SC after ~3 seconds succeeds. This margin is empirical, not a firmware
+  // timing guarantee. Require a fresh idle status as well; callers still verify SC.
+  await new Promise(resolve => setTimeout(resolve, 3500))
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const status = await getStatus()
+    if (status === 0x01 || status === 0x02) return true // WAIT / START_WAIT
+    if (status === 0x0c) return false // ERROR_WAIT
+    if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  return false
 }
 
 export function setEventCallback(callback: ((eventData: number) => void) | null): void {
