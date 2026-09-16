@@ -215,9 +215,10 @@ function nativeWiring() {
   const hardwareBridge = { isConnected: true, subscribeMessage: fn => { listener = fn; return () => { cleanups++; listener = null } },
     send: value => { sends.push(JSON.parse(JSON.stringify(value))); return true } }
   const tossFrontBridge = { pending: new Map() }
-  vm.runInNewContext(snippet, { app: { whenReady: () => ({ then() {} }) }, require: () => ({ safeStorage: {} }),
+  vm.runInNewContext(snippet, { app: { whenReady: () => ({ then() {} }), getPath: () => 'synthetic-user-data' }, path, require: () => ({ safeStorage: {} }),
+    createCashTrace: () => ({ write() {} }), createCashDiagnostics: () => ({}),
     createCashIncidentDelivery: () => async () => {}, createPaymentRecovery: options => { captured = options; return {} },
-    hardwareBridge, tossFrontBridge, global: state, ipcMain: { handle() {} }, Date: { now: () => clock },
+    hardwareBridge, tossFrontBridge, global: state, ipcMain: { handle() {}, on() {} }, Date: { now: () => clock },
     setTimeout: fn => { timeout = fn; return 1 }, clearTimeout: () => { timeout = null } })
   return { get options() { return captured }, hardwareBridge, tossFrontBridge, state, sends,
     message: value => listener?.(value), expire: () => timeout?.(), advance: ms => { clock += ms },

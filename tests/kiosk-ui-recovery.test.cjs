@@ -254,6 +254,22 @@ for (const [amount, result] of [[35000, true], [50000, false]]) {
     if (amount === 35000) assert.deepEqual(h.calls.dispense, []);
   });
 }
+for (const stage of ['RESET', 'STOP']) {
+  test(`exact cash payment identifies ${stage} failure without booking or refund`, async () => {
+    let configCalls = 0;
+    const h = cashScreen(30000, true, {
+      initializeDevice: async () => stage !== 'RESET',
+      setConfig: async () => { configCalls++; return false; },
+    });
+    await h.callbacks[0](30000);
+    assert.match(h.calls.recovery, new RegExp('\\[' + stage + '\\]'));
+    assert.equal(configCalls, stage === 'RESET' ? 0 : 1);
+    assert.equal(h.calls.complete, 0);
+    assert.equal(h.calls.returned, 0);
+    assert.deepEqual(h.calls.dispense, []);
+  });
+}
+
 test('successful exact change is recorded before completing cash payment', async () => {
   const h = cashScreen(40000, true); await h.callbacks[0](40000);
   assert.deepEqual(h.calls.dispense, [1]); assert.equal(h.calls.returned, 10000); assert.equal(h.calls.complete, 1);

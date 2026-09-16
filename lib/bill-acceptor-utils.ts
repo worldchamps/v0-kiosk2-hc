@@ -175,11 +175,23 @@ function handleEventMessage(packet: Uint8Array): void {
 // 명령어 전송 및 응답 대기
 async function sendCommand(packet: Uint8Array, expectedCmd1: number, expectedCmd2: number, timeoutMs = 3000): Promise<Uint8Array | null> {
   const api = typeof window !== "undefined" ? window.electronAPI : undefined
-  if (!api) return null
+  const sentAt = Date.now()
+  const bytes = Array.from(packet)
+  const trace = (event: "send" | "result", result?: string, response?: Uint8Array | null) => {
+    try { api?.cashDiagnostics?.trace({ event, bytes, sentAt, elapsedMs: Date.now() - sentAt, result, response: response ? Array.from(response) : undefined }) } catch { /* Logging must not change cash handling. */ }
+  }
+  const finishLog = (result: string, response?: Uint8Array | null) => {
+    logCommand(`${packet[1].toString(16)}-${packet[2].toString(16)}`, packet, response || undefined, result === "ok" ? undefined : result)
+    if (commandLog.length > 200) commandLog.splice(0, commandLog.length - 200)
+    trace("result", result, response)
+  }
+  if (!api) { finishLog("unavailable"); return null }
 
   const responseKey = `${expectedCmd1.toString(16).padStart(2, "0")}-${expectedCmd2.toString(16).padStart(2, "0")}`
 
-  if (pendingCommands.has(responseKey)) return null
+  if (pendingCommands.has(responseKey)) { finishLog("busy"); return null }
+  trace("send")
+  let failure = "timeout"
   const responsePromise = new Promise<Uint8Array | null>((resolve) => {
     const timeout = setTimeout(() => {
       pendingCommands.delete(responseKey)
@@ -191,6 +203,7 @@ async function sendCommand(packet: Uint8Array, expectedCmd1: number, expectedCmd
   const pending = pendingCommands.get(responseKey)
   const fail = () => {
     if (pending && pendingCommands.get(responseKey) === pending) {
+      failure = "send_failed"
       clearTimeout(pending.timeout); pending.resolve(null); pendingCommands.delete(responseKey)
     }
   }
@@ -198,7 +211,9 @@ async function sendCommand(packet: Uint8Array, expectedCmd1: number, expectedCmd
     // Do not await IPC before the response timer: a stalled main process must also time out.
     Promise.resolve(api.sendToBillAcceptor(Array.from(packet))).then(result => { if (result?.success !== true) fail() }, fail)
   } catch { fail() }
-  return responsePromise
+  const response = await responsePromise
+  finishLog(response ? (response[1] === 0x4e && response[2] === 0x47 ? "ng" : "ok") : failure, response)
+  return response
 }
 
 // --- 공용 API ---

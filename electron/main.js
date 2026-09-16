@@ -17,6 +17,7 @@ const hardwareBridge = require("./hardware-server-bridge")
 const tossFrontBridge = require("./toss-front-bridge")
 const { createPaymentRecovery } = require("./payment-recovery")
 const { createCashIncidentDelivery } = require("./cash-incidents")
+const { createCashTrace, createCashDiagnostics, responsePacket } = require("./cash-diagnostics")
 const { buildSam4sPrintLines, findSam4sPrinter } = require("./sam4s-receipt")
 
 let mainWindow
@@ -30,6 +31,7 @@ let billDispenserConnecting = false
 let hardwareServerProcess = null
 let nextServer = null
 let lastAcceptorCommand = 0
+const cashTrace = createCashTrace(path.join(app.getPath('userData'), 'logs'))
 
 const paymentRecovery = createPaymentRecovery({
   app, safeStorage: require("electron").safeStorage,
@@ -64,6 +66,24 @@ ipcMain.handle("payment-recovery:report-cash", async (event, input) => {
   const result = await paymentRecovery.archive(event, input, true)
   if (result.success) void deliverCashIncidents()
   return result
+})
+
+const cashDiagnostics = createCashDiagnostics({
+  authorize: (event, password) => paymentRecovery.authorize(event, password),
+  isIdle: () => !global.kioskPaymentRecoveryActive && !global.kioskMaintenance && !global.kioskHttpActive &&
+    tossFrontBridge.pending.size === 0 && (global.kioskActiveOperations?.() || 1) === 1 && Date.now() - lastAcceptorCommand > 8000,
+  setBusy: value => { global.kioskPaymentRecoveryActive = value },
+  readPayment: event => event.sender.executeJavaScript("localStorage.getItem('kiosk-payment-recovery-v1')"),
+  bridge: { get isConnected() { return hardwareBridge.isConnected }, subscribeMessage: hardwareBridge.subscribeMessage,
+    send: message => { lastAcceptorCommand = Date.now(); return hardwareBridge.send(message) } },
+  trace: cashTrace,
+})
+ipcMain.handle('cash-diagnostics:read', (event, password) => cashDiagnostics.read(event, password))
+ipcMain.handle('cash-diagnostics:run', (event, input) => cashDiagnostics.run(event, input))
+ipcMain.on('cash-diagnostics:trace', (event, input) => {
+  try {
+    if (event.senderFrame === event.sender.mainFrame && new URL(event.senderFrame.url).origin === 'http://localhost:3000') cashTrace.write('renderer', input)
+  } catch { /* Diagnostics must not interrupt a payment. */ }
 })
 app.whenReady().then(() => {
   void deliverCashIncidents()
@@ -189,8 +209,14 @@ function startHardwareServer() {
   hardwareServerProcess = spawn(app.isPackaged ? mainPy : "python", app.isPackaged ? [] : ["-u", mainPy], {
     cwd: hardwareServerDir,
     windowsHide: true,
-    stdio: isDev ? "inherit" : "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
   })
+  cashTrace.capture(hardwareServerProcess.stdout)
+  cashTrace.capture(hardwareServerProcess.stderr)
+  if (isDev) {
+    hardwareServerProcess.stdout.on('data', data => process.stdout.write(data))
+    hardwareServerProcess.stderr.on('data', data => process.stderr.write(data))
+  }
 
   hardwareServerProcess.on("exit", (code) => {
     console.log("[HARDWARE_SERVER] Exited:", code)
@@ -331,6 +357,7 @@ function createWindow() {
 
       // Hardware Server Bridge initialization
       hardwareBridge.onStatus((status) => {
+        cashTrace.write('bridge', { event: status.connected ? 'connected' : 'disconnected' })
         if (mainWindow && mainWindow.webContents) {
           mainWindow.webContents.send("bill-acceptor-status", { connected: status.connected })
           mainWindow.webContents.send("bill-dispenser-status", { connected: status.connected })
@@ -338,6 +365,8 @@ function createWindow() {
       })
 
       hardwareBridge.onMessage((msg) => {
+        const cashPacket = responsePacket(msg)
+        if (cashPacket) cashTrace.write('bridge', { event: 'receive', bytes: cashPacket })
         if (!mainWindow || !mainWindow.webContents) return
 
         if (msg.type === "acceptor_event") {
@@ -604,6 +633,7 @@ async function connectPrinter() {
 
 ipcMain.handle("send-to-bill-acceptor", async (event, command) => {
   lastAcceptorCommand = Date.now()
+  cashTrace.write('bridge', { event: 'send', bytes: Array.from(command) })
   const success = hardwareBridge.send({ type: "raw_acceptor", data: Array.from(command) })
   return { success }
 })

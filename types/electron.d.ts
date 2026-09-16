@@ -50,6 +50,13 @@ export interface ElectronAPI {
 
   // 지폐 인식기
   getHardwareStatus: () => Promise<{ connected: boolean | null }>
+  cashDiagnostics?: {
+    read: (password: string) => Promise<{ success: boolean; path?: string; text?: string; error?: string }>
+    run: (input: { password: string; command: "reset" | "stop"; confirmed: boolean }) => Promise<{
+      success: boolean; result?: string; elapsedMs?: number; logSaved?: boolean; error?: string
+    }>
+    trace: (input: { event: "send" | "result"; bytes: number[]; sentAt: number; elapsedMs?: number; result?: string; response?: number[] }) => void
+  }
   sendToBillAcceptor: (command: number[]) => Promise<{ success: boolean; error?: string }>
   onBillAcceptorData: (callback: (data: { data: number[] }) => void) => void
   onBillAcceptorStatus: (callback: (status: { connected: boolean; error?: string }) => void) => void

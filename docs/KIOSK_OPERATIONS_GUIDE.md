@@ -398,6 +398,9 @@ python hardware_server\test_bixolon_korean.py --port COM2
 
 ## 11. 현금 장비와 Hardware Server
 
+1.3.8부터 관리자 모드의 **현금 통신 점검**에서 초기화/투입 중지 응답을 돈 없이 각각 확인하고
+저장된 통신 기록을 읽을 수 있습니다. [절차와 로그 해석](CASH_DIAGNOSTICS.md)을 따릅니다.
+
 - Electron이 Hardware Server를 자동 시작하고 `ws://localhost:8082`에 연결합니다.
 - property4는 `BAC2400_PORT`의 BAC-2400 V1.3 통합 보드로 BV1/BD1을 제어합니다.
 - 다른 property는 `ACCEPTOR_PORT`와 `DISPENSER_PORT`를 각각 사용합니다.
@@ -408,7 +411,7 @@ python hardware_server\test_bixolon_korean.py --port COM2
 1. Windows 장치 관리자에서 COM 번호 확인
 2. 다른 프로그램이 같은 COM 포트를 사용 중인지 확인
 3. `.env.local`의 포트 확인 후 앱 완전 재시작
-4. Electron 명령창에서 `[HARDWARE_SERVER]`와 `[HARDWARE_BRIDGE]` 로그 확인
+4. 설치형은 관리자 모드의 **현금 통신 점검 → 기록 읽기**에서 로그 경로와 송수신 확인
 5. 앱을 종료한 뒤 `python hardware_server\serial_check.py`로 포트 접근 가능 여부 확인
 
 ## 12. Toss Front 플러그인

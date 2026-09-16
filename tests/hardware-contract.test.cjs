@@ -145,6 +145,21 @@ test("acceptor: NG cannot confirm disable and unknown configuration is not fabri
   assert.equal(await h.api.getConfig(), null)
 })
 
+test('acceptor records NG, timeout and transport failure outcomes', async () => {
+  const h = device('acceptor')
+  await h.connect()
+  h.respond(() => packet(0x4e, 0x47, 0))
+  assert.equal(await h.api.initializeDevice(), false)
+  assert.equal(h.api.getBillAcceptorCommandLog().at(-1).error, 'ng')
+  h.respond(() => null)
+  assert.equal(await h.api.setConfig(0x1c), false)
+  assert.equal(h.api.getBillAcceptorCommandLog().at(-1).error, 'timeout')
+  h.result({ success: false })
+  assert.equal(await h.api.setConfig(0x1c), false)
+  assert.equal(h.api.getBillAcceptorCommandLog().at(-1).error, 'send_failed')
+  assert.equal(h.timers.size, 0)
+})
+
 test("dispenser: integer count and the existing response command/count must match", async () => {
   const h = device("dispenser")
   await h.connect()

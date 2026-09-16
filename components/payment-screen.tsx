@@ -79,7 +79,14 @@ export default function PaymentScreen({
 
     try {
       setStatusMessage("결제를 마무리하고 있습니다...")
-      if (!await initializeDevice() || !await setConfig(0x1c)) throw new Error("Acceptor shutdown not confirmed")
+      if (!await initializeDevice()) {
+        requireRecovery("지폐인식기 초기화 응답을 확인하지 못했습니다. 관리자에게 문의해주세요. [RESET]")
+        return
+      }
+      if (!await setConfig(0x1c)) {
+        requireRecovery("지폐 투입 중지 응답을 확인하지 못했습니다. 관리자에게 문의해주세요. [STOP]")
+        return
+      }
       acceptanceAttemptedRef.current = false
     } catch (e) {
       console.error("[v0] Error initializing device during completion:", e)
@@ -299,7 +306,14 @@ export default function PaymentScreen({
       }
       setEventCallback(null)
       console.log("[v0] Initializing bill acceptor for cancellation...")
-      if (!await initializeDevice() || !await setConfig(0x1c)) throw new Error("Acceptor shutdown not confirmed")
+      if (!await initializeDevice()) {
+        requireRecovery("현금 취소 중 초기화 응답을 확인하지 못했습니다. 관리자에게 문의해주세요. [RESET]")
+        return
+      }
+      if (!await setConfig(0x1c)) {
+        requireRecovery("현금 취소 중 투입 중지 응답을 확인하지 못했습니다. 관리자에게 문의해주세요. [STOP]")
+        return
+      }
       acceptanceAttemptedRef.current = false
 
       const acceptedAmount = latestSession.current.acceptedAmount

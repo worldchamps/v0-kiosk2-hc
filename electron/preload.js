@@ -63,6 +63,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // 지폐 인식기
   getHardwareStatus: () => ipcRenderer.invoke("get-hardware-status"),
+  cashDiagnostics: {
+    read: password => ipcRenderer.invoke('cash-diagnostics:read', password),
+    run: input => ipcRenderer.invoke('cash-diagnostics:run', input),
+    trace: input => ipcRenderer.send('cash-diagnostics:trace', input),
+  },
   sendToBillAcceptor: (command) => ipcRenderer.invoke("send-to-bill-acceptor", command),
 
   // 프린터 (Bixolon)
