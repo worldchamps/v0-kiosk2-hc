@@ -16,6 +16,11 @@ async function main() {
   if (process.platform !== "win32") throw new Error("Build the Windows installer on Windows")
   const { values } = parseArgs({ options: { arch: { type: "string", default: "x64" } } })
   const arch = checkArch(values.arch)
+  const sdk = process.env[`KIOSK_BIXOLON_SDK_FILE_${arch.toUpperCase()}`] || process.env.KIOSK_BIXOLON_SDK_FILE
+  const sdkName = arch === "x64" ? "BXLPAPI_x64.dll" : "BXLPAPI.dll"
+  if (!sdk || !fs.existsSync(sdk)) throw new Error(`KIOSK_BIXOLON_SDK_FILE_${arch.toUpperCase()} must point to ${sdkName}; every installer must include the Bixolon SDK`)
+  if (path.basename(sdk).toLowerCase() !== sdkName.toLowerCase()) throw new Error(`Bixolon SDK filename must be ${sdkName}`)
+  if (peArchitecture(sdk) !== arch) throw new Error("Bixolon SDK DLL architecture does not match the installer")
   const python = process.env[`KIOSK_BUILD_PYTHON_${arch.toUpperCase()}`] || process.env.KIOSK_BUILD_PYTHON || path.join(root, ".local", arch === "x64" ? "build-python" : "build-python-ia32", "Scripts", "python.exe")
   if (!fs.existsSync(python)) throw new Error(`Create a ${arch} Python venv and install hardware_server/requirements-build.txt; KIOSK_BUILD_PYTHON may specify its python.exe`)
   if (peArchitecture(python) !== arch) throw new Error(`Build Python must match ${arch}; do not bundle a different architecture`)
@@ -34,15 +39,13 @@ async function main() {
   fs.writeFileSync(".local/update-public.pem", key.export({ type: "spki", format: "pem" }))
   run(process.execPath, ["scripts/test-kiosk.cjs"])
   run(python, ["tests/hardware-server-contract.py"])
-  const sdk = process.env[`KIOSK_BIXOLON_SDK_FILE_${arch.toUpperCase()}`] || process.env.KIOSK_BIXOLON_SDK_FILE
-  if (sdk && peArchitecture(sdk) !== arch) throw new Error("Bixolon SDK DLL architecture does not match the installer")
   // SerialPort ships N-API binaries for both Windows architectures. Rebuilding
   // ia32 with an x64 host Node tries to load the wrong architecture in its probe.
   const serialport = path.join(root, "node_modules/@serialport/bindings-cpp/prebuilds", `win32-${arch}`, "node.napi.node")
   if (peArchitecture(serialport) !== arch) throw new Error("SerialPort N-API prebuild architecture does not match the installer")
   run(python, ["-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--name", "KioskHardware",
     "--distpath", `.local/hardware-${arch}`, "--workpath", `.local/hardware-work-${arch}`, "--specpath", ".local",
-    ...(sdk ? ["--add-binary", `${path.resolve(sdk)}${path.delimiter}bin`] : []), "hardware_server/main.py"])
+    "--add-binary", `${path.resolve(sdk)}${path.delimiter}bin`, "hardware_server/main.py"])
   run(process.execPath, ["node_modules/next/dist/bin/next", "build"])
   // Never publish from a build. The deployment tool requires a separate request.
   run(process.execPath, ["node_modules/electron-builder/cli.js", "--win", "nsis", `--${arch}`, `--config.directories.output=dist/${arch}`, "--config.npmRebuild=false", "--publish", "never"])

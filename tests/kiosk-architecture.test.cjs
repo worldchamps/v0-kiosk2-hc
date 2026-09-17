@@ -49,7 +49,7 @@ function load(file, dependencies, processOverrides = {}) {
       assert.ok(name in dependencies, "Unexpected dependency: " + name)
       return dependencies[name]
     } }
-  vm.runInNewContext(fs.readFileSync(filename, "utf8") + (file.includes("kiosk-deploy") ? "\nmodule.exports = { main, releasePath };" : ""), context)
+  vm.runInNewContext(fs.readFileSync(filename, "utf8") + (file.includes("kiosk-deploy") ? "\nmodule.exports = { main, releasePath };" : file.includes("build-kiosk") ? "\nmodule.exports = { main };" : ""), context)
   return module.exports
 }
 
@@ -226,6 +226,7 @@ test("combined build is sequential and each target uses its own Python/SDK witho
   assert.equal(pkg.scripts["kiosk:release"], "node scripts/kiosk-deploy.cjs publish-all")
   for (const arch of ["x64", "ia32"]) {
     const commands = []
+    const sdk = path.join(arch, arch === "x64" ? "BXLPAPI_x64.dll" : "BXLPAPI.dll")
     load("scripts/build-kiosk.cjs", {
       "node:fs": { existsSync: () => true, readdirSync: () => [], mkdirSync() {}, writeFileSync() {},
         readFileSync: () => keys.publicKey.export({ type: "spki", format: "pem" }) },
@@ -237,16 +238,37 @@ test("combined build is sequential and each target uses its own Python/SDK witho
     }, { execPath: "build-node", chdir() {}, env: {
       KIOSK_UPDATE_PUBLIC_KEY_FILE: "public.pem", KIOSK_BUILD_PYTHON: "wrong-generic-python", KIOSK_BIXOLON_SDK_FILE: "wrong-generic-sdk",
       ["KIOSK_BUILD_PYTHON_" + arch.toUpperCase()]: arch + "-python.exe",
-      ["KIOSK_BIXOLON_SDK_FILE_" + arch.toUpperCase()]: arch + "-sdk.dll",
+      ["KIOSK_BIXOLON_SDK_FILE_" + arch.toUpperCase()]: sdk,
     } })
     assert.equal(commands[0].command, arch + "-python.exe")
     const hardware = commands.find(c => c.args.includes("PyInstaller"))
     assert.equal(hardware.command, arch + "-python.exe")
-    assert.ok(hardware.args.some(arg => arg.includes(arch + "-sdk.dll")))
+    assert.equal(hardware.args[hardware.args.indexOf("--add-binary") + 1], path.resolve(sdk) + path.delimiter + "bin")
     const builder = commands.find(c => c.args.includes("node_modules/electron-builder/cli.js"))
     assert.ok(builder.args.includes("--" + arch))
     assert.equal(builder.args.at(-1), "never")
     assert.deepEqual(Array.from(commands.at(-1).args), ["scripts/verify-kiosk-package.cjs", "--arch", arch])
+  }
+})
+
+test("installer build rejects missing, misnamed or wrong-architecture Bixolon SDK before building", async () => {
+  for (const arch of ["x64", "ia32"]) {
+    const sdkName = arch === "x64" ? "BXLPAPI_x64.dll" : "BXLPAPI.dll"
+    for (const failure of ["unset", "missing", "name", "architecture"]) {
+      const commands = []
+      const { main } = load("scripts/build-kiosk.cjs", {
+        "node:fs": { existsSync: () => failure !== "missing" },
+        "node:path": path, "node:crypto": crypto,
+        "node:util": { parseArgs: () => ({ values: { arch } }) },
+        "node:child_process": { spawnSync: (...args) => commands.push(args) },
+        "../electron/update-protocol": protocol,
+        "./package-architecture.cjs": { peArchitecture: () => arch === "x64" ? "ia32" : "x64" },
+      }, { chdir() {}, env: failure === "unset" ? {} : {
+        ["KIOSK_BIXOLON_SDK_FILE_" + arch.toUpperCase()]: failure === "name" ? "wrong.dll" : sdkName,
+      } })
+      await assert.rejects(main(), /Bixolon SDK/)
+      assert.equal(commands.length, 0)
+    }
   }
 })
 

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import struct
 import sys
 
 import websockets
@@ -17,9 +18,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("HardwareServer")
 
-# Packaging check only: import all hardware adapters without opening COM ports.
+# Packaging check only: load the bundled SDK without opening COM ports.
 if "--self-test" in sys.argv:
-    print("KioskHardware imports OK (no device connection)")
+    sdk_name = "BXLPAPI_x64.dll" if struct.calcsize("P") == 8 else "BXLPAPI.dll"
+    sdk_path = os.path.join(os.path.dirname(__file__), "bin", sdk_name)
+    if not os.path.isfile(sdk_path):
+        raise FileNotFoundError(f"Bundled Bixolon SDK missing: {sdk_name}")
+    BixolonPrinter("SELF-TEST-NO-PORT", sdk_dll_path=sdk_path)._load_sdk()
+    print("KioskHardware imports and bundled Bixolon SDK OK (no device connection)")
     sys.exit(0)
 
 

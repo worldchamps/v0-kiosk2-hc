@@ -52,6 +52,8 @@ python -m venv .local/build-python
 # 최초 한 번만 생성. 기존 개인키를 재생성하거나 덮어쓰지 않는다.
 node scripts/kiosk-deploy.cjs keygen --out .local/update-signing
 $env:KIOSK_UPDATE_PUBLIC_KEY_FILE = (Resolve-Path .local/update-signing/public.pem).Path
+# 제조사 SDK 원본 경로를 해당 PC에 맞게 지정한다.
+$env:KIOSK_BIXOLON_SDK_FILE_X64 = 'C:\AGAIN_kiosk\BixolonSDK\BXLPAPI_x64.dll'
 npm.cmd run electron:build
 ```
 
@@ -78,6 +80,7 @@ Node.js 개발 도구는 64비트를 사용해도 되지만 내장 장비 프로
 .local/build-python-ia32/Scripts/python.exe -m pip install -r hardware_server/requirements-build.txt
 # 기존 장비가 신뢰하는 공개키를 사용한다. keygen을 다시 실행하지 않는다.
 $env:KIOSK_UPDATE_PUBLIC_KEY_FILE = (Resolve-Path .local/update-signing/public.pem).Path
+$env:KIOSK_BIXOLON_SDK_FILE_IA32 = 'C:\AGAIN_kiosk\BixolonSDK\BXLPAPI.dll'
 npm.cmd run electron:build:ia32
 ```
 
@@ -98,9 +101,12 @@ npm.cmd run electron:build:ia32
 예약/운영 DB 및 장비에는 연결하지 않는다.
 [SerialPort가 제공하는 N-API 바이너리](https://serialport.io/docs/guide-installation/)를 사용한다.
 빌드 래퍼는 대상 비트수의 바이너리를 확인한 뒤 재컴파일을 생략하고, 최종 Electron에서 실제 로딩을 검증한다.
-제조사 Bixolon DLL을 포함해야 하면 같은 비트수의 DLL 경로를 `KIOSK_BIXOLON_SDK_FILE`로 지정한다.
-함께 빌드할 때는 `KIOSK_BIXOLON_SDK_FILE_X64`, `KIOSK_BIXOLON_SDK_FILE_IA32`를 사용하면 각 값이 공통 변수보다 우선한다.
-지정하지 않으면 제조사 DLL을 새로 포함하지 않으므로 실제 프린터의 드라이버/SDK 준비 여부를 별도로 확인한다.
+1.3.10부터 공용 설치파일에는 같은 비트수의 Bixolon DLL을 반드시 포함한다.
+`KIOSK_BIXOLON_SDK_FILE_X64`에는 `BXLPAPI_x64.dll`, `KIOSK_BIXOLON_SDK_FILE_IA32`에는
+`BXLPAPI.dll`의 실제 경로를 지정한다. 비트수별 변수는 공통 `KIOSK_BIXOLON_SDK_FILE`보다 우선한다.
+누락·파일명 불일치·비트수 불일치는 빌드 시작 전에 중단한다. 최종 패키지에서도 DLL 파일과 비트수를
+검사하고, `KioskHardware.exe --self-test`가 내장 DLL 및 사용 함수들을 실제 로딩한다.
+이 검사는 COM 포트를 열거나 인쇄하지 않는다. 물리 연결·용지·절단은 현장에서 별도 확인한다.
 
 기존 Electron 28.3.3을 유지한 호환성 확장이다. 최신 런타임으로 교체한 보안 업데이트는 아니다.
 [Electron 43은 마지막 32비트 지원 계열](https://www.electronjs.org/blog/electron-43-0)이므로 추후 런타임 업그레이드 시 지원 범위를 다시 확인한다.
