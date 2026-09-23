@@ -26,6 +26,29 @@ export interface TossFrontQrResult {
   error?: string
 }
 
+export interface KioskDeviceSettingsValues {
+  tossTransport: "auto" | "serial" | "websocket"
+  tossSerialPath: string
+  tossSerialBaudRate: string
+  tossWsUrl: string
+  tossPairingKey: string
+  printerPort: string
+  acceptorPort: string
+  dispenserPort: string
+  bac2400Port: string
+  sam4sPrinterName: string
+}
+
+export interface KioskDeviceSettingsRead {
+  success: boolean
+  error?: string
+  property?: string
+  pairingKeySet?: boolean
+  values?: KioskDeviceSettingsValues
+  serialPorts?: { path: string; manufacturer: string }[]
+  printers?: { name: string; displayName: string }[]
+}
+
 export interface ElectronAPI {
   setUpdateSafe: (safe: boolean) => void
   // 환경 설정
@@ -56,6 +79,10 @@ export interface ElectronAPI {
       success: boolean; result?: string; elapsedMs?: number; logSaved?: boolean; error?: string
     }>
     trace: (input: { event: "send" | "result"; bytes: number[]; sentAt: number; elapsedMs?: number; result?: string; response?: number[] }) => void
+  }
+  deviceSettings: {
+    read: (password: string) => Promise<KioskDeviceSettingsRead>
+    save: (input: { password: string; values: KioskDeviceSettingsValues }) => Promise<{ success: boolean; restartRequired?: boolean; error?: string }>
   }
   sendToBillAcceptor: (command: number[]) => Promise<{ success: boolean; error?: string }>
   onBillAcceptorData: (callback: (data: { data: number[] }) => void) => void

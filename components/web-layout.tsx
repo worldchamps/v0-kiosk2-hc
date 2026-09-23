@@ -8,6 +8,7 @@ import BillAcceptorTest from "@/components/bill-acceptor-test"
 import BillDispenserTest from "@/components/bill-dispenser-test"
 import RoomTypeSettings from "@/components/room-type-settings"
 import DeviceStatus from "@/components/device-status"
+import DeviceSettings from "@/components/device-settings"
 import PmsRateSettings from "@/components/pms-rate-settings"
 import CardPaymentCancel from "@/components/card-payment-cancel"
 import CashDeviceDiagnostics from "@/components/cash-device-diagnostics"
@@ -33,6 +34,7 @@ export default function WebLayout({ onChangeMode }: { onChangeMode: () => void }
             <TabsTrigger value="roomTypeSettings">객실 타입 설정</TabsTrigger>
             <TabsTrigger value="pmsRates">PMS 요금 관리</TabsTrigger>
             <TabsTrigger value="deviceStatus">기기 연결 상태</TabsTrigger>
+            <TabsTrigger value="deviceSettings">외부기기 등록</TabsTrigger>
             <TabsTrigger value="paymentCancel">카드 승인취소</TabsTrigger>
           </TabsList>
           <TabsContent value="roomInfo">
@@ -56,6 +58,9 @@ export default function WebLayout({ onChangeMode }: { onChangeMode: () => void }
           </TabsContent>
           <TabsContent value="deviceStatus">
             <DeviceStatus />
+          </TabsContent>
+          <TabsContent value="deviceSettings">
+            <DeviceSettings />
           </TabsContent>
           <TabsContent value="paymentCancel">
             <CardPaymentCancel />

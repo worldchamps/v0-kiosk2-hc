@@ -68,6 +68,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     run: input => ipcRenderer.invoke('cash-diagnostics:run', input),
     trace: input => ipcRenderer.send('cash-diagnostics:trace', input),
   },
+  deviceSettings: {
+    read: password => ipcRenderer.invoke("device-settings:read", password),
+    save: input => ipcRenderer.invoke("device-settings:save", input),
+  },
   sendToBillAcceptor: (command) => ipcRenderer.invoke("send-to-bill-acceptor", command),
 
   // 프린터 (Bixolon)

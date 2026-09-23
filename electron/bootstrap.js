@@ -83,9 +83,14 @@ if (!app.isPackaged) {
     }
     require("./main")
     const publicKey = fs.readFileSync(path.join(process.resourcesPath, "update-public.pem"), "utf8")
+    const persistConnection = updated => {
+      const saved = files.read()
+      // Token refresh must not restore device ports from the startup snapshot.
+      files.write({ ...saved, auth: updated.auth })
+    }
     const updater = createKioskUpdater({
       deviceId: config.deviceId, publicKey, version: app.getVersion(), stateFile: files.stateFile,
-      pollStatus: createDeviceConnection(config, files.write).pollStatus,
+      pollStatus: createDeviceConnection(config, persistConnection).pollStatus,
       createUpdater: (options) => new (require("electron-updater").NsisUpdater)({ provider: "custom", updateProvider: PrivateReleaseProvider, ...options }),
       prepare, resume,
       ready: () => heartbeat.at > 0 && Date.now() - heartbeat.at < 10000,

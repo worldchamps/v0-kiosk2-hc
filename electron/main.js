@@ -16,6 +16,8 @@ const bixolonPrinter = require("./bixolon-printer")
 const hardwareBridge = require("./hardware-server-bridge")
 const tossFrontBridge = require("./toss-front-bridge")
 const { createPaymentRecovery } = require("./payment-recovery")
+const { deviceFiles } = require("./device-setup")
+const { createDeviceSettings } = require("./device-settings")
 const { createCashIncidentDelivery } = require("./cash-incidents")
 const { createCashTrace, createCashDiagnostics, responsePacket } = require("./cash-diagnostics")
 const { buildSam4sPrintLines, findSam4sPrinter } = require("./sam4s-receipt")
@@ -95,6 +97,18 @@ tossFrontBridge.on("status", (status) => {
     mainWindow.webContents.send("toss-front:status", status)
   }
 })
+
+const registeredDevice = app.isPackaged ? deviceFiles(app, require("electron").safeStorage) : null
+const deviceSettings = createDeviceSettings({
+  enabled: () => app.isPackaged,
+  authorize: (event, password) => paymentRecovery.authorize(event, password),
+  readConfig: () => registeredDevice.read(),
+  writeConfig: config => registeredDevice.write(config),
+  listPorts: () => SerialPort.list(),
+  listPrinters: event => event.sender.getPrintersAsync(),
+})
+ipcMain.handle("device-settings:read", (event, password) => deviceSettings.read(event, password))
+ipcMain.handle("device-settings:save", (event, input) => deviceSettings.save(event, input))
 
 const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
 const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"
