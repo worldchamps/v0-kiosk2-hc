@@ -51,6 +51,7 @@ export interface KioskDeviceSettingsRead {
 
 export interface ElectronAPI {
   setUpdateSafe: (safe: boolean) => void
+  getAppVersion?: () => string
   // 환경 설정
   getPropertyId: () => Promise<string>
   getOverlayMode: () => Promise<boolean>

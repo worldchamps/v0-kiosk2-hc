@@ -38,6 +38,7 @@ if (!app.isPackaged) {
     ipcMain.on("kiosk:public-config", (event) => {
       event.returnValue = {
         propertyId: config.property,
+        version: app.getVersion(),
         firebase: Object.fromEntries(["API_KEY", "AUTH_DOMAIN", "DATABASE_URL", "PROJECT_ID", "STORAGE_BUCKET", "MESSAGING_SENDER_ID", "APP_ID"]
           .map((key) => [key, process.env["NEXT_PUBLIC_FIREBASE_" + key] || ""])),
       }

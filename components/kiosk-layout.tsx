@@ -45,6 +45,7 @@ function getReservations(data: { reservations?: unknown } | null): Reservation[]
 
 export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayoutProps) {
   const [currentScreen, setCurrentScreen] = useState("onSiteReservation")
+  const [installedVersion, setInstalledVersion] = useState("")
   const [homeSessionKey, setHomeSessionKey] = useState(0)
   const [reservationData, setReservationData] = useState<Reservation | null>(null)
   const [reservationsList, setReservationsList] = useState<Reservation[]>([])
@@ -88,6 +89,10 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   const adminPassword = "KIM1334**"
 
   const { paymentSession, storageError, ready } = usePayment()
+
+  useEffect(() => {
+    setInstalledVersion(window.electronAPI?.getAppVersion?.() || "")
+  }, [])
 
   useEffect(() => {
     window.electronAPI?.setUpdateSafe?.(
@@ -609,6 +614,13 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
           />
         )}
       </div>
+
+      {!isPopupMode && installedVersion &&
+        (currentScreen === "idle" || currentScreen === "standby" || (currentScreen === "onSiteReservation" && onSiteUpdateSafe)) && (
+        <span className="pointer-events-none absolute bottom-16 right-6 z-20 rounded-full bg-white/90 px-4 py-2 text-lg font-semibold text-slate-600 shadow" aria-label="설치 버전">
+          설치 버전 v{installedVersion}
+        </span>
+      )}
 
       {!isPopupMode && (
         <div className="kiosk-admin-slot absolute top-2 right-2 z-20">

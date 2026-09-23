@@ -37,6 +37,7 @@ if (publicConfig?.propertyId) {
 // Renderer 프로세스에서 사용할 수 있는 안전한 API 노출
 contextBridge.exposeInMainWorld("electronAPI", {
   setUpdateSafe: (safe) => { updateSafe = safe === true; reportUpdateState() },
+  getAppVersion: () => publicConfig?.version || "",
   // 환경 설정
   getPropertyId: () => ipcRenderer.invoke("get-property-id"),
   getOverlayMode: () => ipcRenderer.invoke("get-overlay-mode"),
