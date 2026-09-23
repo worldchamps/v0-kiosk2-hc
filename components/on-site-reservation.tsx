@@ -13,6 +13,7 @@ import {
   Clock,
   AlertTriangle,
   CalendarDays,
+  ChevronRight,
   CreditCard,
   Landmark,
   ArrowLeft,
@@ -450,6 +451,21 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
           </p>
         </section>
 
+        <nav className="kiosk-home-actions" aria-label="키오스크 주요 메뉴">
+          <button
+            type="button"
+            className="kiosk-home-action kiosk-home-action-reservation"
+            onClick={() => onNavigate("reservationConfirm")}
+          >
+            <CalendarDays aria-hidden="true" />
+            <span>
+              <strong>이미 예약했어요</strong>
+              <small>예약 확인 · 체크인</small>
+            </span>
+            <ChevronRight aria-hidden="true" />
+          </button>
+        </nav>
+
         <div className="kiosk-stay-type-content">
           {roomsError && (
             <div className="kiosk-home-message kiosk-home-message-error">
@@ -510,16 +526,6 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
           )}
         </div>
 
-        <nav className="kiosk-home-actions" aria-label="키오스크 주요 메뉴">
-          <button
-            type="button"
-            className="kiosk-home-action kiosk-home-action-reservation"
-            onClick={() => onNavigate("reservationConfirm")}
-          >
-            <CalendarDays aria-hidden="true" />
-            <span>이미 예약했어요</span>
-          </button>
-        </nav>
       </div>
     )
   }
