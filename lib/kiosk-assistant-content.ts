@@ -23,10 +23,11 @@ export const assistantVoiceStyles = {
 } as const
 
 export function suggestedQuestions(screen: string): string[] {
-  if (screen.includes("payment")) return ["결제가 안 돼요", "계좌이체 가능한가요?", "체크인 어떻게 해요?"]
-  if (screen === "checkInComplete" || screen === "onSiteReservation:complete") return ["키는 어디 있나요?", "어디로 가야 하나요?", "체크아웃은 몇 시인가요?"]
-  if (screen.startsWith("reservation")) return ["체크인 어떻게 해요?", "예약이 안 나와요", "체크아웃은 몇 시인가요?"]
-  return ["객실이 있나요?", "체크인 어떻게 해요?", "계좌이체 가능한가요?"]
+  const common = ["체크인 어떻게 해요?", "예약 확인은 어떻게 하나요?", "객실이 있나요?", "계좌이체 가능한가요?", "키는 어디 있나요?"]
+  if (screen.includes("payment")) return ["결제가 안 돼요", "계좌이체 가능한가요?", ...common.filter(question => question !== "계좌이체 가능한가요?")].slice(0, 5)
+  if (screen === "checkInComplete" || screen === "onSiteReservation:complete") return ["키는 어디 있나요?", "어디로 가야 하나요?", "체크아웃은 몇 시인가요?", "예약 확인은 어떻게 하나요?", "계좌이체 가능한가요?"]
+  if (screen.startsWith("reservation")) return ["체크인 어떻게 해요?", "예약이 안 나와요", "체크아웃은 몇 시인가요?", "키는 어디 있나요?", "계좌이체 가능한가요?"]
+  return common
 }
 
 export function assistantAnswer(topic: AssistantTopic, context: {

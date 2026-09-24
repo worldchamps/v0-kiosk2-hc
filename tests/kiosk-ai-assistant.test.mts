@@ -9,6 +9,8 @@ test("assistant keeps availability scoped and ambiguous payments safe", () => {
   assert.doesNotMatch(assistantAnswer("availability", { screen: "onSiteReservation:stayType", building: "A", availableCount: null }), /0개/)
   assert.match(assistantAnswer("payment", { screen: "onSiteReservation:payment", building: "A" }), /추가 결제를 하지 말고/)
   assert.deepEqual(suggestedQuestions("onSiteReservation:payment")[0], "결제가 안 돼요")
+  assert.equal(suggestedQuestions("onSiteReservation:payment").length, 5)
+  assert.equal(new Set(suggestedQuestions("onSiteReservation:payment")).size, 5)
 })
 
 test("speech output is restricted to a recent approved answer", () => {
