@@ -12,6 +12,29 @@ export const assistantTopics = {
 
 export type AssistantTopic = keyof typeof assistantTopics
 
+export function isAssistantTopic(value: unknown): value is AssistantTopic {
+  return typeof value === "string" && Object.hasOwn(assistantTopics, value)
+}
+
+export const assistantVoiceStyles = {
+  calm: "20대 여성 호텔 안내원 느낌의 밝고 부드러운 목소리로, 빠르되 차분하고 친절하게 말하세요. 불필요하게 끌거나 오래 쉬지 말고 자연스럽게 이어가세요. 객실번호와 시간은 또렷하게 읽으세요. 과장된 감탄이나 광고 같은 말투는 피하세요.",
+  friendly: "밝고 친근한 안내 직원처럼 자연스럽게 말하세요. 지나치게 들뜨지 않고 편안한 존댓말을 사용하세요.",
+  concise: "간결하고 또렷한 안내 방송처럼 말하세요. 숫자와 객실번호는 알아듣기 쉽게 천천히 읽으세요.",
+} as const
+
+export function parseGuidanceCall(item: unknown) {
+  const call = item as Record<string, unknown> | null
+  if (call?.type !== "function_call" || call.name !== "get_kiosk_guidance" ||
+    typeof call.call_id !== "string" || !call.call_id || call.call_id.length > 200 ||
+    typeof call.arguments !== "string" || call.arguments.length > 2000) return null
+  try {
+    const args = JSON.parse(call.arguments)
+    if (!isAssistantTopic(args?.topic) || typeof args?.question !== "string" ||
+      !args.question.trim() || args.question.length > 200) return null
+    return { callId: call.call_id, topic: args.topic, question: args.question.trim() }
+  } catch { return null }
+}
+
 export function suggestedQuestions(screen: string): string[] {
   if (screen.includes("payment")) return ["결제가 안 돼요", "계좌이체 가능한가요?", "체크인 어떻게 해요?"]
   if (screen === "checkInComplete" || screen === "onSiteReservation:complete") return ["키는 어디 있나요?", "어디로 가야 하나요?", "체크아웃은 몇 시인가요?"]

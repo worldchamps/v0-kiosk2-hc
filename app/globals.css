@@ -2619,6 +2619,14 @@ textarea {
 
 .kiosk-ai-body { flex: 1; min-height: 0; overflow: auto; padding: 30px 32px; font-size: 23px; line-height: 1.5; }
 .kiosk-ai-prompt { margin: 0 0 18px; font-weight: 800; }
+.kiosk-ai-voice { margin-bottom: 26px; padding: 20px; border-radius: 20px; background: #eff5ff; text-align: center; }
+.kiosk-ai-voice button { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; min-height: 76px; padding: 14px; border-radius: 16px; color: white; background: #174d93; font-weight: 800; }
+.kiosk-ai-voice button[aria-pressed="true"] { background: #a3212b; }
+.kiosk-ai-voice svg { width: 30px; height: 30px; }
+.kiosk-ai-voice p { margin: 12px 0 0; color: #42546b; font-size: 18px; }
+.kiosk-ai-voice[data-phase="speaking"] svg, .kiosk-ai-voice[data-phase="listening"] svg { animation: kiosk-ai-pulse 1.2s ease-in-out infinite; }
+@keyframes kiosk-ai-pulse { 50% { opacity: 0.45; transform: scale(1.12); } }
+@media (prefers-reduced-motion: reduce) { .kiosk-ai-voice svg { animation: none !important; } }
 .kiosk-ai-suggestions { display: flex; flex-direction: column; gap: 14px; }
 .kiosk-ai-suggestions button { min-height: 66px; padding: 14px 20px; border: 2px solid #d8e4ff; border-radius: 16px; color: #164c88; background: #eff5ff; text-align: left; font-weight: 800; }
 .kiosk-ai-question { margin: 0 0 22px; padding: 18px; border-radius: 16px; background: #f0f2f5; }

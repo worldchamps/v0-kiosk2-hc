@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { GET as getSellableRooms } from "@/app/api/available-rooms/route"
-import { assistantAnswer, assistantTopics, type AssistantTopic } from "@/lib/kiosk-assistant-content"
+import { assistantAnswer, assistantTopics, isAssistantTopic, type AssistantTopic } from "@/lib/kiosk-assistant-content"
 import { getKioskScope, isRoomInBuilding } from "@/lib/kiosk-scope"
 import { getPropertyFromRoomNumber } from "@/lib/property-utils"
 import { formatDateTimeKorean } from "@/lib/date-utils"
@@ -21,26 +21,31 @@ export async function POST(request: Request) {
   const body = input as Record<string, unknown> | null
   const question = typeof body?.question === "string" ? body.question.trim() : ""
   if (!question || question.length > 200) return NextResponse.json({ error: "질문은 200자 이내로 입력해 주세요." }, { status: 400 })
-  if (!process.env.TYPESAFE_API_KEY) return NextResponse.json({ error: "AI 안내 서비스가 설정되지 않았습니다." }, { status: 503 })
+  if (body?.topic !== undefined && !isAssistantTopic(body.topic)) return NextResponse.json({ error: "안내 주제를 확인해 주세요." }, { status: 400 })
+  if (!isAssistantTopic(body?.topic) && !process.env.TYPESAFE_API_KEY) return NextResponse.json({ error: "AI 안내 서비스가 설정되지 않았습니다." }, { status: 503 })
 
   try {
-    const decision = await fetch("https://api.typesafe.ai/v1/systemone", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.TYPESAFE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "jev-latest",
-        state: { question },
-        questions: { topic: { type: "choice", instructions: "고객 질문의 주제를 하나만 고르세요. 불분명하면 other를 고르세요.", criteria: assistantTopics } },
-      }),
-      signal: AbortSignal.timeout(12000),
-    })
-    if (!decision.ok) throw new Error("Jev request failed")
-    const result = await decision.json()
-    const selected = result?.answers?.topic
-    const topic: AssistantTopic = selected?.type === "choice" &&
-      typeof selected.choice === "string" && Object.hasOwn(assistantTopics, selected.choice) &&
-      typeof selected.confidence === "number" && selected.confidence >= 0.55
-      ? selected.choice as AssistantTopic : "other"
+    // Realtime already selects an allowed topic; both paths return the same fixed guidance.
+    let topic: AssistantTopic = isAssistantTopic(body?.topic) ? body.topic : "other"
+    if (!isAssistantTopic(body?.topic)) {
+      const decision = await fetch("https://api.typesafe.ai/v1/systemone", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.TYPESAFE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "jev-latest",
+          state: { question },
+          questions: { topic: { type: "choice", instructions: "고객 질문의 주제를 하나만 고르세요. 불분명하면 other를 고르세요.", criteria: assistantTopics } },
+        }),
+        signal: AbortSignal.timeout(12000),
+      })
+      if (!decision.ok) throw new Error("Jev request failed")
+      const result = await decision.json()
+      const selected = result?.answers?.topic
+      topic = selected?.type === "choice" &&
+        typeof selected.choice === "string" && Object.hasOwn(assistantTopics, selected.choice) &&
+        typeof selected.confidence === "number" && selected.confidence >= 0.55
+        ? selected.choice as AssistantTopic : "other"
+    }
 
     let availableCount: number | null = null
     if (topic === "availability") {

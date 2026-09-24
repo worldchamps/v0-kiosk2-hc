@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { verifySpeechToken } from "@/lib/kiosk-assistant-speech"
+import { assistantVoiceStyles } from "@/lib/kiosk-assistant-content"
 
 export async function POST(request: Request) {
   if (!process.env.GEMINI_API_KEY) return NextResponse.json({ error: "음성 안내 서비스가 설정되지 않았습니다." }, { status: 503 })
@@ -12,11 +13,13 @@ export async function POST(request: Request) {
   }
 
   try {
+    const style = process.env.KIOSK_ASSISTANT_VOICE_STYLE || "calm"
+    const delivery = Object.hasOwn(assistantVoiceStyles, style) ? assistantVoiceStyles[style as keyof typeof assistantVoiceStyles] : assistantVoiceStyles.calm
     const response = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-lite-tts:generateContent", {
       method: "POST",
       headers: { "x-goog-api-key": process.env.GEMINI_API_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text, speech_metadata: { style: "차분하고 또렷한 한국어 안내" } }] }],
+        contents: [{ role: "user", parts: [{ text, speech_metadata: { style: delivery } }] }],
         generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { voice: "Kore" } } },
       }),
       signal: AbortSignal.timeout(30000),
