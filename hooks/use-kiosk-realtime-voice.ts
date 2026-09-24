@@ -17,6 +17,7 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
   const optionsRef = useRef(options)
   optionsRef.current = options
   const sessionRef = useRef<AbortController | null>(null)
+  const sessionIdRef = useRef("")
   const peerRef = useRef<RTCPeerConnection | null>(null)
   const channelRef = useRef<RTCDataChannel | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -25,9 +26,17 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
   const [phase, setPhase] = useState<Phase>("idle")
   const [caption, setCaption] = useState("")
 
+  const report = useCallback((event: string) => {
+    if (process.env.NEXT_PUBLIC_VERCEL_ENV !== "preview" || !sessionIdRef.current) return
+    void fetch("/api/kiosk-assistant/log", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: sessionIdRef.current, event }), keepalive: true }).catch(() => {})
+  }, [])
+
   const stop = useCallback(() => {
+    if (sessionRef.current) report("ended")
     sessionRef.current?.abort()
     sessionRef.current = null
+    sessionIdRef.current = ""
     channelRef.current?.close()
     channelRef.current = null
     peerRef.current?.close()
@@ -40,7 +49,7 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
     timerRef.current = null
     setPhase("idle")
     setCaption("")
-  }, [])
+  }, [report])
 
   useEffect(() => stop, [stop])
 
@@ -52,6 +61,7 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
     }
     const controller = new AbortController()
     sessionRef.current = controller
+    sessionIdRef.current = crypto.randomUUID()
     const current = () => sessionRef.current === controller && !controller.signal.aborted
     setPhase("connecting")
     setCaption("")
@@ -63,7 +73,9 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
       if (!current()) { stream.getTracks().forEach(track => track.stop()); return }
       streamRef.current = stream
       const tokenResponse = await fetch("/api/kiosk-assistant/realtime", {
-        method: "POST", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: sessionIdRef.current }),
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
       })
       const token = await tokenResponse.json()
       if (!tokenResponse.ok || typeof token.value !== "string") throw new Error(token.error || "음성 연결을 시작하지 못했습니다.")
@@ -83,11 +95,12 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
         if (!current()) return
         audio.srcObject = event.streams[0]
         void audio.play().catch(() => {
-          if (current()) optionsRef.current.onError("음성 재생이 차단되었습니다. 브라우저의 소리 설정을 확인해 주세요.")
+          if (current()) { report("playback_blocked"); optionsRef.current.onError("음성 재생이 차단되었습니다. 브라우저의 소리 설정을 확인해 주세요.") }
         })
       }
       pc.onconnectionstatechange = () => {
         if (current() && ["failed", "disconnected"].includes(pc.connectionState)) {
+          report("disconnected")
           stop()
           optionsRef.current.onError("음성 연결이 끊겼습니다. 다시 시작해 주세요.")
         }
@@ -111,7 +124,7 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
           const { screen, roomNumber, checkoutAt } = optionsRef.current
           const response = await fetch("/api/kiosk-assistant/ask", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ question: call.question, topic: call.topic, screen, roomNumber, checkoutAt }),
+            body: JSON.stringify({ question: call.question, topic: call.topic, screen, roomNumber, checkoutAt, sessionId: sessionIdRef.current }),
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
           })
           const result = await response.json()
@@ -131,11 +144,13 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
 
       dc.onopen = () => {
         if (!current()) return
+        report("connected")
         if (timerRef.current) clearTimeout(timerRef.current)
         setPhase("listening")
         // Public kiosk sessions end even when someone leaves the dialog open.
         timerRef.current = setTimeout(() => {
           if (!current()) return
+          report("timeout")
           stop()
           optionsRef.current.onError("음성 대화가 종료되었습니다. 더 궁금한 점이 있으면 다시 시작해 주세요.")
         }, 180000)
@@ -169,6 +184,7 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
       dc.onclose = () => { if (current()) stop() }
       dc.onerror = () => {
         if (!current()) return
+        report("connection_error")
         stop()
         optionsRef.current.onError("음성 연결이 끊겼습니다. 다시 시작해 주세요.")
       }
@@ -183,6 +199,7 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
       if (current()) await pc.setRemoteDescription({ type: "answer", sdp })
     } catch (error) {
       if (!current()) return
+      report((error as Error).name === "NotAllowedError" ? "permission_denied" : "connection_error")
       stop()
       optionsRef.current.onError((error as Error).name === "NotAllowedError"
         ? "마이크 권한을 허용한 뒤 음성 대화를 다시 시작해 주세요."

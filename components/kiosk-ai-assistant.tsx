@@ -108,7 +108,7 @@ export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumbe
     try {
       const response = await fetch("/api/kiosk-assistant/ask", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: trimmed, screen, roomNumber, checkoutAt }), signal: controller.signal,
+        body: JSON.stringify({ question: trimmed, screen, roomNumber, checkoutAt, sessionId: crypto.randomUUID() }), signal: controller.signal,
       })
       const result = await response.json()
       if (controller.signal.aborted) return
@@ -166,7 +166,8 @@ export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumbe
         <input ref={inputRef} aria-label="AI 도우미에게 질문" disabled={voice.active} maxLength={200} value={input} onChange={event => setInput(event.target.value)} placeholder={voice.active ? "음성 대화 중입니다" : "예: 객실이 있나요?"} />
         <button type="submit" aria-label="질문 보내기" disabled={busy || voice.active || !input.trim()}><Send aria-hidden="true" /></button>
       </form>
-      <p className="kiosk-ai-note">음성 대화 중에는 마이크 소리가 OpenAI로 전송됩니다. 대화는 3분 뒤 자동 종료됩니다.</p>
+      <p className="kiosk-ai-note">음성 대화 중에는 마이크 소리가 OpenAI로 전송됩니다. 대화는 3분 뒤 자동 종료됩니다.
+        {process.env.NEXT_PUBLIC_VERCEL_ENV === "preview" && " 미리보기에서는 질문과 안내 문구가 테스트 로그에 기록됩니다."}</p>
     </dialog>
   </>
 }

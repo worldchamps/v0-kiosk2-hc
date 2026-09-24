@@ -11,3 +11,9 @@
 `객실 있나요?`는 기존 판매 가능 객실 API를 서버에서 호출하며 해당 키오스크의 숙소·동으로 결과를 제한합니다. 결제 질문에는 결과가 확실하지 않을 때 추가 결제를 권하지 않습니다. 도우미는 예약 생성, 결제, 체크인, 취소, 환불을 실행하지 않습니다. 계좌이체 처리, 키 수령, 이동 경로, 퇴실 시간은 숙소별 운영 문구를 확정하기 전까지 키오스크에 이미 표시된 정보와 관리자 문의로 안내합니다.
 
 검증: `npm.cmd run typecheck`, `npm.cmd run test:qa`, `npm.cmd run build`. 실제 장비에서 마이크 권한, 연속 질문, 답변 도중 끼어들기, 자막, 음색·속도, 창 닫기 후 마이크 해제, 화면 복귀, 숙소·동별 객실 답변을 확인합니다. API 키가 없는 개발 환경의 자동 검사는 모델 연결과 물리 마이크를 증명하지 않습니다. [OpenAI Realtime](https://developers.openai.com/api/docs/guides/realtime), [WebRTC](https://developers.openai.com/api/docs/guides/voice-webrtc), [음성 스타일](https://developers.openai.com/api/docs/guides/voice-prompting).
+
+## Vercel Preview 음성 테스트
+
+기존 Vercel 프로젝트에서 GitHub `codex/kiosk-voice-preview` 브랜치를 Preview로 배포합니다. 이 브랜치의 Preview 환경에서는 AI 안내 API와 키오스크 설정 조회만 허용하며, 예약·체크인·판매·결제·객실 조회 API는 차단합니다. 음성 안내의 객실 현황도 운영 Firebase를 읽지 않고 확인 불가로 답합니다. Vercel 환경 변수에 `OPENAI_API_KEY`를 Preview 범위로 추가합니다. 기존 키오스크 설정이 없는 프로젝트라면 `property3` 테스트에 `KIOSK_BUILDING=A` 또는 `B`도 필요합니다. Preview 주소는 Vercel Authentication으로 보호합니다.
+
+Vercel Logs에서 `[kiosk-ai-preview]`를 검색하면 음성 연결 상태, 질문·안내 문구, 주제, 응답 시간, 오류를 세션 ID로 묶어 확인할 수 있습니다. 원본 음성·API 키·결제 정보는 기록하지 않습니다. 실제 개인정보 대신 테스트 문장만 사용합니다. Hobby 플랜의 런타임 로그 보관 기간은 1시간이므로 필요한 로그는 테스트 직후 확인합니다.

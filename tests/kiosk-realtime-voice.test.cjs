@@ -40,6 +40,7 @@ function harness(overrides = {}) {
     close() { this.connectionState = 'closed'; this.onconnectionstatechange?.(); }
   }
   const hook = load('hooks/use-kiosk-realtime-voice.ts', { react, '@/lib/kiosk-assistant-content': content }, {
+    process: { env: {} }, crypto: { randomUUID: () => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
     navigator: { mediaDevices: { getUserMedia: overrides.getUserMedia || (async () => stream) } },
     RTCPeerConnection: Peer,
     Audio: class { constructor() { audio = this; } async play() {} pause() { this.paused = true; } },
@@ -74,7 +75,7 @@ test('voice obtains scoped guidance, streams captions and releases all resources
   assert.equal(h.voice.phase, 'listening');
   question(h); await flush();
   const lookup = h.requests.find(r => r.url.endsWith('/ask'));
-  assert.deepEqual(JSON.parse(lookup.init.body), { topic: 'payment', question: '결제가 안 돼요', screen: 'onSiteReservation:payment' });
+  assert.deepEqual(JSON.parse(lookup.init.body), { topic: 'payment', question: '결제가 안 돼요', screen: 'onSiteReservation:payment', sessionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' });
   const speech = h.sent.find(e => e.type === 'response.create').response;
   assert.equal(speech.tool_choice, 'none');
   assert.deepEqual(speech.input, []);
@@ -136,11 +137,12 @@ test('server issues only an ephemeral key with requested voice and read-only too
   const route = load('app/api/kiosk-assistant/realtime/route.ts', {
     'next/server': { NextResponse: { json: (body, init) => ({ body, init }) } },
     '@/lib/kiosk-assistant-content': content, '@/lib/kiosk-scope': { getKioskScope: () => ({ property: 'property3', building: 'A' }) },
+    '@/lib/kiosk-assistant-preview-log': { logAssistantPreview() {}, previewSessionId: value => value },
   }, { process: { env: { OPENAI_API_KEY: 'server-only-test' } }, fetch: async (_, init) => {
     session = JSON.parse(init.body).session;
     return json({ value: 'short-lived-test', session: { private: 'not-for-browser' } });
   } });
-  const result = await route.POST();
+  const result = await route.POST({ json: async () => ({ sessionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }) });
   assert.equal(result.body.value, 'short-lived-test');
   assert(!JSON.stringify(result).includes('server-only-test'));
   assert(!('session' in result.body));

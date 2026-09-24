@@ -1,12 +1,19 @@
 import { NextResponse } from "next/server"
 import { assistantTopics, assistantVoiceStyles } from "@/lib/kiosk-assistant-content"
 import { getKioskScope } from "@/lib/kiosk-scope"
+import { logAssistantPreview, previewSessionId } from "@/lib/kiosk-assistant-preview-log"
 
-export async function POST() {
+export async function POST(request: Request) {
+  const body = await request.json().catch(() => null)
+  const sessionId = previewSessionId(body?.sessionId)
   try { getKioskScope() } catch {
+    logAssistantPreview("missing_scope", { sessionId })
     return NextResponse.json({ error: "키오스크 설정을 확인하지 못했습니다." }, { status: 503 })
   }
-  if (!process.env.OPENAI_API_KEY) return NextResponse.json({ error: "실시간 음성 서비스가 설정되지 않았습니다." }, { status: 503 })
+  if (!process.env.OPENAI_API_KEY) {
+    logAssistantPreview("missing_openai_key", { sessionId })
+    return NextResponse.json({ error: "실시간 음성 서비스가 설정되지 않았습니다." }, { status: 503 })
+  }
 
   const voice = process.env.KIOSK_ASSISTANT_VOICE || "marin"
   const style = process.env.KIOSK_ASSISTANT_VOICE_STYLE || "calm"
@@ -39,8 +46,10 @@ export async function POST() {
     if (!response.ok) throw new Error("Realtime session failed")
     const data = await response.json()
     if (typeof data.value !== "string") throw new Error("Missing client secret")
+    logAssistantPreview("session_created", { sessionId, voice, style })
     return NextResponse.json({ value: data.value, delivery }, { headers: { "Cache-Control": "no-store" } })
   } catch {
+    logAssistantPreview("session_error", { sessionId })
     return NextResponse.json({ error: "음성 연결을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요." }, { status: 502 })
   }
 }

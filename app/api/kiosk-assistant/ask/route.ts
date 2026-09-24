@@ -5,6 +5,7 @@ import { getKioskScope, isRoomInBuilding } from "@/lib/kiosk-scope"
 import { getPropertyFromRoomNumber } from "@/lib/property-utils"
 import { formatDateTimeKorean } from "@/lib/date-utils"
 import { createSpeechToken } from "@/lib/kiosk-assistant-speech"
+import { logAssistantPreview, previewSessionId } from "@/lib/kiosk-assistant-preview-log"
 
 export const dynamic = "force-dynamic"
 
@@ -20,9 +21,14 @@ export async function POST(request: Request) {
   try { input = await request.json() } catch { return NextResponse.json({ error: "질문을 확인해 주세요." }, { status: 400 }) }
   const body = input as Record<string, unknown> | null
   const question = typeof body?.question === "string" ? body.question.trim() : ""
+  const sessionId = previewSessionId(body?.sessionId)
+  const startedAt = Date.now()
   if (!question || question.length > 200) return NextResponse.json({ error: "질문은 200자 이내로 입력해 주세요." }, { status: 400 })
   if (body?.topic !== undefined && !isAssistantTopic(body.topic)) return NextResponse.json({ error: "안내 주제를 확인해 주세요." }, { status: 400 })
-  if (!isAssistantTopic(body?.topic) && !process.env.TYPESAFE_API_KEY) return NextResponse.json({ error: "AI 안내 서비스가 설정되지 않았습니다." }, { status: 503 })
+  if (!isAssistantTopic(body?.topic) && !process.env.TYPESAFE_API_KEY) {
+    logAssistantPreview("missing_classifier", { sessionId, question })
+    return NextResponse.json({ error: "AI 안내 서비스가 설정되지 않았습니다." }, { status: 503 })
+  }
 
   try {
     // Realtime already selects an allowed topic; both paths return the same fixed guidance.
@@ -48,7 +54,7 @@ export async function POST(request: Request) {
     }
 
     let availableCount: number | null = null
-    if (topic === "availability") {
+    if (topic === "availability" && process.env.VERCEL_ENV !== "preview") {
       const rooms = await getSellableRooms(new Request("http://kiosk.local/api/available-rooms"))
       if (rooms.ok) {
         const data = await rooms.json()
@@ -69,10 +75,12 @@ export async function POST(request: Request) {
     const answer = assistantAnswer(topic, {
       screen, building: scope.building, availableCount, checkoutAt, roomNumber,
     })
+    logAssistantPreview("answer", { sessionId, mode: isAssistantTopic(body?.topic) ? "voice" : "text", question, topic, answer, durationMs: Date.now() - startedAt })
     return NextResponse.json({ topic, answer,
       speechToken: process.env.GEMINI_API_KEY ? createSpeechToken(answer, process.env.GEMINI_API_KEY) : null,
     }, { headers: { "Cache-Control": "no-store" } })
   } catch {
+    logAssistantPreview("ask_error", { sessionId, question, durationMs: Date.now() - startedAt })
     return NextResponse.json({ error: "지금은 AI 답변을 확인하지 못했습니다. 잠시 후 다시 시도하거나 관리자에게 문의해 주세요." }, { status: 502 })
   }
 }
