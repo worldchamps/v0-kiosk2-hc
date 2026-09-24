@@ -155,7 +155,7 @@ export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumbe
           <div className="kiosk-ai-suggestions">{suggestedQuestions(screen).map(item =>
             <button type="button" key={item} disabled={busy} onClick={() => void ask(item)}>{item}</button>)}</div>
         </>}
-        {question && <p className="kiosk-ai-question"><strong>{voice.active && voice.phase === "listening" ? "듣고 있는 말" : "질문"}</strong><span>{question}</span></p>}
+        {question && <p className="kiosk-ai-question"><strong>{voice.active ? (voice.phase === "listening" ? "듣고 있는 말" : "음성 인식 결과") : "질문"}</strong><span>{question}</span></p>}
         {busy && <p role="status">답변을 확인하고 있습니다…</p>}
         {(answer || voice.caption) && <div className="kiosk-ai-answer"><strong>안내</strong><p>{voice.active && voice.caption ? voice.caption : answer}</p>
           {voice.active && voice.canReplay && <button type="button" disabled={voice.phase === "speaking"} onClick={() => void voice.replay()}>답변 다시 듣기</button>}

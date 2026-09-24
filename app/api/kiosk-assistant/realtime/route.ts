@@ -21,7 +21,10 @@ export async function POST() {
       body: JSON.stringify({ session: {
         type: "transcription",
         audio: { input: {
-          transcription: { model: "gpt-live-transcribe", languages: ["ko"], delay: "low" },
+          transcription: {
+            model: "gpt-live-transcribe", languages: ["ko"], delay: "low",
+            prompt: "한국어 호텔 키오스크에서 손님이 한 말을 받아 적습니다. 실제로 들린 단어만 적고 문장을 풀어 쓰거나 없는 말을 보태지 마세요. 짧은 질문은 짧게 유지하세요.",
+          },
           turn_detection: null,
         } },
       } }),
