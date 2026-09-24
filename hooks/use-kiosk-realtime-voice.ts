@@ -1,13 +1,10 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { parseGuidanceCall } from "@/lib/kiosk-assistant-content"
 
 type Phase = "idle" | "connecting" | "listening" | "thinking" | "speaking"
 interface VoiceOptions {
   screen: string
-  roomNumber?: string
-  checkoutAt?: string
   onQuestion: (question: string) => void
   onAnswer: (answer: string) => void
   onError: (error: string) => void
@@ -20,7 +17,12 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
   const peerRef = useRef<RTCPeerConnection | null>(null)
   const channelRef = useRef<RTCDataChannel | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const contextRef = useRef<AudioContext | null>(null)
+  const meterRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const audioUrlRef = useRef<string | null>(null)
+  const speechRef = useRef<{ text: string; token: string } | null>(null)
+  const resumeRef = useRef<() => void>(() => {})
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [phase, setPhase] = useState<Phase>("idle")
   const [caption, setCaption] = useState("")
@@ -28,14 +30,22 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
   const stop = useCallback(() => {
     sessionRef.current?.abort()
     sessionRef.current = null
+    if (meterRef.current) clearInterval(meterRef.current)
+    meterRef.current = null
+    void contextRef.current?.close()
+    contextRef.current = null
     channelRef.current?.close()
     channelRef.current = null
     peerRef.current?.close()
     peerRef.current = null
     streamRef.current?.getTracks().forEach(track => track.stop())
     streamRef.current = null
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current.srcObject = null }
+    audioRef.current?.pause()
     audioRef.current = null
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current)
+    audioUrlRef.current = null
+    speechRef.current = null
+    resumeRef.current = () => {}
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = null
     setPhase("idle")
@@ -44,9 +54,47 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
 
   useEffect(() => stop, [stop])
 
+  const replay = async () => {
+    const speech = speechRef.current
+    const controller = sessionRef.current
+    if (!speech || !controller || controller.signal.aborted) return
+    const microphone = streamRef.current?.getAudioTracks()[0]
+    if (microphone) microphone.enabled = false
+    audioRef.current?.pause()
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current)
+    audioUrlRef.current = null
+    setPhase("speaking")
+    try {
+      const response = await fetch("/api/kiosk-assistant/speak", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(speech),
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]),
+      })
+      if (!response.ok) throw new Error()
+      const blob = await response.blob()
+      if (sessionRef.current !== controller || controller.signal.aborted) return
+      const url = URL.createObjectURL(blob)
+      audioUrlRef.current = url
+      const audio = new Audio(url)
+      audioRef.current = audio
+      audio.onended = () => {
+        URL.revokeObjectURL(url)
+        if (audioUrlRef.current === url) audioUrlRef.current = null
+        audioRef.current = null
+        resumeRef.current()
+      }
+      await audio.play()
+    } catch {
+      if (sessionRef.current === controller && !controller.signal.aborted) {
+        optionsRef.current.onError("음성 안내를 재생하지 못했습니다. 화면의 글을 확인해 주세요.")
+        resumeRef.current()
+      }
+    }
+  }
+
   const start = async () => {
     if (sessionRef.current) return
-    if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === "undefined") {
+    if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === "undefined" || typeof AudioContext === "undefined") {
       optionsRef.current.onError("음성 대화는 HTTPS 또는 이 PC의 localhost 주소에서 열어 주세요.")
       return
     }
@@ -57,17 +105,36 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
     setCaption("")
     optionsRef.current.onError("")
     let turn = 0
-    const responseTurns = new Map<string, number>()
+    let completedTurn = 0
+    let partial = ""
+    let hearing = false
+    let committed = false
+    let lastVoiceAt = 0
+    let voiceStartedAt = 0
+    let failedQuestions = 0
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
       if (!current()) { stream.getTracks().forEach(track => track.stop()); return }
       streamRef.current = stream
+      const microphone = stream.getAudioTracks()[0]
+      const context = new AudioContext()
+      contextRef.current = context
+      const source = context.createMediaStreamSource(stream)
+      const analyser = context.createAnalyser()
+      analyser.fftSize = 512
+      source.connect(analyser)
+      await context.resume()
+      const samples = new Uint8Array(analyser.fftSize)
+
       const tokenResponse = await fetch("/api/kiosk-assistant/realtime", {
         method: "POST", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
       })
       const token = await tokenResponse.json()
       if (!tokenResponse.ok || typeof token.value !== "string") throw new Error(token.error || "음성 연결을 시작하지 못했습니다.")
       if (!current()) return
+      const silenceMs = typeof token.silenceMs === "number" ? token.silenceMs : 700
+      const threshold = typeof token.voiceThreshold === "number" ? token.voiceThreshold : 0.018
 
       const pc = new RTCPeerConnection()
       peerRef.current = pc
@@ -76,95 +143,117 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
         stop()
         optionsRef.current.onError("음성 연결 시간이 초과되었습니다. 다시 시작해 주세요.")
       }, 30000)
-      const audio = new Audio()
-      audio.autoplay = true
-      audioRef.current = audio
-      pc.ontrack = event => {
-        if (!current()) return
-        audio.srcObject = event.streams[0]
-        void audio.play().catch(() => {
-          if (current()) optionsRef.current.onError("음성 재생이 차단되었습니다. 브라우저의 소리 설정을 확인해 주세요.")
-        })
-      }
       pc.onconnectionstatechange = () => {
         if (current() && ["failed", "disconnected"].includes(pc.connectionState)) {
           stop()
           optionsRef.current.onError("음성 연결이 끊겼습니다. 다시 시작해 주세요.")
         }
       }
-      stream.getTracks().forEach(track => pc.addTrack(track, stream))
+      pc.addTrack(microphone, stream)
       const dc = pc.createDataChannel("oai-events")
       channelRef.current = dc
-      const send = (event: unknown) => { if (current() && dc.readyState === "open") dc.send(JSON.stringify(event)) }
 
-      const answerCall = async (item: unknown, inputTurn: number) => {
-        const call = parseGuidanceCall(item)
-        if (!call) { stop(); optionsRef.current.onError("질문을 확인하지 못했습니다. 음성 대화를 다시 시작해 주세요."); return }
-        if (inputTurn !== turn) {
-          send({ type: "conversation.item.create", item: { type: "function_call_output", call_id: call.callId, output: "새 질문으로 대체되었습니다." } })
+      const listenAgain = () => {
+        if (!current()) return
+        committed = false
+        microphone.enabled = true
+        setPhase("listening")
+      }
+      resumeRef.current = listenAgain
+      const answerQuestion = async (question: string, inputTurn: number) => {
+        const cleanQuestion = question.trim()
+        if (!cleanQuestion) {
+          failedQuestions++
+          if (failedQuestions >= 2) {
+            optionsRef.current.onAnswer("질문을 알아듣지 못했습니다. 직원에게 연락해 주세요.")
+            stop()
+            return
+          }
+          optionsRef.current.onError("질문을 잘 듣지 못했습니다. 다시 한 번 말씀해 주세요.")
+          listenAgain()
           return
         }
         setPhase("thinking")
-        optionsRef.current.onQuestion(call.question)
-        let answer = "지금은 안내를 확인하지 못했습니다. 잠시 후 다시 시도하거나 관리자에게 문의해 주세요."
+        optionsRef.current.onQuestion(cleanQuestion)
+        let answer = "지금은 안내를 확인하지 못했습니다. 직원에게 연락해 주세요."
+        let speechToken = ""
         try {
-          const { screen, roomNumber, checkoutAt } = optionsRef.current
           const response = await fetch("/api/kiosk-assistant/ask", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ question: call.question, topic: call.topic, screen, roomNumber, checkoutAt }),
+            body: JSON.stringify({ question: cleanQuestion, screen: optionsRef.current.screen }),
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
           })
           const result = await response.json()
           if (response.ok && typeof result.answer === "string") answer = result.answer
+          if (response.ok && typeof result.speechToken === "string") speechToken = result.speechToken
+          if (result.topic === "other") {
+            failedQuestions++
+            if (failedQuestions >= 2) {
+              answer = "질문을 확인하지 못했습니다. 직원에게 연락해 주세요."
+              speechToken = ""
+            }
+          } else if (response.ok) failedQuestions = 0
         } catch { if (!current()) return }
-        if (!current()) return
-        send({ type: "conversation.item.create", item: { type: "function_call_output", call_id: call.callId, output: JSON.stringify({ answer }) } })
-        // A newer utterance supersedes this lookup; never speak its stale result.
-        if (inputTurn !== turn) return
+        if (!current() || inputTurn !== turn) return
         optionsRef.current.onAnswer(answer)
-        setCaption("")
-        send({ type: "response.create", response: {
-          tool_choice: "none", output_modalities: ["audio"], input: [],
-          instructions: `${token.delivery} 다음 승인된 안내 문장만 한국어로 그대로 읽으세요. 설명이나 인사를 추가하지 마세요. 안내: ${answer}`,
-        } })
+        setCaption(answer)
+        if (failedQuestions >= 2) { stop(); return }
+        if (!speechToken) { listenAgain(); return }
+        speechRef.current = { text: answer, token: speechToken }
+        await replay()
       }
 
       dc.onopen = () => {
         if (!current()) return
         if (timerRef.current) clearTimeout(timerRef.current)
         setPhase("listening")
-        // Public kiosk sessions end even when someone leaves the dialog open.
         timerRef.current = setTimeout(() => {
           if (!current()) return
           stop()
           optionsRef.current.onError("음성 대화가 종료되었습니다. 더 궁금한 점이 있으면 다시 시작해 주세요.")
         }, 180000)
+        meterRef.current = setInterval(() => {
+          if (!current() || dc.readyState !== "open" || committed) return
+          analyser.getByteTimeDomainData(samples)
+          let energy = 0
+          for (const sample of samples) energy += ((sample - 128) / 128) ** 2
+          const now = Date.now()
+          if (Math.sqrt(energy / samples.length) >= threshold) {
+            lastVoiceAt = now
+            if (!hearing) {
+              hearing = true
+              voiceStartedAt = now
+              turn++
+              partial = ""
+              speechRef.current = null
+              setCaption("")
+              optionsRef.current.onQuestion("")
+              optionsRef.current.onAnswer("")
+              optionsRef.current.onError("")
+            }
+          } else if (hearing && now - lastVoiceAt >= silenceMs && now - voiceStartedAt >= 300) {
+            hearing = false
+            committed = true
+            microphone.enabled = false
+            dc.send(JSON.stringify({ type: "input_audio_buffer.commit" }))
+            setPhase("thinking")
+          }
+        }, 50)
       }
       dc.onmessage = event => {
         if (!current()) return
         let data
         try { data = JSON.parse(event.data) } catch { return }
-        if (data.type === "response.created" && typeof data.response?.id === "string") responseTurns.set(data.response.id, turn)
-        else if (data.type === "input_audio_buffer.speech_started") {
-          turn++
-          setCaption("")
-          optionsRef.current.onQuestion("")
-          optionsRef.current.onAnswer("")
-          setPhase("listening")
-        } else if (data.type === "input_audio_buffer.speech_stopped") setPhase("thinking")
-        else if (data.type === "output_audio_buffer.started") setPhase("speaking")
-        else if (["output_audio_buffer.stopped", "output_audio_buffer.cleared"].includes(data.type)) setPhase(value => value === "speaking" ? "listening" : value)
-        else if (data.type === "response.output_audio_transcript.delta" && typeof data.delta === "string" && responseTurns.get(data.response_id) === turn) setCaption(value => (value + data.delta).slice(0, 2000))
-        else if (data.type === "response.done" && data.response?.status === "completed") {
-          const inputTurn = responseTurns.get(data.response.id)
-          responseTurns.delete(data.response.id)
-          const calls = (Array.isArray(data.response.output) ? data.response.output : []).filter((item: { type?: string }) => item?.type === "function_call")
-          if (calls.length === 1 && inputTurn !== undefined) void answerCall(calls[0], inputTurn)
-          else if (calls.length > 1) { stop(); optionsRef.current.onError("음성 대화를 다시 시작하고 한 가지씩 물어봐 주세요.") }
-        } else if (data.type === "error" || (data.type === "response.done" && ["failed", "incomplete"].includes(data.response?.status))) {
-          stop()
-          optionsRef.current.onError("음성 안내 중 오류가 발생했습니다. 다시 시작하거나 글자로 질문해 주세요.")
-        } else if (data.type === "response.done") responseTurns.delete(data.response?.id)
+        if (data.type === "conversation.item.input_audio_transcription.delta" && typeof data.delta === "string") {
+          partial = (partial + data.delta).slice(0, 200)
+          optionsRef.current.onQuestion(partial)
+        } else if (data.type === "conversation.item.input_audio_transcription.completed" && committed && completedTurn !== turn) {
+          completedTurn = turn
+          void answerQuestion(typeof data.transcript === "string" ? data.transcript : partial, turn)
+        } else if (data.type === "error" || data.type === "conversation.item.input_audio_transcription.failed") {
+          optionsRef.current.onError("음성을 알아듣지 못했습니다. 다시 한 번 말씀해 주세요.")
+          listenAgain()
+        }
       }
       dc.onclose = () => { if (current()) stop() }
       dc.onerror = () => {
@@ -190,5 +279,5 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
     }
   }
 
-  return { phase, caption, active: phase !== "idle", start, stop }
+  return { phase, caption, active: phase !== "idle", start, stop, replay, canReplay: !!speechRef.current }
 }

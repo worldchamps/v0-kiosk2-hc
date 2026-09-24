@@ -2636,6 +2636,7 @@ textarea {
 .kiosk-ai-answer p { margin: 0; white-space: pre-wrap; }
 .kiosk-ai-answer button { margin-top: 20px; min-height: 52px; padding: 8px 16px; border-radius: 12px; background: #ffffff; color: #174d93; font-size: 18px; font-weight: 800; }
 .kiosk-ai-error { color: #a3212b; font-weight: 700; }
+.kiosk-ai-staff-contact { margin: 20px 0 0; padding: 18px; border-radius: 16px; background: #fff2e3; color: #8c321b; font-size: 26px; font-weight: 800; text-align: center; }
 .kiosk-ai-input { display: flex; gap: 10px; padding: 18px 24px; border-top: 1px solid #e5e7eb; }
 .kiosk-ai-input input { flex: 1; min-width: 0; min-height: 66px; padding: 10px 16px; border: 2px solid #bfc7d2; border-radius: 14px; background: #ffffff; font-size: 22px; }
 .kiosk-ai-input button { width: 66px; min-height: 66px; display: grid; place-items: center; border-radius: 14px; color: #ffffff; background: #174d93; }

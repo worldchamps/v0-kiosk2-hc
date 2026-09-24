@@ -3,10 +3,22 @@ import { GET as getSellableRooms } from "@/app/api/available-rooms/route"
 import { assistantAnswer, assistantTopics, isAssistantTopic, type AssistantTopic } from "@/lib/kiosk-assistant-content"
 import { getKioskScope, isRoomInBuilding } from "@/lib/kiosk-scope"
 import { getPropertyFromRoomNumber } from "@/lib/property-utils"
-import { formatDateTimeKorean } from "@/lib/date-utils"
 import { createSpeechToken } from "@/lib/kiosk-assistant-speech"
 
 export const dynamic = "force-dynamic"
+
+// Only these fixed labels reach Gemini; a guest's words stay on this server.
+const topicHints: { topic: AssistantTopic; pattern: RegExp }[] = [
+  { topic: "availability", pattern: /빈방|객실.*(?:있|남|가능)/ },
+  { topic: "checkin", pattern: /체크인|입실/ },
+  { topic: "transfer", pattern: /계좌이체|현금|결제 방법/ },
+  { topic: "key", pattern: /키|열쇠|출입/ },
+  { topic: "directions", pattern: /어디|길|층|건물|동/ },
+  { topic: "checkout", pattern: /체크아웃|퇴실/ },
+  { topic: "payment", pattern: /결제|승인|카드|돈/ },
+  { topic: "reservation", pattern: /예약|조회|QR/ },
+]
+const sensitive = /\d{2,}|@|예약\s*번호|전화\s*번호|비밀번호|카드\s*번호|계좌\s*번호|주민등록|(?:제|내)\s*이름/
 
 export async function POST(request: Request) {
   let scope
@@ -22,33 +34,49 @@ export async function POST(request: Request) {
   const question = typeof body?.question === "string" ? body.question.trim() : ""
   if (!question || question.length > 200) return NextResponse.json({ error: "질문은 200자 이내로 입력해 주세요." }, { status: 400 })
   if (body?.topic !== undefined && !isAssistantTopic(body.topic)) return NextResponse.json({ error: "안내 주제를 확인해 주세요." }, { status: 400 })
-  if (!isAssistantTopic(body?.topic) && !process.env.TYPESAFE_API_KEY) return NextResponse.json({ error: "AI 안내 서비스가 설정되지 않았습니다." }, { status: 503 })
+  const screen = typeof body?.screen === "string" && body.screen.length <= 48 ? body.screen : ""
+  const stateMismatch = /(안\s*(?:나와|나옵|돼|됩)|없|오류|실패|못|이상)/.test(question) &&
+    /(키|열쇠|출입|체크인|입실|결제)/.test(question)
+  if (sensitive.test(question) || stateMismatch) {
+    const answer = sensitive.test(question)
+      ? "개인정보는 말하지 말고 화면에서 직접 확인해 주세요. 어려우면 직원에게 연락해 주세요."
+      : "화면 상태를 확인할 수 없습니다. 더 진행하지 말고 직원에게 연락해 주세요."
+    return NextResponse.json({ topic: "other", answer,
+      speechToken: process.env.GEMINI_API_KEY ? createSpeechToken(answer, process.env.GEMINI_API_KEY) : null,
+    }, { headers: { "Cache-Control": "no-store" } })
+  }
+  const allowed = topicHints.filter(hint => hint.pattern.test(question)).map(hint => hint.topic)
+  if (!isAssistantTopic(body?.topic) && allowed.length && !process.env.GEMINI_API_KEY) {
+    return NextResponse.json({ error: "AI 안내 서비스가 설정되지 않았습니다." }, { status: 503 })
+  }
 
   try {
     // Realtime already selects an allowed topic; both paths return the same fixed guidance.
     let topic: AssistantTopic = isAssistantTopic(body?.topic) ? body.topic : "other"
-    if (!isAssistantTopic(body?.topic)) {
-      const decision = await fetch("https://api.typesafe.ai/v1/systemone", {
+    if (!isAssistantTopic(body?.topic) && allowed.length) {
+      const decision = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent", {
         method: "POST",
-        headers: { Authorization: `Bearer ${process.env.TYPESAFE_API_KEY}`, "Content-Type": "application/json" },
+        headers: { "x-goog-api-key": process.env.GEMINI_API_KEY!, "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "jev-latest",
-          state: { question },
-          questions: { topic: { type: "choice", instructions: "고객 질문의 주제를 하나만 고르세요. 불분명하면 other를 고르세요.", criteria: assistantTopics } },
+          contents: [{ role: "user", parts: [{ text:
+            `키오스크 안내 주제를 하나 고르세요. JSON으로 {"topic":"..."}만 답하세요.\n` +
+            `가능한 주제: ${allowed.map(key => `${key}=${assistantTopics[key]}`).join(", ")}`,
+          }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0 },
         }),
         signal: AbortSignal.timeout(12000),
       })
-      if (!decision.ok) throw new Error("Jev request failed")
+      if (!decision.ok) throw new Error("Gemini request failed")
       const result = await decision.json()
-      const selected = result?.answers?.topic
-      topic = selected?.type === "choice" &&
-        typeof selected.choice === "string" && Object.hasOwn(assistantTopics, selected.choice) &&
-        typeof selected.confidence === "number" && selected.confidence >= 0.55
-        ? selected.choice as AssistantTopic : "other"
+      const text = result?.candidates?.[0]?.content?.parts?.[0]?.text
+      try {
+        const selected = JSON.parse(typeof text === "string" ? text : "{}")?.topic
+        topic = isAssistantTopic(selected) && allowed.includes(selected) ? selected : "other"
+      } catch { topic = "other" }
     }
 
     let availableCount: number | null = null
-    if (topic === "availability") {
+    if (topic === "availability" && process.env.VERCEL_ENV !== "preview") {
       const rooms = await getSellableRooms(new Request("http://kiosk.local/api/available-rooms"))
       if (rooms.ok) {
         const data = await rooms.json()
@@ -59,20 +87,13 @@ export async function POST(request: Request) {
       }
     }
 
-    const screen = typeof body?.screen === "string" && body.screen.length <= 48 ? body.screen : ""
-    const checkoutAt = typeof body?.checkoutAt === "string" && body.checkoutAt.length <= 40 &&
-      /\d{1,2}:\d{2}/.test(body.checkoutAt) ? formatDateTimeKorean(body.checkoutAt) : null
-    const roomNumber = typeof body?.roomNumber === "string" &&
-      getPropertyFromRoomNumber(body.roomNumber) === scope.property &&
-      isRoomInBuilding(body.roomNumber, scope.building) ? body.roomNumber.trim() : null
-
     const answer = assistantAnswer(topic, {
-      screen, building: scope.building, availableCount, checkoutAt, roomNumber,
+      screen, building: scope.building, availableCount,
     })
     return NextResponse.json({ topic, answer,
       speechToken: process.env.GEMINI_API_KEY ? createSpeechToken(answer, process.env.GEMINI_API_KEY) : null,
     }, { headers: { "Cache-Control": "no-store" } })
   } catch {
-    return NextResponse.json({ error: "지금은 AI 답변을 확인하지 못했습니다. 잠시 후 다시 시도하거나 관리자에게 문의해 주세요." }, { status: 502 })
+    return NextResponse.json({ error: "지금은 AI 답변을 확인하지 못했습니다. 잠시 후 다시 시도하거나 직원에게 문의해 주세요." }, { status: 502 })
   }
 }

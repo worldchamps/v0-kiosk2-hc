@@ -27,12 +27,12 @@ export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumbe
   const [busy, setBusy] = useState(false)
   const [speaking, setSpeaking] = useState(false)
   const voice = useKioskRealtimeVoice({
-    screen, roomNumber, checkoutAt,
+    screen,
     onQuestion: value => { setQuestion(value); setSpeechToken("") },
     onAnswer: setAnswer,
     onError: setError,
   })
-  const voiceStatus = { idle: "버튼을 누른 뒤 편하게 말씀하세요.", connecting: "마이크를 연결하고 있어요…", listening: "듣고 있어요. 말씀해 주세요.", thinking: "안내를 확인하고 있어요…", speaking: "말하는 중이에요. 중간에 질문해도 괜찮아요." }[voice.phase]
+  const voiceStatus = { idle: "버튼을 누른 뒤 편하게 말씀하세요.", connecting: "마이크를 연결하고 있어요…", listening: "듣고 있어요. 말씀해 주세요.", thinking: "안내를 확인하고 있어요…", speaking: "말하는 중이에요. 안내가 끝난 뒤 질문해 주세요." }[voice.phase]
 
   const stopAudio = () => {
     audioRef.current?.pause()
@@ -155,18 +155,20 @@ export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumbe
           <div className="kiosk-ai-suggestions">{suggestedQuestions(screen).map(item =>
             <button type="button" key={item} disabled={busy} onClick={() => void ask(item)}>{item}</button>)}</div>
         </>}
-        {question && <p className="kiosk-ai-question"><strong>질문</strong><span>{question}</span></p>}
+        {question && <p className="kiosk-ai-question"><strong>{voice.active && voice.phase === "listening" ? "듣고 있는 말" : "질문"}</strong><span>{question}</span></p>}
         {busy && <p role="status">답변을 확인하고 있습니다…</p>}
         {(answer || voice.caption) && <div className="kiosk-ai-answer"><strong>안내</strong><p>{voice.active && voice.caption ? voice.caption : answer}</p>
-          {speechToken && <button type="button" disabled={speaking} onClick={() => void speak(answer, speechToken)}>{speaking ? "읽는 중" : "답변 다시 듣기"}</button>}
+          {voice.active && voice.canReplay && <button type="button" disabled={voice.phase === "speaking"} onClick={() => void voice.replay()}>답변 다시 듣기</button>}
+          {!voice.active && speechToken && <button type="button" onClick={() => speaking ? stopAudio() : void speak(answer, speechToken)}>{speaking ? "음성 중단" : "답변 다시 듣기"}</button>}
         </div>}
+        {/직원에게 연락/.test(answer) && <p className="kiosk-ai-staff-contact">직원 연락: 010-5126-4644</p>}
         {error && <p className="kiosk-ai-error" role="alert">{error}</p>}
       </div>
       <form className="kiosk-ai-input" onSubmit={event => { event.preventDefault(); void ask(input) }}>
         <input ref={inputRef} aria-label="AI 도우미에게 질문" disabled={voice.active} maxLength={200} value={input} onChange={event => setInput(event.target.value)} placeholder={voice.active ? "음성 대화 중입니다" : "예: 객실이 있나요?"} />
         <button type="submit" aria-label="질문 보내기" disabled={busy || voice.active || !input.trim()}><Send aria-hidden="true" /></button>
       </form>
-      <p className="kiosk-ai-note">음성 대화 중에는 마이크 소리가 OpenAI로 전송됩니다. 대화는 3분 뒤 자동 종료됩니다.</p>
+      <p className="kiosk-ai-note">‘음성 대화 시작’을 누르면 마이크 소리가 OpenAI 음성 인식으로 전송됩니다. 이름·예약번호·결제 정보는 말하지 마세요. 대화는 3분 뒤 자동 종료됩니다.</p>
     </dialog>
   </>
 }
