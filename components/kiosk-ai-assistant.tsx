@@ -1,9 +1,9 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Bot, CalendarDays, CreditCard, Info, KeyRound, MapPin, Mic, Pencil, Phone, Search, Send, UserRound, X } from "lucide-react"
+import { Bot, CalendarDays, CreditCard, KeyRound, MapPin, Mic, Pencil, Phone, Search, Send, UserRound, X } from "lucide-react"
 import { suggestedQuestions } from "@/lib/kiosk-assistant-content"
-import { readAssistantStream } from "@/lib/kiosk-assistant-stream"
+import { readAssistantStream, syncAssistantSpeech } from "@/lib/kiosk-assistant-stream"
 import { useKioskRealtimeVoice } from "@/hooks/use-kiosk-realtime-voice"
 
 interface KioskAiAssistantProps {
@@ -62,7 +62,7 @@ export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumbe
     },
     onError: setError,
   })
-  const voiceStatus = { idle: "버튼을 누른 뒤 편하게 말씀하세요.", connecting: "마이크를 연결하고 있어요…", listening: "듣고 있어요. 말씀해 주세요.", thinking: "안내를 확인하고 있어요…", speaking: "말하는 중이에요. 안내가 끝난 뒤 질문해 주세요." }[voice.phase]
+  const voiceStatus = { idle: "버튼을 누른 뒤 편하게 말씀하세요.", connecting: "마이크를 연결하고 있어요…", listening: "듣고 있어요. 말씀해 주세요.", thinking: "답변과 음성을 준비하고 있어요…", speaking: "말하는 중이에요. 안내가 끝난 뒤 질문해 주세요." }[voice.phase]
   const waiting = busy || voice.phase === "thinking"
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ block: "nearest" }) }, [history, question, answer, error, busy])
@@ -101,7 +101,7 @@ export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumbe
     setError("")
   }, [open, voice.stop])
 
-  const speak = async (text: string, token: string) => {
+  const speak = async (text: string, token: string, onText?: (text: string) => void) => {
     if (!token) return
     stopAudio()
     const controller = new AbortController()
@@ -118,12 +118,19 @@ export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumbe
       audioUrlRef.current = url
       const audio = new Audio(url)
       audioRef.current = audio
-      audio.onended = stopAudio
+      const reveal = onText ? syncAssistantSpeech(audio, text, value => {
+        if (audioRef.current === audio) onText(value)
+      }, () => { if (audioRef.current === audio) stopAudio() }) : null
+      if (!onText) audio.onended = stopAudio
       await audio.play()
       if (controller.signal.aborted || requestRef.current !== controller) { audio.pause(); return }
+      reveal?.()
       setSpeaking(true)
     } catch (cause) {
-      if (!controller.signal.aborted && requestRef.current === controller) setError(cause instanceof Error ? cause.message : "음성 안내를 재생하지 못했습니다.")
+      if (!controller.signal.aborted && requestRef.current === controller) {
+        onText?.(text)
+        setError(cause instanceof Error ? cause.message : "음성 안내를 재생하지 못했습니다.")
+      }
     }
   }
 
@@ -142,18 +149,20 @@ export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumbe
     const controller = new AbortController()
     requestRef.current = controller
     try {
+      let fullAnswer = ""
       const response = await fetch("/api/kiosk-assistant/ask", {
         method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
         body: JSON.stringify({ question: trimmed, screen, roomNumber, checkoutAt }), signal: controller.signal,
       })
-      const result = await readAssistantStream(response, chunk => {
-        if (controller.signal.aborted || requestRef.current !== controller) return
-        currentTurnRef.current = { ...currentTurnRef.current, answer: currentTurnRef.current.answer + chunk }
-        setAnswer(currentTurnRef.current.answer)
-      })
+      const result = await readAssistantStream(response, chunk => { fullAnswer += chunk })
       if (controller.signal.aborted) return
       setSpeechToken(typeof result.speechToken === "string" ? result.speechToken : "")
-      if (result.speechToken) void speak(currentTurnRef.current.answer, result.speechToken)
+      const show = (value: string) => {
+        currentTurnRef.current = { ...currentTurnRef.current, answer: value }
+        setAnswer(value)
+      }
+      if (result.speechToken) await speak(fullAnswer, result.speechToken, show)
+      else show(fullAnswer)
     } catch (cause) {
       if ((cause as Error).name !== "AbortError") {
         currentTurnRef.current = { ...currentTurnRef.current, answer: "" }
@@ -225,7 +234,6 @@ export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumbe
         <Pencil aria-hidden="true" /><input ref={inputRef} aria-label="AI 도우미에게 질문" disabled={voice.active} maxLength={200} value={input} onChange={event => setInput(event.target.value)} placeholder={voice.active ? "음성 대화 중입니다" : "궁금한 내용을 입력하세요"} />
         <button type="submit" aria-label="질문 보내기" disabled={busy || voice.active || !input.trim()}><Send aria-hidden="true" /></button>
       </form>
-      <p className="kiosk-ai-note"><Info aria-hidden="true" />개인정보나 민감한 정보는 입력하지 마세요. 음성 안내를 시작하면 마이크 소리가 OpenAI 음성 인식으로 전송되며, 대화는 3분 뒤 자동 종료됩니다.</p>
     </dialog>
   </>
 }

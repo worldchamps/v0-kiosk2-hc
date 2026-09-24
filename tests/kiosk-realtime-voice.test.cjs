@@ -35,6 +35,8 @@ test('assistant stream reads answer fragments and completion', async () => {
 function voiceHarness() {
   const refs = [], requests = [], sent = [], questions = [], answers = [], errors = [], timers = new Map(), intervals = new Map(), audios = [];
   let index = 0, now = 1000, cleanup, peer, level = 0, stopped = 0;
+  let releaseSpeech;
+  const speechBlob = new Promise(resolve => { releaseSpeech = () => resolve({ wav: true }); });
   const track = { enabled: true, stop() { stopped++; } };
   const stream = { getTracks: () => [track], getAudioTracks: () => [track] };
   const analyser = { fftSize: 512, getByteTimeDomainData(samples) { samples.fill(128 + Math.round(level * 128)); } };
@@ -63,7 +65,7 @@ function voiceHarness() {
   const hook = load('hooks/use-kiosk-realtime-voice.ts', { react, '@/lib/kiosk-assistant-stream': assistantStream }, {
     navigator: { mediaDevices: { getUserMedia: async () => stream } },
     RTCPeerConnection: Peer, AudioContext: FakeAudioContext,
-    Audio: class { constructor(src) { this.src = src; audios.push(this); } async play() { this.played = true; } pause() { this.paused = true; } },
+    Audio: class { constructor(src) { this.src = src; this.currentTime = 0; this.duration = 4; audios.push(this); } async play() { this.played = true; } pause() { this.paused = true; } },
     URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
     Date: { now: () => now },
     setTimeout(fn, delay) { timers.set(fn, delay); return fn; }, clearTimeout: id => timers.delete(id),
@@ -77,7 +79,7 @@ function voiceHarness() {
         JSON.stringify({ type: 'delta', text: '추가 결제하지 말고 직원에게 연락해 주세요.' }),
         JSON.stringify({ type: 'done', topic: 'payment', speechToken: 'signed-speech' }),
       ].join('\n') + '\n');
-      if (url === '/api/kiosk-assistant/speak') return { ok: true, blob: async () => ({ wav: true }) };
+      if (url === '/api/kiosk-assistant/speak') return { ok: true, blob: () => speechBlob };
       throw new Error(`Unexpected request ${url}`);
     },
   }).useKioskRealtimeVoice;
@@ -87,7 +89,7 @@ function voiceHarness() {
     tick() { [...intervals.keys()][0]?.(); },
     setLevel: value => { level = value; },
     advance: ms => { now += ms; },
-    track, stream, channel, timers, intervals, requests, sent, questions, answers, errors, audios,
+    track, stream, channel, timers, intervals, requests, sent, questions, answers, errors, audios, releaseSpeech,
     get peer() { return peer; }, get stopped() { return stopped; }, unmount: () => cleanup(),
   };
 }
@@ -111,10 +113,16 @@ test('silence commits one OpenAI transcript turn, then Gemini guidance and TTS p
     question: '결제가 안 돼요', screen: 'onSiteReservation:payment',
   });
   assert.equal(h.requests.some(r => r.url.endsWith('/speak')), true);
-  assert(h.answers.includes('결과가 불분명하면 '));
+  assert.equal(h.answers.filter(Boolean).length, 0);
+  h.releaseSpeech();
+  for (let i = 0; i < 20 && !h.audios[0]?.played; i++) await flush();
   assert.equal(h.voice.phase, 'speaking');
-  assert.match(h.voice.caption, /추가 결제하지 말고/);
+  assert.equal(h.answers.at(-1), '결과가 ');
+  h.audios[0].currentTime = 2;
+  h.audios[0].ontimeupdate();
+  assert(h.answers.at(-1).length > '결과가 '.length);
   h.audios[0].onended();
+  assert.match(h.answers.at(-1), /추가 결제하지 말고 직원에게 연락해 주세요/);
   assert.equal(h.track.enabled, true);
   h.unmount();
   assert.equal(h.stopped, 1);

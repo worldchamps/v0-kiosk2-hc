@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { readAssistantStream } from "@/lib/kiosk-assistant-stream"
+import { readAssistantStream, syncAssistantSpeech } from "@/lib/kiosk-assistant-stream"
 
 type Phase = "idle" | "connecting" | "listening" | "thinking" | "speaking"
 interface VoiceOptions {
@@ -55,7 +55,7 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
 
   useEffect(() => stop, [stop])
 
-  const replay = async () => {
+  const replay = async (syncText = false) => {
     const speech = speechRef.current
     const controller = sessionRef.current
     if (!speech || !controller || controller.signal.aborted) return
@@ -64,7 +64,7 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
     audioRef.current?.pause()
     if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current)
     audioUrlRef.current = null
-    setPhase("speaking")
+    setPhase("thinking")
     try {
       const response = await fetch("/api/kiosk-assistant/speak", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -78,15 +78,25 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
       audioUrlRef.current = url
       const audio = new Audio(url)
       audioRef.current = audio
-      audio.onended = () => {
+      const finish = () => {
         URL.revokeObjectURL(url)
         if (audioUrlRef.current === url) audioUrlRef.current = null
         audioRef.current = null
         resumeRef.current()
       }
+      const reveal = syncText ? syncAssistantSpeech(audio, speech.text, value => {
+        if (sessionRef.current !== controller || audioRef.current !== audio) return
+        optionsRef.current.onAnswer(value)
+        setCaption(value)
+      }, () => { if (audioRef.current === audio) finish() }) : null
+      if (!syncText) audio.onended = finish
       await audio.play()
+      if (sessionRef.current !== controller || controller.signal.aborted) return
+      setPhase("speaking")
+      reveal?.()
     } catch {
       if (sessionRef.current === controller && !controller.signal.aborted) {
+        if (syncText) { optionsRef.current.onAnswer(speech.text); setCaption(speech.text) }
         optionsRef.current.onError("음성 안내를 재생하지 못했습니다. 화면의 글을 확인해 주세요.")
         resumeRef.current()
       }
@@ -188,8 +198,6 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
           const result = await readAssistantStream(response, chunk => {
             if (!current() || inputTurn !== turn) return
             answer += chunk
-            optionsRef.current.onAnswer(answer)
-            setCaption(answer)
           })
           if (typeof result.speechToken === "string") speechToken = result.speechToken
           if (result.topic === "other") {
@@ -205,12 +213,20 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
           speechToken = ""
         }
         if (!current() || inputTurn !== turn) return
-        optionsRef.current.onAnswer(answer)
-        setCaption(answer)
-        if (failedQuestions >= 2) { stop(); return }
-        if (!speechToken) { listenAgain(); return }
+        if (failedQuestions >= 2) {
+          optionsRef.current.onAnswer(answer)
+          setCaption(answer)
+          stop()
+          return
+        }
+        if (!speechToken) {
+          optionsRef.current.onAnswer(answer)
+          setCaption(answer)
+          listenAgain()
+          return
+        }
         speechRef.current = { text: answer, token: speechToken }
-        await replay()
+        await replay(true)
       }
 
       dc.onopen = () => {

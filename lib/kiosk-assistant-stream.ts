@@ -21,3 +21,15 @@ export async function readAssistantStream(response: Response, onDelta: (text: st
   if (!result) throw new Error("안내 응답이 중단되었습니다. 다시 질문해 주세요.")
   return result
 }
+
+export function syncAssistantSpeech(audio: HTMLAudioElement, text: string, onText: (text: string) => void, onEnd: () => void) {
+  const words = text.match(/\S+\s*/g) || [text]
+  const update = () => {
+    const fraction = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.currentTime / audio.duration : 0
+    onText(words.slice(0, Math.max(1, Math.min(words.length, Math.ceil(fraction * words.length)))).join(""))
+  }
+  audio.onplaying = update
+  audio.ontimeupdate = update
+  audio.onended = () => { onText(text); onEnd() }
+  return update
+}

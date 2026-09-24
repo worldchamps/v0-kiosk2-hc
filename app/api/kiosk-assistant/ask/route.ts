@@ -37,7 +37,6 @@ export function POST(request: Request) {
         for (const part of result.answer.match(/\S+\s*/g) || [result.answer]) {
           if (request.signal.aborted) return
           send({ type: "delta", text: part })
-          await new Promise(resolve => setTimeout(resolve, 40))
         }
         send({ type: "done", topic: result.topic, speechToken: result.speechToken })
       } catch {

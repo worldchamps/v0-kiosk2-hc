@@ -2666,8 +2666,6 @@ textarea {
 .kiosk-ai-input button { width: 72px; min-height: 66px; display: grid; place-items: center; border-radius: 16px; color: #ffffff; background: linear-gradient(135deg, #318cf4, #0a59cb); }
 .kiosk-ai-input button:disabled { opacity: 0.5; }
 .kiosk-ai-input button svg { width: 30px; height: 30px; }
-.kiosk-ai-note { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 0 32px 20px; color: #60718d; font-size: 15px; line-height: 1.4; }
-.kiosk-ai-note svg { width: 18px; height: 18px; flex-shrink: 0; }
 @media (prefers-reduced-motion: reduce) { .kiosk-ai-voice svg, .kiosk-ai-dots i { animation: none !important; } }
 
 @media (max-width: 650px) {
@@ -2678,7 +2676,6 @@ textarea {
   .kiosk-ai-shortcuts-head { flex-wrap: wrap; }
   .kiosk-ai-input { padding-left: 20px; padding-right: 20px; }
   .kiosk-ai-input > svg { left: 39px; }
-  .kiosk-ai-note { padding-left: 20px; padding-right: 20px; }
 }
 
 @media (max-height: 900px) {
