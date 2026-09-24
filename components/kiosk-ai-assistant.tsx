@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { MessageCircleQuestion, Mic, Send, X } from "lucide-react"
 import { suggestedQuestions } from "@/lib/kiosk-assistant-content"
+import { readAssistantStream } from "@/lib/kiosk-assistant-stream"
 import { useKioskRealtimeVoice } from "@/hooks/use-kiosk-realtime-voice"
 
 interface KioskAiAssistantProps {
@@ -13,26 +14,49 @@ interface KioskAiAssistantProps {
   checkoutAt?: string
 }
 
+type ChatTurn = { question: string; answer: string; source: "voice" | "text" }
+
 export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumber, checkoutAt }: KioskAiAssistantProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const requestRef = useRef<AbortController | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const audioUrlRef = useRef<string | null>(null)
+  const chatEndRef = useRef<HTMLDivElement>(null)
+  const currentTurnRef = useRef<ChatTurn>({ question: "", answer: "", source: "text" })
   const [input, setInput] = useState("")
+  const [history, setHistory] = useState<ChatTurn[]>([])
   const [question, setQuestion] = useState("")
   const [answer, setAnswer] = useState("")
   const [speechToken, setSpeechToken] = useState("")
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const [speaking, setSpeaking] = useState(false)
+  const saveTurn = () => {
+    const previous = currentTurnRef.current
+    if (previous.question) setHistory(items => [...items, previous])
+    currentTurnRef.current = { question: "", answer: "", source: "text" }
+    setQuestion("")
+    setAnswer("")
+  }
   const voice = useKioskRealtimeVoice({
     screen,
-    onQuestion: value => { setQuestion(value); setSpeechToken("") },
-    onAnswer: setAnswer,
+    onQuestion: value => {
+      if (!value) { saveTurn(); return }
+      currentTurnRef.current = { ...currentTurnRef.current, question: value, source: "voice" }
+      setQuestion(value)
+      setSpeechToken("")
+    },
+    onAnswer: value => {
+      if (!value) return
+      currentTurnRef.current = { ...currentTurnRef.current, answer: value }
+      setAnswer(value)
+    },
     onError: setError,
   })
   const voiceStatus = { idle: "버튼을 누른 뒤 편하게 말씀하세요.", connecting: "마이크를 연결하고 있어요…", listening: "듣고 있어요. 말씀해 주세요.", thinking: "안내를 확인하고 있어요…", speaking: "말하는 중이에요. 안내가 끝난 뒤 질문해 주세요." }[voice.phase]
+
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ block: "nearest" }) }, [history, question, answer, error, busy])
 
   const stopAudio = () => {
     audioRef.current?.pause()
@@ -61,6 +85,8 @@ export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumbe
     setBusy(false)
     setQuestion("")
     setAnswer("")
+    setHistory([])
+    currentTurnRef.current = { question: "", answer: "", source: "text" }
     setSpeechToken("")
     setInput("")
     setError("")
@@ -97,8 +123,9 @@ export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumbe
     if (!trimmed || busy || voice.active) return
     requestRef.current?.abort()
     stopAudio()
+    saveTurn()
+    currentTurnRef.current = { question: trimmed, answer: "", source: "text" }
     setQuestion(trimmed)
-    setAnswer("")
     setSpeechToken("")
     setError("")
     setBusy(true)
@@ -107,17 +134,23 @@ export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumbe
     requestRef.current = controller
     try {
       const response = await fetch("/api/kiosk-assistant/ask", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
         body: JSON.stringify({ question: trimmed, screen, roomNumber, checkoutAt }), signal: controller.signal,
       })
-      const result = await response.json()
+      const result = await readAssistantStream(response, chunk => {
+        if (controller.signal.aborted || requestRef.current !== controller) return
+        currentTurnRef.current = { ...currentTurnRef.current, answer: currentTurnRef.current.answer + chunk }
+        setAnswer(currentTurnRef.current.answer)
+      })
       if (controller.signal.aborted) return
-      if (!response.ok || typeof result.answer !== "string") throw new Error(result.error || "답변을 확인하지 못했습니다.")
-      setAnswer(result.answer)
       setSpeechToken(typeof result.speechToken === "string" ? result.speechToken : "")
-      if (result.speechToken) void speak(result.answer, result.speechToken)
+      if (result.speechToken) void speak(currentTurnRef.current.answer, result.speechToken)
     } catch (cause) {
-      if ((cause as Error).name !== "AbortError") setError(cause instanceof Error ? cause.message : "답변을 확인하지 못했습니다.")
+      if ((cause as Error).name !== "AbortError") {
+        currentTurnRef.current = { ...currentTurnRef.current, answer: "" }
+        setAnswer("")
+        setError(cause instanceof Error ? cause.message : "답변을 확인하지 못했습니다.")
+      }
     } finally {
       if (!controller.signal.aborted) setBusy(false)
     }
@@ -128,8 +161,7 @@ export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumbe
     requestRef.current?.abort()
     stopAudio()
     setBusy(false)
-    setQuestion("")
-    setAnswer("")
+    saveTurn()
     setSpeechToken("")
     void voice.start()
   }
@@ -155,12 +187,21 @@ export default function KioskAiAssistant({ open, onOpenChange, screen, roomNumbe
           <div className="kiosk-ai-suggestions">{suggestedQuestions(screen).map(item =>
             <button type="button" key={item} disabled={busy} onClick={() => void ask(item)}>{item}</button>)}</div>
         </>}
-        {question && <p className="kiosk-ai-question"><strong>{voice.active ? (voice.phase === "listening" ? "듣고 있는 말" : "음성 인식 결과") : "질문"}</strong><span>{question}</span></p>}
-        {busy && <p role="status">답변을 확인하고 있습니다…</p>}
-        {(answer || voice.caption) && <div className="kiosk-ai-answer"><strong>안내</strong><p>{voice.active && voice.caption ? voice.caption : answer}</p>
-          {voice.active && voice.canReplay && <button type="button" disabled={voice.phase === "speaking"} onClick={() => void voice.replay()}>답변 다시 듣기</button>}
-          {!voice.active && speechToken && <button type="button" onClick={() => speaking ? stopAudio() : void speak(answer, speechToken)}>{speaking ? "음성 중단" : "답변 다시 듣기"}</button>}
-        </div>}
+        <div className="kiosk-ai-thread" role="log" aria-label="AI 도우미 대화">
+          {history.map((turn, index) => <div className="kiosk-ai-turn" key={index}>
+            <p className="kiosk-ai-question"><strong>{turn.source === "voice" ? "음성 인식 결과" : "질문"}</strong><span>{turn.question}</span></p>
+            {turn.answer && <div className="kiosk-ai-answer"><strong>안내</strong><p>{turn.answer}</p></div>}
+          </div>)}
+          {question && <div className="kiosk-ai-turn">
+            <p className="kiosk-ai-question"><strong>{currentTurnRef.current.source === "voice" ? (voice.phase === "listening" && !answer ? "듣고 있는 말" : "음성 인식 결과") : "질문"}</strong><span>{question}</span></p>
+            {(answer || voice.caption) && <div className="kiosk-ai-answer"><strong>안내</strong><p>{voice.active && voice.caption ? voice.caption : answer}</p>
+              {voice.active && voice.canReplay && <button type="button" disabled={voice.phase === "speaking"} onClick={() => void voice.replay()}>답변 다시 듣기</button>}
+              {!voice.active && speechToken && <button type="button" onClick={() => speaking ? stopAudio() : void speak(answer, speechToken)}>{speaking ? "음성 중단" : "답변 다시 듣기"}</button>}
+            </div>}
+          </div>}
+          {busy && <p role="status">답변을 확인하고 있습니다…</p>}
+          <div ref={chatEndRef} />
+        </div>
         {/직원에게 연락/.test(answer) && <p className="kiosk-ai-staff-contact">직원 연락: 010-5126-4644</p>}
         {error && <p className="kiosk-ai-error" role="alert">{error}</p>}
       </div>

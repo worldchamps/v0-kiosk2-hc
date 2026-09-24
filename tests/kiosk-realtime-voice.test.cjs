@@ -16,8 +16,21 @@ function load(file, dependencies = {}, globals = {}) {
   return exports;
 }
 const content = load('lib/kiosk-assistant-content.ts');
+const assistantStream = load('lib/kiosk-assistant-stream.ts', {}, { TextDecoder });
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const json = value => ({ ok: true, json: async () => value });
+
+test('assistant stream reads answer fragments and completion', async () => {
+  const parts = [];
+  const response = new Response([
+    JSON.stringify({ type: 'delta', text: '방 ' }),
+    JSON.stringify({ type: 'delta', text: '있어요.' }),
+    JSON.stringify({ type: 'done', topic: 'availability', speechToken: 'signed' }),
+  ].join('\n') + '\n');
+  const result = await assistantStream.readAssistantStream(response, text => parts.push(text));
+  assert.deepEqual(parts, ['방 ', '있어요.']);
+  assert.equal(result.topic, 'availability');
+});
 
 function voiceHarness() {
   const refs = [], requests = [], sent = [], questions = [], answers = [], errors = [], timers = new Map(), intervals = new Map(), audios = [];
@@ -47,7 +60,7 @@ function voiceHarness() {
     async resume() {}
     async close() { this.closed = true; }
   }
-  const hook = load('hooks/use-kiosk-realtime-voice.ts', { react }, {
+  const hook = load('hooks/use-kiosk-realtime-voice.ts', { react, '@/lib/kiosk-assistant-stream': assistantStream }, {
     navigator: { mediaDevices: { getUserMedia: async () => stream } },
     RTCPeerConnection: Peer, AudioContext: FakeAudioContext,
     Audio: class { constructor(src) { this.src = src; audios.push(this); } async play() { this.played = true; } pause() { this.paused = true; } },
@@ -59,7 +72,11 @@ function voiceHarness() {
       requests.push({ url, init });
       if (url === '/api/kiosk-assistant/realtime') return json({ value: 'ephemeral-test', silenceMs: 700, voiceThreshold: 0.018 });
       if (url.endsWith('/realtime/calls')) return { ok: true, text: async () => 'test-answer' };
-      if (url === '/api/kiosk-assistant/ask') return json({ topic: 'payment', answer: '결과가 불분명하면 추가 결제하지 말고 직원에게 연락해 주세요.', speechToken: 'signed-speech' });
+      if (url === '/api/kiosk-assistant/ask') return new Response([
+        JSON.stringify({ type: 'delta', text: '결과가 불분명하면 ' }),
+        JSON.stringify({ type: 'delta', text: '추가 결제하지 말고 직원에게 연락해 주세요.' }),
+        JSON.stringify({ type: 'done', topic: 'payment', speechToken: 'signed-speech' }),
+      ].join('\n') + '\n');
       if (url === '/api/kiosk-assistant/speak') return { ok: true, blob: async () => ({ wav: true }) };
       throw new Error(`Unexpected request ${url}`);
     },
@@ -89,11 +106,12 @@ test('silence commits one OpenAI transcript turn, then Gemini guidance and TTS p
   h.tick();
   assert.equal(h.sent.length, 1);
   h.event({ type: 'conversation.item.input_audio_transcription.completed', transcript: '결제가 안 돼요' });
-  await flush(); await flush();
+  for (let i = 0; i < 20 && !h.requests.some(r => r.url.endsWith('/speak')); i++) await flush();
   assert.deepEqual(JSON.parse(h.requests.find(r => r.url.endsWith('/ask')).init.body), {
     question: '결제가 안 돼요', screen: 'onSiteReservation:payment',
   });
   assert.equal(h.requests.some(r => r.url.endsWith('/speak')), true);
+  assert(h.answers.includes('결과가 불분명하면 '));
   assert.equal(h.voice.phase, 'speaking');
   assert.match(h.voice.caption, /추가 결제하지 말고/);
   h.audios[0].onended();
@@ -156,13 +174,13 @@ test('Gemini receives fixed topic hints without the original question or persona
   let roomReads = 0;
   const env = { GEMINI_API_KEY: 'gemini-test-key' };
   const route = load('app/api/kiosk-assistant/ask/route.ts', {
-    'next/server': { NextResponse: { json: (body, init = {}) => ({ body, init, status: init.status ?? 200, headers: init.headers }) } },
+    'next/server': { NextResponse: { json: (body, init = {}) => ({ body, init, status: init.status ?? 200, ok: !init.status || init.status < 400, json: async () => body, headers: init.headers }) } },
     '@/app/api/available-rooms/route': { GET: async () => { roomReads++; return { ok: true, json: async () => ({ availableRooms: [] }) }; } },
     '@/lib/kiosk-assistant-content': content,
     '@/lib/kiosk-scope': { getKioskScope: () => ({ property: 'property3', building: 'A' }), isRoomInBuilding: () => true },
     '@/lib/property-utils': { getPropertyFromRoomNumber: () => 'property3' },
     '@/lib/kiosk-assistant-speech': load('lib/kiosk-assistant-speech.ts', { 'node:crypto': require('node:crypto') }),
-  }, { process: { env }, fetch: async (url, init) => {
+  }, { process: { env }, Response, ReadableStream, TextEncoder, setTimeout, fetch: async (url, init) => {
     assert.match(url, /gemini-3\.5-flash-lite:generateContent$/);
     contents.push(JSON.parse(init.body));
     const topic = contents.at(-1).contents[0].parts[0].text.includes('availability=') ? 'availability' : 'payment';
@@ -183,11 +201,23 @@ test('Gemini receives fixed topic hints without the original question or persona
   assert.equal(contents.length, before);
   assert.match(blocked.body.answer, /개인정보는 말하지 말고/);
   env.VERCEL_ENV = 'preview';
+  const shortQuestion = await route.POST(new Request('http://kiosk.local/api/kiosk-assistant/ask', {
+    method: 'POST', body: JSON.stringify({ question: '방있어?' }),
+  }));
+  assert.equal(shortQuestion.body.topic, 'availability');
+  assert.equal(contents.length, before + 1);
   const preview = await route.POST(new Request('http://kiosk.local/api/kiosk-assistant/ask', {
     method: 'POST', body: JSON.stringify({ question: '객실이 있나요?' }),
   }));
   assert.equal(roomReads, 0);
   assert.match(preview.body.answer, /확인하지 못했습니다/);
+  const streamed = await route.POST(new Request('http://kiosk.local/api/kiosk-assistant/ask', {
+    method: 'POST', headers: { Accept: 'application/x-ndjson' }, body: JSON.stringify({ question: '방있어?' }),
+  }));
+  const chunks = [];
+  const finished = await assistantStream.readAssistantStream(streamed, part => chunks.push(part));
+  assert.equal(chunks.join(''), preview.body.answer);
+  assert.equal(finished.topic, 'availability');
 });
 
 test('TTS uses the selected style prompt and fixed Gemini TTS model', async () => {

@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { readAssistantStream } from "@/lib/kiosk-assistant-stream"
 
 type Phase = "idle" | "connecting" | "listening" | "thinking" | "speaking"
 interface VoiceOptions {
@@ -179,21 +180,30 @@ export function useKioskRealtimeVoice(options: VoiceOptions) {
         let speechToken = ""
         try {
           const response = await fetch("/api/kiosk-assistant/ask", {
-            method: "POST", headers: { "Content-Type": "application/json" },
+            method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
             body: JSON.stringify({ question: cleanQuestion, screen: optionsRef.current.screen }),
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
           })
-          const result = await response.json()
-          if (response.ok && typeof result.answer === "string") answer = result.answer
-          if (response.ok && typeof result.speechToken === "string") speechToken = result.speechToken
+          answer = ""
+          const result = await readAssistantStream(response, chunk => {
+            if (!current() || inputTurn !== turn) return
+            answer += chunk
+            optionsRef.current.onAnswer(answer)
+            setCaption(answer)
+          })
+          if (typeof result.speechToken === "string") speechToken = result.speechToken
           if (result.topic === "other") {
             failedQuestions++
             if (failedQuestions >= 2) {
               answer = "질문을 확인하지 못했습니다. 직원에게 연락해 주세요."
               speechToken = ""
             }
-          } else if (response.ok) failedQuestions = 0
-        } catch { if (!current()) return }
+          } else failedQuestions = 0
+        } catch {
+          if (!current()) return
+          answer = "지금은 안내를 확인하지 못했습니다. 직원에게 연락해 주세요."
+          speechToken = ""
+        }
         if (!current() || inputTurn !== turn) return
         optionsRef.current.onAnswer(answer)
         setCaption(answer)

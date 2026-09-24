@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic"
 
 // Only these fixed labels reach Gemini; a guest's words stay on this server.
 const topicHints: { topic: AssistantTopic; pattern: RegExp }[] = [
-  { topic: "availability", pattern: /빈방|객실.*(?:있|남|가능)/ },
+  { topic: "availability", pattern: /빈\s*방|(?:객실|방).*?(?:있|남|가능|비었)/ },
   { topic: "checkin", pattern: /체크인|입실/ },
   { topic: "transfer", pattern: /계좌이체|현금|결제 방법/ },
   { topic: "key", pattern: /키|열쇠|출입/ },
@@ -20,7 +20,35 @@ const topicHints: { topic: AssistantTopic; pattern: RegExp }[] = [
 ]
 const sensitive = /\d{2,}|@|예약\s*번호|전화\s*번호|비밀번호|카드\s*번호|계좌\s*번호|주민등록|(?:제|내)\s*이름/
 
-export async function POST(request: Request) {
+export function POST(request: Request) {
+  if (!request.headers.get("Accept")?.includes("application/x-ndjson")) return answerRequest(request)
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: object) => controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
+      send({ type: "status", text: "질문을 확인하고 있어요…" })
+      try {
+        const response = await answerRequest(request)
+        const result = await response.json()
+        if (!response.ok || typeof result.answer !== "string") {
+          send({ type: "error", text: result.error || "안내를 확인하지 못했습니다." })
+          return
+        }
+        for (const part of result.answer.match(/\S+\s*/g) || [result.answer]) {
+          if (request.signal.aborted) return
+          send({ type: "delta", text: part })
+          await new Promise(resolve => setTimeout(resolve, 40))
+        }
+        send({ type: "done", topic: result.topic, speechToken: result.speechToken })
+      } catch {
+        send({ type: "error", text: "지금은 안내를 확인하지 못했습니다. 직원에게 연락해 주세요." })
+      } finally { controller.close() }
+    },
+  })
+  return new Response(stream, { headers: { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" } })
+}
+
+async function answerRequest(request: Request) {
   let scope
   try {
     scope = getKioskScope()
