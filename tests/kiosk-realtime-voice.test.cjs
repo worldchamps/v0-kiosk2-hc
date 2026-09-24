@@ -136,6 +136,21 @@ test('transcription session uses gpt-live-transcribe with client-side turn detec
   assert(!JSON.stringify(result).includes('server-only-test'));
 });
 
+test('Preview blocks PMS and payment APIs while leaving kiosk configuration and assistant available', () => {
+  const next = { next: () => ({ status: 200 }), json: (body, init) => ({ body, status: init.status }) };
+  const middleware = load('middleware.ts', { 'next/server': { NextResponse: next } },
+    { process: { env: { VERCEL_ENV: 'preview' } } }).middleware;
+  const check = (method, pathname) => middleware({ method, nextUrl: { pathname } }).status;
+  assert.equal(check('POST', '/api/check-in'), 403);
+  assert.equal(check('POST', '/api/on-site-booking'), 403);
+  assert.equal(check('POST', '/api/toss-payments/create'), 403);
+  assert.equal(check('GET', '/api/reservations'), 403);
+  assert.equal(check('GET', '/api/available-rooms'), 403);
+  assert.equal(check('GET', '/api/kiosk-config'), 200);
+  assert.equal(check('POST', '/api/kiosk-assistant/ask'), 200);
+  assert.equal(check('POST', '/api/kiosk-assistant/realtime'), 200);
+});
+
 test('Gemini receives fixed topic hints without the original question or personal identifiers', async () => {
   const contents = [];
   let roomReads = 0;
