@@ -304,7 +304,7 @@ test("kiosk UI waits for PC config, overrides a conflicting URL/location, and bl
     }
     for (const name of ["standby-screen", "idle-screen", "reservation-confirm", "current-location", "on-site-reservation",
       "reservation-details", "check-in-complete", "reservation-not-found", "reservation-list", "admin-keypad",
-      "property-mismatch-dialog", "property-redirect-dialog"]) dependencies[`@/components/${name}`] = { default: name }
+      "property-mismatch-dialog", "property-redirect-dialog", "kiosk-ai-assistant"]) dependencies[`@/components/${name}`] = { default: name }
     const { default: Layout } = load("../components/kiosk-layout.tsx", dependencies, {}, {
       window: { location: { search: "?location=B", reload() {} }, electronAPI: {}, addEventListener() {}, removeEventListener() {} },
       document: { body: { classList: { add() {}, remove() {} } } },

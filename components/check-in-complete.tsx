@@ -20,6 +20,7 @@ interface CheckInCompleteProps {
   kioskLocation?: KioskLocation
   onNavigate?: (screen: string) => void
   isPopupMode?: boolean
+  assistantOpen?: boolean
 }
 
 export default function CheckInComplete({
@@ -28,6 +29,7 @@ export default function CheckInComplete({
   kioskLocation,
   onNavigate,
   isPopupMode = false,
+  assistantOpen = false,
 }: CheckInCompleteProps) {
   const [countdown, setCountdown] = useState<number | null>(null)
   const [autoPrintAttempted, setAutoPrintAttempted] = useState(false)
@@ -40,6 +42,9 @@ export default function CheckInComplete({
   const countdownTimerRef = useRef<NodeJS.Timeout | null>(null)
   const redirectTimerRef = useRef<NodeJS.Timeout | null>(null)
   const audioTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const assistantOpenRef = useRef(assistantOpen)
+  const assistantPausedRedirectRef = useRef(false)
+  assistantOpenRef.current = assistantOpen
 
   const logDebug = (message: string) => {
     console.log(`[CheckInComplete] ${message}`)
@@ -221,6 +226,11 @@ export default function CheckInComplete({
 
   const startRedirectCountdown = () => {
     clearAllTimers()
+    if (assistantOpenRef.current) {
+      assistantPausedRedirectRef.current = true
+      setCountdown(null)
+      return
+    }
 
     const countdownSeconds = isPopupMode ? 10 : 25
     setCountdown(countdownSeconds)
@@ -238,6 +248,21 @@ export default function CheckInComplete({
       handleRedirect()
     }, countdownSeconds * 1000)
   }
+
+  useEffect(() => {
+    if (assistantOpen) {
+      stopAllAudio()
+      if (redirectTimerRef.current || countdownTimerRef.current) assistantPausedRedirectRef.current = true
+      if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current)
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current)
+      redirectTimerRef.current = null
+      countdownTimerRef.current = null
+      setCountdown(null)
+    } else if (assistantPausedRedirectRef.current) {
+      assistantPausedRedirectRef.current = false
+      startRedirectCountdown()
+    }
+  }, [assistantOpen])
 
   const handleRedirect = () => {
     if (isPopupMode) {

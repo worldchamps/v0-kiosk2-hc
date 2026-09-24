@@ -30,6 +30,7 @@ import { parseReservationQrValue } from "@/lib/reservation-qr"
 import { KioskProgressScreen, RESERVATION_PROGRESS_STEPS } from "@/components/kiosk-progress"
 import { type KioskScope, buildingRestrictionMessage } from "@/lib/kiosk-scope"
 import type { Reservation } from "@/lib/types"
+import KioskAiAssistant from "@/components/kiosk-ai-assistant"
 
 interface KioskLayoutProps {
   onChangeMode: () => void
@@ -45,6 +46,8 @@ function getReservations(data: { reservations?: unknown } | null): Reservation[]
 
 export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayoutProps) {
   const [currentScreen, setCurrentScreen] = useState("onSiteReservation")
+  const [assistantOpen, setAssistantOpen] = useState(false)
+  const [onSiteStep, setOnSiteStep] = useState("stayType")
   const [installedVersion, setInstalledVersion] = useState("")
   const [homeSessionKey, setHomeSessionKey] = useState(0)
   const [reservationData, setReservationData] = useState<Reservation | null>(null)
@@ -96,11 +99,11 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
 
   useEffect(() => {
     window.electronAPI?.setUpdateSafe?.(
-      ready && !storageError && !checkInPending && !!kioskScope && currentScreen === "onSiteReservation" && onSiteUpdateSafe && !loading &&
+      ready && !storageError && !checkInPending && !assistantOpen && !!kioskScope && currentScreen === "onSiteReservation" && onSiteUpdateSafe && !loading &&
       !paymentSession.isActive && !showAdminKeypad && !showPropertyMismatch && !showPropertyRedirect,
     )
     return () => window.electronAPI?.setUpdateSafe?.(false)
-  }, [kioskScope, currentScreen, onSiteUpdateSafe, loading, paymentSession.isActive, showAdminKeypad, showPropertyMismatch, showPropertyRedirect, ready, storageError, checkInPending])
+  }, [assistantOpen, kioskScope, currentScreen, onSiteUpdateSafe, loading, paymentSession.isActive, showAdminKeypad, showPropertyMismatch, showPropertyRedirect, ready, storageError, checkInPending])
 
   useEffect(() => {
     let cancelled = false
@@ -166,15 +169,15 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   }, [])
 
   useEffect(() => {
-    if (currentScreen === "standby") {
+    if (currentScreen === "standby" && !assistantOpen) {
       resumeBGM()
     } else {
       pauseBGM()
     }
-  }, [currentScreen])
+  }, [currentScreen, assistantOpen])
 
   useEffect(() => {
-    if (!isPopupMode || paymentSession.isActive || loading || checkInPending) return
+    if (!isPopupMode || assistantOpen || paymentSession.isActive || loading || checkInPending) return
 
     const resetTimer = () => {
       if (inactivityTimerRef.current) {
@@ -213,7 +216,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       window.removeEventListener("keydown", handleUserActivity)
       window.removeEventListener("mousemove", handleUserActivity)
     }
-  }, [isPopupMode, paymentSession.isActive, loading, checkInPending])
+  }, [isPopupMode, assistantOpen, paymentSession.isActive, loading, checkInPending])
 
   const handleNavigate = async (screen: string) => {
     // A navigation is never proof that cash was returned or an approval was cancelled.
@@ -526,7 +529,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   }
 
   return (
-    <div className="w-full h-full bg-[#fefef7] overflow-hidden kiosk-mode relative">
+    <div className="w-full h-full bg-[#fefef7] overflow-hidden kiosk-mode relative flex flex-col">
       <div className="kiosk-screen-area">
         {error && <div className="m-4 p-3 bg-red-100 text-red-700 rounded-md">{error}</div>}
         {checkInPending && <button className="m-4 rounded border p-5 text-xl" disabled={loading} onClick={() => handleCheckIn()}>
@@ -572,7 +575,8 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         )}
 
         {currentScreen === "onSiteReservation" && (
-          <OnSiteReservation key={homeSessionKey} onNavigate={handleNavigate} location={kioskLocation} onUpdateSafeChange={setOnSiteUpdateSafe} />
+          <OnSiteReservation key={homeSessionKey} onNavigate={handleNavigate} location={kioskLocation} onUpdateSafeChange={setOnSiteUpdateSafe}
+            assistantOpen={assistantOpen} onAssistantStepChange={setOnSiteStep} />
         )}
 
         {currentScreen === "reservationDetails" && reservationData && (
@@ -600,6 +604,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
               kioskLocation={kioskLocation}
               onNavigate={handleNavigate}
               isPopupMode={isPopupMode}
+              assistantOpen={assistantOpen}
             />
           </KioskProgressScreen>
         )}
@@ -613,6 +618,17 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
             lookupFailed={lookupError}
           />
         )}
+      </div>
+
+      <div className="kiosk-ai-footer">
+        <KioskAiAssistant
+          open={assistantOpen}
+          onOpenChange={setAssistantOpen}
+          screen={currentScreen === "onSiteReservation" ? `onSiteReservation:${onSiteStep}` : currentScreen}
+          roomNumber={currentScreen === "checkInComplete" ? revealedInfo.roomNumber : undefined}
+          checkoutAt={(currentScreen === "reservationDetails" || currentScreen === "checkInComplete")
+            ? (reservationData as (Reservation & { checkOutDateTime?: string }) | null)?.checkOutDateTime : undefined}
+        />
       </div>
 
       {!isPopupMode && installedVersion &&

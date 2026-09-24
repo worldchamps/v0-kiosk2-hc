@@ -36,6 +36,8 @@ interface OnSiteReservationProps {
   onNavigate: (screen: string) => void
   location?: string
   onUpdateSafeChange?: (safe: boolean) => void
+  assistantOpen?: boolean
+  onAssistantStepChange?: (step: string) => void
 }
 
 interface AvailableRoom {
@@ -103,8 +105,9 @@ function getBookingDates(stayType: StayType) {
   }
 }
 
-export default function OnSiteReservation({ onNavigate, location, onUpdateSafeChange }: OnSiteReservationProps) {
+export default function OnSiteReservation({ onNavigate, location, onUpdateSafeChange, assistantOpen = false, onAssistantStepChange }: OnSiteReservationProps) {
   const [step, setStep] = useState<BookingStep>("stayType")
+  useEffect(() => { onAssistantStepChange?.(step) }, [step, onAssistantStepChange])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [roomsByType, setRoomsByType] = useState<Record<string, AvailableRoom[]>>({})
@@ -907,6 +910,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
           kioskLocation={location as any}
           onNavigate={onNavigate}
           isPopupMode={false}
+          assistantOpen={assistantOpen}
         />
       </KioskProgressScreen>
     )

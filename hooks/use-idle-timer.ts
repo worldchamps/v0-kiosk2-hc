@@ -21,6 +21,10 @@ export function useIdleTimer({ onIdle, idleTime = 60000, enabled = true }: UseId
     // Set new timer only if enabled
     if (enabled) {
       timeoutRef.current = setTimeout(() => {
+        if (document.querySelector?.("dialog.kiosk-ai-panel[open]")) {
+          resetTimer()
+          return
+        }
         if (isCallingRef.current) {
           console.log("[v0] Idle callback already in progress, skipping")
           return
