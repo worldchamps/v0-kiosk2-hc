@@ -10,10 +10,14 @@ import {
   Loader2,
   Home,
   Moon,
+  BedDouble,
   Clock,
   AlertTriangle,
   CalendarDays,
   ChevronRight,
+  UserRound,
+  MousePointerClick,
+  MapPin,
   CreditCard,
   Landmark,
   ArrowLeft,
@@ -458,75 +462,75 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
           <button
             type="button"
             className="kiosk-home-action kiosk-home-action-reservation"
+            aria-label="예약 체크인"
             onClick={() => onNavigate("reservationConfirm")}
           >
-            <CalendarDays aria-hidden="true" />
-            <span>
-              <strong>이미 예약했어요</strong>
-              <small>예약 확인 · 체크인</small>
+            <span className="kiosk-reservation-icon"><CalendarDays aria-hidden="true" /></span>
+            <span className="kiosk-reservation-copy">
+              <strong>예약 체크인</strong>
+              <small>예약 조회 · 체크인</small>
             </span>
-            <ChevronRight aria-hidden="true" />
+            <span className="kiosk-reservation-platforms" aria-hidden="true">
+              <span><i className="is-yanolja">ya</i>야놀자</span>
+              <span><i className="is-yeogi"><MapPin /></i>여기어때</span>
+              <span><i className="is-naver">N</i>네이버예약</span>
+              <span><i className="is-agoda"><b /><b /><b /><b /></i>아고다</span>
+            </span>
+            <span className="kiosk-reservation-footer"><UserRound aria-hidden="true" />예약 고객 전용</span>
+            <span className="kiosk-reservation-arrow"><ChevronRight aria-hidden="true" /></span>
           </button>
         </nav>
 
         <div className="kiosk-stay-type-content">
           {roomsError && (
-            <div className="kiosk-home-message kiosk-home-message-error">
-              <AlertTriangle className="h-12 w-12" />
-              <p>{roomsError}</p>
-              <Button type="button" onClick={() => fetchAvailableRooms()}>
+            <div className="kiosk-stay-status" role="alert">
+              <AlertTriangle aria-hidden="true" />
+              <p>객실 정보를 확인하지 못했습니다. 다시 불러오기를 눌러주세요.</p>
+              <Button type="button" onClick={() => fetchAvailableRooms()} disabled={loading}>
                 다시 불러오기
               </Button>
             </div>
           )}
 
-          {!roomsError && loading && availableRoomTypes.length === 0 && (
-            <div className="kiosk-stay-loading" aria-label="객실 정보를 불러오는 중">
-              객실 정보를 확인하고 있습니다
-            </div>
-          )}
-
           {!roomsError && !loading && availableRoomTypes.length === 0 && (
-            <div className="kiosk-home-message">
-              <Phone className="h-16 w-16 text-gray-400" />
-              <div>
-                <p className="text-3xl font-bold">현재 예약 가능한 객실이 없습니다</p>
-                <span className="text-xl text-gray-600">예약 문의 010-5126-4644</span>
-              </div>
+            <div className="kiosk-stay-status" role="status">
+              <Phone aria-hidden="true" />
+              <p>현재 판매 가능한 객실이 없습니다. 문의 010-5126-4644</p>
             </div>
           )}
 
-          {!roomsError && availableRoomTypes.length > 0 && (
-            <div className="kiosk-stay-type-options">
-              {showOvernight && (
+          <div className="kiosk-stay-type-options" aria-busy={loading}>
                 <button
                   type="button"
-                  className="kiosk-stay-type-option is-overnight"
+                  className={`kiosk-stay-type-option is-overnight${loading || roomsError ? " is-unverified" : ""}`}
+                  disabled={loading || !!roomsError || !showOvernight}
                   onClick={() => handleStayTypeSelect({ type: "overnight", label: "숙박" })}
                 >
-                  <Moon aria-hidden="true" />
-                  <span>
+                  <span className="kiosk-stay-icon"><BedDouble aria-hidden="true" /></span>
+                  <span className="kiosk-stay-label">
                     <strong>숙박</strong>
                     <small>오늘 입실 · 내일 퇴실</small>
                   </span>
+                  <span className="kiosk-stay-arrow"><ChevronRight aria-hidden="true" /></span>
                 </button>
-              )}
 
               <button
                 type="button"
-                className="kiosk-stay-type-option is-short-stay"
-                disabled={!showShortStay}
+                className={`kiosk-stay-type-option is-short-stay${loading || roomsError ? " is-unverified" : ""}`}
+                disabled={loading || !!roomsError || !showShortStay}
                 onClick={() => handleStayTypeSelect({ type: "shortStay", label: "대실" })}
               >
-                <Clock aria-hidden="true" />
-                <span>
+                <span className="kiosk-stay-icon"><Clock aria-hidden="true" /></span>
+                <span className="kiosk-stay-label">
                   <strong>대실</strong>
-                  <small>{showShortStay ? "잠시 이용" : "이용불가 · 종료"}</small>
+                  <small>{loading || roomsError ? "객실 확인 필요" : showShortStay ? "잠시 이용" : "이용불가 · 종료"}</small>
                 </span>
+                <span className="kiosk-stay-arrow"><ChevronRight aria-hidden="true" /></span>
               </button>
-            </div>
-          )}
+          </div>
         </div>
+
+        <p className="kiosk-home-start-hint"><MousePointerClick aria-hidden="true" />화면을 터치해 시작하세요.</p>
 
       </div>
     )

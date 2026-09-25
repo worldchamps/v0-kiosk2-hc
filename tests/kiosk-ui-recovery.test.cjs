@@ -339,7 +339,15 @@ test('ended short stay keeps its card visible and blocks selection while lodging
   assert.equal(h.button('대실 잠시 이용').disabled, false);
   await h.endShortStay();
   assert.equal(h.button('대실 이용불가 · 종료').disabled, true);
-  assert.equal(h.button('숙박 오늘 입실 · 내일 퇴실').disabled, undefined);
+  assert.equal(h.button('숙박 오늘 입실 · 내일 퇴실').disabled, false);
+});
+test('room lookup failure retains the reservation and both stay cards without permitting a sale', async () => {
+  const h = await onsite();
+  await h.roomLookupFailure();
+  assert.equal(h.button('예약 체크인').disabled, undefined);
+  assert.equal(h.button('숙박 오늘 입실 · 내일 퇴실').disabled, true);
+  assert.equal(h.button('대실 객실 확인 필요').disabled, true);
+  assert(h.visible('다시 불러오기'));
 });
 for (const stay of ['shortStay', 'overnight']) {
   test(`${stay}: room selection back preserves stay type`, async () => { const h = await onsite(stay); await h.roomList(); await h.click('돌아가기'); assert(h.visible('객실 타입을 선택해주세요')); });
@@ -551,7 +559,8 @@ test('cash/card method switching before hardware enable neither completes nor re
 for (const payload of [{}, { roomsByType: { Standard: null } }, { roomsByType: { Standard: [null] } }]) {
   test('malformed available-room response is a lookup error, not an empty or crashed sale screen: ' + JSON.stringify(payload), async () => {
     const h = await onsite(); await h.malformedRooms(payload);
-    assert(h.visible('객실 정보를 불러오지 못했습니다')); assert.equal(h.component('PaymentScreen'), undefined);
+    assert(h.visible('객실 정보를 확인하지 못했습니다')); assert.equal(h.button('숙박 오늘 입실 · 내일 퇴실').disabled, true);
+    assert.equal(h.button('대실 객실 확인 필요').disabled, true); assert.equal(h.component('PaymentScreen'), undefined);
   });
 }
 test('cash-return validation rejects all invalid values without losing the original liability', async () => {

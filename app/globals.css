@@ -2706,7 +2706,7 @@ textarea {
   box-shadow: 0 10px 24px rgba(135, 16, 61, 0.28);
 }
 
-.kiosk-home-action-reservation span {
+.kiosk-home-action-reservation > .kiosk-reservation-copy {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -3319,4 +3319,247 @@ textarea {
   .kiosk-payment-method {
     min-height: 390px;
   }
+}
+
+/* Waiting screen: preserve the portrait card layout even while room data is unavailable. */
+.kiosk-home-screen .kiosk-reservation-icon,
+.kiosk-home-screen .kiosk-reservation-arrow,
+.kiosk-home-screen .kiosk-stay-icon,
+.kiosk-home-screen .kiosk-stay-arrow {
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+
+.kiosk-home-screen .kiosk-reservation-icon svg,
+.kiosk-home-screen .kiosk-reservation-arrow svg,
+.kiosk-home-screen .kiosk-stay-icon svg,
+.kiosk-home-screen .kiosk-stay-arrow svg { width: 1em; height: 1em; }
+
+.kiosk-home-screen .kiosk-reservation-platforms,
+.kiosk-home-screen .kiosk-reservation-footer,
+.kiosk-home-start-hint { display: none; }
+
+.kiosk-home-screen .kiosk-reservation-icon { font-size: 36px; }
+.kiosk-home-screen .kiosk-reservation-arrow { margin-left: auto; font-size: 36px; }
+.kiosk-home-screen .kiosk-stay-icon { font-size: 78px; }
+.kiosk-home-screen .kiosk-stay-label { flex: 1; }
+.kiosk-home-screen .kiosk-stay-arrow { align-self: flex-end; font-size: 42px; }
+.kiosk-stay-type-option:disabled { cursor: not-allowed; }
+.kiosk-stay-type-option.is-overnight:disabled { color: #6b7582; background: #dfe4eb; border-color: #c8ced8; box-shadow: none; }
+.kiosk-stay-type-option.is-short-stay:disabled .kiosk-stay-arrow { color: #656870; background: #c6c7ca; border-color: #aeb0b3; box-shadow: none; }
+.kiosk-stay-type-option.is-overnight:disabled .kiosk-stay-arrow { color: #656870; background: #c6c7ca; border-color: #aeb0b3; box-shadow: none; }
+
+.kiosk-stay-status {
+  width: 100%;
+  min-height: 70px;
+  margin-bottom: 14px;
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  border-radius: 16px;
+  color: #8d311d;
+  background: #fff0e8;
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.kiosk-stay-status svg { width: 28px; height: 28px; flex: none; }
+.kiosk-stay-status p { margin: 0; }
+.kiosk-stay-status button { min-height: 48px; padding: 8px 18px; border: 1px solid #d98b70; border-radius: 12px; color: #8d311d; background: #ffffff; font-size: 18px; font-weight: 800; white-space: nowrap; }
+
+@media (orientation: portrait) {
+  .kiosk-home-screen {
+    height: auto;
+    min-height: 100%;
+    padding: 38px 36px 28px;
+    gap: 28px;
+  }
+
+  .kiosk-home-hero { min-height: 240px; flex: none; }
+  .kiosk-home-heading h1 { font-size: clamp(50px, 6.4vw, 64px); }
+  .kiosk-home-heading > span { font-size: clamp(21px, 2.65vw, 26px); }
+  .kiosk-home-screen > .kiosk-payment-notice { min-height: 128px; flex: none; }
+  .kiosk-home-screen > .kiosk-payment-notice p { padding: 11px 12px; grid-template-columns: 28px auto auto auto; justify-content: space-between; gap: 7px; }
+  .kiosk-home-screen > .kiosk-payment-notice span { font-size: 16px; white-space: nowrap; }
+  .kiosk-home-screen > .kiosk-payment-notice strong { font-size: 20px; white-space: nowrap; }
+  .kiosk-home-screen > .kiosk-payment-notice small { font-size: 16px; white-space: nowrap; }
+  .kiosk-home-screen .kiosk-home-actions { width: 100%; align-self: stretch; }
+
+  .kiosk-home-screen .kiosk-home-action-reservation {
+    position: relative;
+    height: 442px;
+    padding: 40px 46px 32px;
+    display: grid;
+    grid-template-columns: 160px minmax(0, 1fr);
+    grid-template-rows: 160px 72px 1fr;
+    align-items: center;
+    gap: 20px 28px;
+    border: 2px solid #f16383;
+    border-radius: 28px;
+    text-align: left;
+    background: linear-gradient(115deg, #ff5477, #d21e5a);
+    box-shadow: 0 14px 28px rgba(172, 23, 72, 0.22);
+  }
+
+  .kiosk-home-screen .kiosk-reservation-icon {
+    grid-column: 1;
+    grid-row: 1;
+    width: 160px;
+    height: 160px;
+    border-radius: 50%;
+    background: rgba(183, 0, 62, 0.3);
+    font-size: 76px;
+  }
+
+  .kiosk-home-screen .kiosk-reservation-copy { grid-column: 2; grid-row: 1; flex: none; gap: 12px; }
+  .kiosk-home-screen .kiosk-reservation-copy strong { font-size: clamp(57px, 7.2vw, 76px); line-height: 1; }
+  .kiosk-home-screen .kiosk-reservation-copy small { font-size: clamp(25px, 3.2vw, 34px); }
+
+  .kiosk-home-screen .kiosk-reservation-platforms {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .kiosk-home-screen .kiosk-reservation-platforms > span {
+    flex: none;
+    min-height: 58px;
+    padding: 8px 14px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 9px;
+    border-radius: 999px;
+    color: #20242b;
+    background: #ffffff;
+    font-size: 19px;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+
+  .kiosk-reservation-platforms i {
+    min-width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 9px;
+    color: #ffffff;
+    font-size: 19px;
+    font-style: normal;
+    line-height: 1;
+  }
+
+  .kiosk-reservation-platforms .is-yanolja { background: #ef3a79; }
+  .kiosk-reservation-platforms .is-yeogi { background: #ed2944; }
+  .kiosk-reservation-platforms .is-yeogi svg { width: 23px; height: 23px; }
+  .kiosk-reservation-platforms .is-naver { background: #20b846; }
+  .kiosk-reservation-platforms .is-agoda { display: flex; gap: 1px; background: #ffffff; }
+  .kiosk-reservation-platforms .is-agoda b { width: 7px; height: 7px; border-radius: 50%; background: #e73342; }
+  .kiosk-reservation-platforms .is-agoda b:nth-child(2) { background: #f5b820; }
+  .kiosk-reservation-platforms .is-agoda b:nth-child(3) { background: #41aa51; }
+  .kiosk-reservation-platforms .is-agoda b:nth-child(4) { background: #396cc7; }
+
+  .kiosk-home-screen .kiosk-reservation-footer {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    align-self: end;
+    min-height: 58px;
+    padding-top: 18px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.5);
+    font-size: 23px;
+    font-weight: 700;
+  }
+
+  .kiosk-home-screen .kiosk-reservation-footer svg { width: 27px; height: 27px; }
+  .kiosk-home-screen .kiosk-reservation-arrow {
+    position: absolute;
+    right: 34px;
+    bottom: 34px;
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    color: #c91951;
+    background: #ffffff;
+    font-size: 46px;
+  }
+
+  .kiosk-stay-type-content { flex: none; display: block; }
+  .kiosk-stay-type-options { gap: 20px; }
+  .kiosk-stay-type-option,
+  .kiosk-stay-type-option:only-child {
+    min-height: 438px;
+    padding: 32px 36px;
+    flex-direction: column;
+    align-items: flex-start;
+    border-radius: 26px;
+  }
+
+  .kiosk-stay-type-option.is-overnight { background: #edf5ff; border-color: #c3deff; }
+  .kiosk-stay-type-option.is-short-stay { background: #fff3f7; border-color: #ffc8d8; }
+  .kiosk-stay-type-option:disabled { background: #d8d4d7; border-color: #bbb8bb; color: #66636a; }
+  .kiosk-stay-type-option.is-overnight.is-unverified:disabled { background: #edf5ff; border-color: #c3deff; color: #536987; }
+  .kiosk-stay-type-option.is-short-stay.is-unverified:disabled { background: #fff3f7; border-color: #ffc8d8; color: #805568; }
+  .kiosk-home-screen .kiosk-stay-icon {
+    width: 134px;
+    height: 134px;
+    border-radius: 50%;
+    background: #d6e9ff;
+    font-size: 72px;
+  }
+
+  .kiosk-stay-type-option.is-short-stay .kiosk-stay-icon { background: #ffe2ea; }
+  .kiosk-stay-type-option:disabled .kiosk-stay-icon { background: #c7c5c8; }
+  .kiosk-home-screen .kiosk-stay-label { flex: none; gap: 12px; }
+  .kiosk-home-screen .kiosk-stay-label strong { font-size: clamp(55px, 6.8vw, 68px); }
+  .kiosk-home-screen .kiosk-stay-label small { font-size: clamp(23px, 2.8vw, 29px); }
+  .kiosk-home-screen .kiosk-stay-arrow {
+    width: 96px;
+    height: 96px;
+    border: 1px solid #d2e3ff;
+    border-radius: 50%;
+    color: #1459ae;
+    background: #ffffff;
+    box-shadow: 0 9px 20px rgba(23, 62, 119, 0.1);
+    font-size: 46px;
+  }
+
+  .kiosk-stay-type-option.is-short-stay .kiosk-stay-arrow { color: #c91951; border-color: #ffd4e0; }
+  .kiosk-home-start-hint { margin: auto 0 0; padding-top: 90px; display: flex; align-items: center; justify-content: center; gap: 12px; color: #6d7480; font-size: 24px; font-weight: 700; }
+  .kiosk-home-start-hint svg { width: 34px; height: 34px; }
+  .kiosk-ai-footer { right: 28px; bottom: 28px; }
+}
+
+@media (orientation: portrait) and (max-width: 700px) {
+  .kiosk-home-screen { padding: 22px 22px 104px; gap: 16px; }
+  .kiosk-home-hero { min-height: 190px; }
+  .kiosk-home-payment-badge { min-width: 170px; padding: 10px; }
+  .kiosk-home-payment-badge strong { font-size: 22px; }
+  .kiosk-home-screen > .kiosk-payment-notice { grid-template-columns: 1fr; }
+  .kiosk-home-screen .kiosk-home-action-reservation { height: 320px; padding: 24px; grid-template-columns: 94px 1fr; grid-template-rows: 100px 64px 1fr; gap: 8px 18px; }
+  .kiosk-home-screen .kiosk-reservation-icon { width: 94px; height: 94px; font-size: 46px; }
+  .kiosk-home-screen .kiosk-reservation-copy strong { font-size: 38px; }
+  .kiosk-home-screen .kiosk-reservation-copy small { font-size: 20px; }
+  .kiosk-home-screen .kiosk-reservation-platforms > span { min-height: 38px; padding: 4px 8px; font-size: 13px; }
+  .kiosk-reservation-platforms i { min-width: 24px; height: 24px; font-size: 13px; }
+  .kiosk-home-screen .kiosk-reservation-footer { font-size: 18px; }
+  .kiosk-home-screen .kiosk-reservation-arrow { width: 58px; height: 58px; right: 20px; bottom: 20px; font-size: 30px; }
+  .kiosk-stay-type-option, .kiosk-stay-type-option:only-child { min-height: 280px; padding: 22px; }
+  .kiosk-home-screen .kiosk-stay-icon { width: 74px; height: 74px; font-size: 42px; }
+  .kiosk-home-screen .kiosk-stay-label strong { font-size: 42px; }
+  .kiosk-home-screen .kiosk-stay-label small { font-size: 18px; }
+  .kiosk-home-screen .kiosk-stay-arrow { width: 56px; height: 56px; font-size: 30px; }
+  .kiosk-home-start-hint { display: none; }
+  .kiosk-stay-status { flex-wrap: wrap; font-size: 16px; }
 }
