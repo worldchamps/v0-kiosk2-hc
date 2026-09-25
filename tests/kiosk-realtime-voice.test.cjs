@@ -162,7 +162,7 @@ test('transcription session uses gpt-live-transcribe with client-side turn detec
   assert(!JSON.stringify(result).includes('server-only-test'));
 });
 
-test('Preview blocks PMS and payment APIs while leaving kiosk configuration and assistant available', () => {
+test('kiosk assistant is unavailable and Preview blocks PMS and payment APIs', () => {
   const next = { next: () => ({ status: 200 }), json: (body, init) => ({ body, status: init.status }) };
   const middleware = load('middleware.ts', { 'next/server': { NextResponse: next } },
     { process: { env: { VERCEL_ENV: 'preview' } } }).middleware;
@@ -173,8 +173,13 @@ test('Preview blocks PMS and payment APIs while leaving kiosk configuration and 
   assert.equal(check('GET', '/api/reservations'), 403);
   assert.equal(check('GET', '/api/available-rooms'), 403);
   assert.equal(check('GET', '/api/kiosk-config'), 200);
-  assert.equal(check('POST', '/api/kiosk-assistant/ask'), 200);
-  assert.equal(check('POST', '/api/kiosk-assistant/realtime'), 200);
+  assert.equal(check('POST', '/api/kiosk-assistant/ask'), 404);
+  assert.equal(check('POST', '/api/kiosk-assistant/realtime'), 404);
+  assert.equal(check('POST', '/api/kiosk-assistant/speak'), 404);
+  const installed = load('middleware.ts', { 'next/server': { NextResponse: next } },
+    { process: { env: {} } }).middleware;
+  assert.equal(installed({ method: 'POST', nextUrl: { pathname: '/api/kiosk-assistant/ask' } }).status, 404);
+  assert.equal(installed({ method: 'POST', nextUrl: { pathname: '/api/check-in' } }).status, 200);
 });
 
 test('Gemini receives fixed topic hints without the original question or personal identifiers', async () => {
