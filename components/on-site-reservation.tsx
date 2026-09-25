@@ -1,6 +1,6 @@
 ﻿"use client"
 
-import { useCallback, useEffect, useState, useRef } from "react"
+import { useCallback, useEffect, useState, useRef, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -34,6 +34,37 @@ import type { CompletedPayment } from "@/lib/payment-types"
 import CheckInComplete from "@/components/check-in-complete"
 import { KioskProgressScreen, ON_SITE_PROGRESS_STEPS } from "@/components/kiosk-progress"
 import type { PmsPaymentRates, PmsRoomRates } from "@/lib/pms-rates"
+
+// Keep the waiting screen at the portrait-preview's 941 × 1672 layout size.
+const KIOSK_HOME_WIDTH = 941
+const KIOSK_HOME_HEIGHT = 1672
+
+function KioskHomeCanvas({ children }: { children: ReactNode }) {
+  const stageRef = useRef<HTMLDivElement>(null)
+  const [scale, setScale] = useState<number | null>(null)
+
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return
+    const fit = () => {
+      if (stage.clientWidth && stage.clientHeight) {
+        setScale(Math.min(stage.clientWidth / KIOSK_HOME_WIDTH, stage.clientHeight / KIOSK_HOME_HEIGHT))
+      }
+    }
+    fit()
+    const observer = new ResizeObserver(fit)
+    observer.observe(stage)
+    return () => observer.disconnect()
+  }, [])
+
+  return (
+    <div className="kiosk-home-stage" ref={stageRef}>
+      <div className="kiosk-home-canvas" style={{ width: KIOSK_HOME_WIDTH, height: KIOSK_HOME_HEIGHT, transform: `translate(-50%, -50%) scale(${scale ?? 1})`, visibility: scale === null ? "hidden" : "visible" }}>
+        {children}
+      </div>
+    </div>
+  )
+}
 
 interface OnSiteReservationProps {
   onNavigate: (screen: string) => void
@@ -425,6 +456,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
     const showShortStay = allRooms.some((room) => hasAvailableStay(room, "shortStay"))
 
     return (
+      <KioskHomeCanvas>
       <div className="kiosk-home-screen">
         <header className="kiosk-home-hero">
           <div className="kiosk-home-heading">
@@ -537,6 +569,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
         <p className="kiosk-home-start-hint"><MousePointerClick aria-hidden="true" />화면을 터치해 시작하세요.</p>
 
       </div>
+      </KioskHomeCanvas>
     )
   }
 
