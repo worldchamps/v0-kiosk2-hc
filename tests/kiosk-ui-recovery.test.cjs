@@ -330,9 +330,17 @@ async function onsite(stay = 'shortStay') {
     async roomList() { await click(stay === 'shortStay' ? '대실 잠시 이용' : '숙박 오늘 입실 · 내일 퇴실'); await click('Standard 선택'); },
     async pay() { await this.roomList(); await click('B901호 선택'); await click('확인하고 결제하기'); },
     async idle() { await idle(); await settle(); }, async emptyRooms() { rooms = []; intervals[0](); await settle(); },
+    async endShortStay() { rooms = rooms.map(room => ({ ...room, stayEnabled: { ...room.stayEnabled, shortStay: false } })); intervals[0](); await settle(); },
     async roomLookupFailure(value = true) { roomLookupFails = value; intervals[0](); await settle(); },
     async malformedRooms(value) { roomPayload = value; intervals[0](); await settle(); } };
 }
+test('ended short stay keeps its card visible and blocks selection while lodging remains usable', async () => {
+  const h = await onsite();
+  assert.equal(h.button('대실 잠시 이용').disabled, false);
+  await h.endShortStay();
+  assert.equal(h.button('대실 이용불가 · 종료').disabled, true);
+  assert.equal(h.button('숙박 오늘 입실 · 내일 퇴실').disabled, undefined);
+});
 for (const stay of ['shortStay', 'overnight']) {
   test(`${stay}: room selection back preserves stay type`, async () => { const h = await onsite(stay); await h.roomList(); await h.click('돌아가기'); assert(h.visible('객실 타입을 선택해주세요')); });
   test(`${stay}: empty-room back preserves stay type`, async () => { const h = await onsite(stay); await h.roomList(); await h.emptyRooms(); await h.click('다른 객실 타입 보기'); assert(h.visible('객실 타입을 선택해주세요')); });

@@ -512,19 +512,18 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
                 </button>
               )}
 
-              {showShortStay && (
-                <button
-                  type="button"
-                  className="kiosk-stay-type-option is-short-stay"
-                  onClick={() => handleStayTypeSelect({ type: "shortStay", label: "대실" })}
-                >
-                  <Clock aria-hidden="true" />
-                  <span>
-                    <strong>대실</strong>
-                    <small>잠시 이용</small>
-                  </span>
-                </button>
-              )}
+              <button
+                type="button"
+                className="kiosk-stay-type-option is-short-stay"
+                disabled={!showShortStay}
+                onClick={() => handleStayTypeSelect({ type: "shortStay", label: "대실" })}
+              >
+                <Clock aria-hidden="true" />
+                <span>
+                  <strong>대실</strong>
+                  <small>{showShortStay ? "잠시 이용" : "이용불가 · 종료"}</small>
+                </span>
+              </button>
             </div>
           )}
         </div>
