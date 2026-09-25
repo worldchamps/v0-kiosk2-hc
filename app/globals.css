@@ -3391,11 +3391,11 @@ textarea {
 
   .kiosk-home-screen .kiosk-home-action-reservation {
     position: relative;
-    height: 442px;
+    height: 480px;
     padding: 40px 46px 32px;
     display: grid;
     grid-template-columns: 160px minmax(0, 1fr);
-    grid-template-rows: 160px 72px 1fr;
+    grid-template-rows: 160px auto 1fr;
     align-items: center;
     gap: 20px 28px;
     border: 2px solid #f16383;
@@ -3431,8 +3431,8 @@ textarea {
 
   .kiosk-home-screen .kiosk-reservation-platforms > span {
     flex: none;
-    min-height: 58px;
-    padding: 8px 14px;
+    min-height: 50px;
+    padding: 6px 11px;
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -3440,32 +3440,18 @@ textarea {
     border-radius: 999px;
     color: #20242b;
     background: #ffffff;
-    font-size: 19px;
+    font-size: 17px;
     font-weight: 800;
     white-space: nowrap;
   }
 
-  .kiosk-reservation-platforms i {
-    min-width: 34px;
+  .kiosk-reservation-platforms img {
+    width: 34px;
     height: 34px;
-    display: grid;
-    place-items: center;
+    flex: none;
     border-radius: 9px;
-    color: #ffffff;
-    font-size: 19px;
-    font-style: normal;
-    line-height: 1;
+    object-fit: cover;
   }
-
-  .kiosk-reservation-platforms .is-yanolja { background: #ef3a79; }
-  .kiosk-reservation-platforms .is-yeogi { background: #ed2944; }
-  .kiosk-reservation-platforms .is-yeogi svg { width: 23px; height: 23px; }
-  .kiosk-reservation-platforms .is-naver { background: #20b846; }
-  .kiosk-reservation-platforms .is-agoda { display: flex; gap: 1px; background: #ffffff; }
-  .kiosk-reservation-platforms .is-agoda b { width: 7px; height: 7px; border-radius: 50%; background: #e73342; }
-  .kiosk-reservation-platforms .is-agoda b:nth-child(2) { background: #f5b820; }
-  .kiosk-reservation-platforms .is-agoda b:nth-child(3) { background: #41aa51; }
-  .kiosk-reservation-platforms .is-agoda b:nth-child(4) { background: #396cc7; }
 
   .kiosk-home-screen .kiosk-reservation-footer {
     grid-column: 1 / -1;
@@ -3547,12 +3533,12 @@ textarea {
   .kiosk-home-payment-badge { min-width: 170px; padding: 10px; }
   .kiosk-home-payment-badge strong { font-size: 22px; }
   .kiosk-home-screen > .kiosk-payment-notice { grid-template-columns: 1fr; }
-  .kiosk-home-screen .kiosk-home-action-reservation { height: 320px; padding: 24px; grid-template-columns: 94px 1fr; grid-template-rows: 100px 64px 1fr; gap: 8px 18px; }
+  .kiosk-home-screen .kiosk-home-action-reservation { height: auto; min-height: 460px; padding: 24px; grid-template-columns: 94px 1fr; grid-template-rows: 100px auto 1fr; gap: 8px 18px; }
   .kiosk-home-screen .kiosk-reservation-icon { width: 94px; height: 94px; font-size: 46px; }
   .kiosk-home-screen .kiosk-reservation-copy strong { font-size: 38px; }
   .kiosk-home-screen .kiosk-reservation-copy small { font-size: 20px; }
   .kiosk-home-screen .kiosk-reservation-platforms > span { min-height: 38px; padding: 4px 8px; font-size: 13px; }
-  .kiosk-reservation-platforms i { min-width: 24px; height: 24px; font-size: 13px; }
+  .kiosk-reservation-platforms img { width: 24px; height: 24px; }
   .kiosk-home-screen .kiosk-reservation-footer { font-size: 18px; }
   .kiosk-home-screen .kiosk-reservation-arrow { width: 58px; height: 58px; right: 20px; bottom: 20px; font-size: 30px; }
   .kiosk-stay-type-option, .kiosk-stay-type-option:only-child { min-height: 280px; padding: 22px; }

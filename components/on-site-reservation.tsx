@@ -17,7 +17,6 @@ import {
   ChevronRight,
   UserRound,
   MousePointerClick,
-  MapPin,
   CreditCard,
   Landmark,
   ArrowLeft,
@@ -471,10 +470,15 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
               <small>예약 조회 · 체크인</small>
             </span>
             <span className="kiosk-reservation-platforms" aria-hidden="true">
-              <span><i className="is-yanolja">ya</i>야놀자</span>
-              <span><i className="is-yeogi"><MapPin /></i>여기어때</span>
-              <span><i className="is-naver">N</i>네이버예약</span>
-              <span><i className="is-agoda"><b /><b /><b /><b /></i>아고다</span>
+              <span><img src="/booking-channels/yanolja.jpg" alt="" width="34" height="34" />야놀자</span>
+              <span><img src="/booking-channels/yeogi.jpg" alt="" width="34" height="34" />여기어때</span>
+              <span><img src="/booking-channels/naver.jpg" alt="" width="34" height="34" />네이버예약</span>
+              <span><img src="/booking-channels/agoda.jpg" alt="" width="34" height="34" />아고다</span>
+              <span><img src="/booking-channels/gmarket.jpg" alt="" width="34" height="34" />G마켓</span>
+              <span><img src="/booking-channels/kakaotalk.jpg" alt="" width="34" height="34" />카카오톡</span>
+              <span><img src="/booking-channels/coupang.jpg" alt="" width="34" height="34" />쿠팡</span>
+              <span><img src="/booking-channels/honeystay.jpg" alt="" width="34" height="34" />꿀스테이</span>
+              <span><img src="/booking-channels/airbnb.jpg" alt="" width="34" height="34" />에어비앤비</span>
             </span>
             <span className="kiosk-reservation-footer"><UserRound aria-hidden="true" />예약 고객 전용</span>
             <span className="kiosk-reservation-arrow"><ChevronRight aria-hidden="true" /></span>
