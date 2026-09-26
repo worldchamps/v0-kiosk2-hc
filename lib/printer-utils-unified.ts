@@ -101,10 +101,12 @@ export async function printRoomInfoReceipt(roomData: any): Promise<boolean> {
  */
 export async function printTestPage(): Promise<boolean> {
   if (!shouldUsePrinter()) return false
-  if (getKioskPropertyId() === "property4") {
+  const property = getKioskPropertyId()
+  const windowsStatus = property === "property3" ? await window.electronAPI?.getReceiptPrinterStatus?.() : null
+  if (property === "property4" || windowsStatus?.backend === "woosim") {
     return HardwarePrinter.printReceipt({
-      hotelName: "THE CAMP STAY",
-      roomNumber: "Camp101",
+      hotelName: property === "property4" ? "THE CAMP STAY" : "THE BEACH STAY",
+      roomNumber: property === "property4" ? "Camp101" : "B101",
       password: "1234",
       checkInDate: "2026-08-22",
       checkOutDate: "2026-08-23",
@@ -123,12 +125,14 @@ export function setSimplePrintMode(simple: boolean): void {
 }
 export function getSimplePrintMode(): boolean { return false }
 export function getPrinterModel(): string {
-  return getKioskPropertyId() === "property4" ? "SAM4S GCUBE (Windows)" : "Bixolon (HW Server)"
+  return getKioskPropertyId() === "property4" ? "SAM4S GCUBE (Windows)"
+    : HardwarePrinter.getWindowsPrinterBackend() === "woosim" ? "WOOSIM WSP-CP383 (Windows)" : "Bixolon (HW Server)"
 }
 export function getPrinterStatus(): any {
   return {
     connected: isPrinterConnected(),
-    model: getKioskPropertyId() === "property4" ? "SAM4S_GCUBE_WINDOWS" : "HW_SERVER",
+    model: getKioskPropertyId() === "property4" ? "SAM4S_GCUBE_WINDOWS"
+      : HardwarePrinter.getWindowsPrinterBackend() === "woosim" ? "WOOSIM_WINDOWS" : "HW_SERVER",
     simpleMode: false,
   }
 }

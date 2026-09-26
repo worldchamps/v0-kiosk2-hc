@@ -223,6 +223,13 @@ function findSam4sPrinter(printers, configuredName = "") {
   }) || null
 }
 
+function findWoosimPrinter(printers, configuredName = "") {
+  const wanted = configuredName.trim().toLowerCase()
+  if (wanted) return printers.find((printer) =>
+    [printer.name, printer.displayName].some((name) => String(name || "").toLowerCase() === wanted)) || null
+  return printers.find((printer) => /wsp[- ]?cp383/i.test(`${printer.name || ""} ${printer.displayName || ""}`)) || null
+}
+
 if (typeof require !== "undefined" && require.main === module) {
   const html = buildSam4sReceiptHtml({ roomNumber: "Camp101", password: "12<34" })
   if (!html.includes("CAMP 101호") || !html.includes("12&lt;34*")) throw new Error("receipt HTML self-check failed")
@@ -231,7 +238,8 @@ if (typeof require !== "undefined" && require.main === module) {
     throw new Error("native print lines self-check failed")
   }
   if (findSam4sPrinter([{ name: "SAM4S GCUBE-100" }])?.name !== "SAM4S GCUBE-100") throw new Error("printer selection self-check failed")
+  if (findWoosimPrinter([{ name: "WOOSIM WSP-CP383" }])?.name !== "WOOSIM WSP-CP383") throw new Error("Woosim selection self-check failed")
   console.log("SAM4S receipt self-check passed")
 }
 
-module.exports = { buildSam4sReceiptHtml, buildSam4sPrintLines, findSam4sPrinter }
+module.exports = { buildSam4sReceiptHtml, buildSam4sPrintLines, findSam4sPrinter, findWoosimPrinter }

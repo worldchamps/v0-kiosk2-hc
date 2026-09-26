@@ -282,6 +282,37 @@ test("printer: missing IPC or failed transport does not report a printed receipt
   assert.equal(cutCalls, 0)
 })
 
+test("property3 B uses the installed Woosim driver and does not send Bixolon commands", async () => {
+  let sent = 0
+  const p = printer({
+    getReceiptPrinterStatus: async () => ({ backend: "woosim", connected: true }),
+    printToWoosim: async () => { sent++; return { success: true } },
+    sendRawToBixolon: async () => { throw new Error("Bixolon must not be called") },
+  })
+  assert.equal(await p.autoConnectPrinter(), true)
+  assert.equal(await p.printReceipt({ hotelName: "THE BEACH STAY", roomNumber: "B101" }), true)
+  assert.equal(sent, 1)
+  const unavailable = printer({
+    getReceiptPrinterStatus: async () => null,
+    sendRawToBixolon: async () => { throw new Error("Unknown backend must fail closed") },
+  })
+  assert.equal(await unavailable.printReceipt({ hotelName: "THE BEACH STAY", roomNumber: "B101" }), false)
+})
+
+test("Woosim IPC rejects another building before reaching the Windows printer", async () => {
+  const source = fs.readFileSync(path.join(root, "electron/main.js"), "utf8")
+  const block = source.slice(source.indexOf("const usesWoosim ="), source.indexOf('ipcMain.handle("print-to-sam4s"'))
+  const handlers = new Map()
+  vm.runInNewContext(block, {
+    ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+    KIOSK_PROPERTY_ID: "property3", process: { env: { KIOSK_BUILDING: "B" } },
+    Buffer, console, buildSam4sPrintLines: () => { throw new Error("Wrong building reached printer") },
+  })
+  const result = await handlers.get("print-to-woosim")({}, { roomNumber: "A101" })
+  assert.equal(result.success, false)
+  assert.match(result.error, /B동/)
+})
+
 test("printer: a hung transport status query fails closed", { timeout: 1000 }, async () => {
   const p = printer({ getHardwareStatus: () => new Promise(() => {}) })
   assert.equal(await p.autoConnectPrinter(), false)
@@ -314,4 +345,15 @@ test("property4 room-info wrapper preserves a rejected Windows print result", as
     "@/lib/property-utils": { getKioskPropertyId: () => "property4" },
   }).api
   assert.equal(await p.printRoomInfoReceipt({ roomNumber: "Camp101", password: "TEST", floor: "1" }), false)
+})
+
+test("property4 connection status requires a registered GCUBE printer", async () => {
+  const p = load("lib/printer-utils.ts", {
+    getReceiptPrinterStatus: async () => ({ backend: "sam4s", connected: false }),
+  }, {
+    "@/electron/sam4s-receipt": { buildSam4sReceiptHtml() { return "" } },
+    "@/lib/property-utils": { getKioskPropertyId: () => "property4" },
+  }).api
+  assert.equal(await p.autoConnectPrinter(), false)
+  assert.equal(p.isPrinterConnected(), false)
 })

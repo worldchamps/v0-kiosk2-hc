@@ -1,13 +1,14 @@
 const PORT = /^COM[1-9]\d{0,2}$/i
 const FIELDS = [
   'tossTransport', 'tossSerialPath', 'tossSerialBaudRate', 'tossWsUrl', 'tossPairingKey',
-  'printerPort', 'acceptorPort', 'dispenserPort', 'bac2400Port', 'sam4sPrinterName',
+  'printerPort', 'acceptorPort', 'dispenserPort', 'bac2400Port', 'sam4sPrinterName', 'woosimPrinterName',
 ]
 
 function view(config) {
   const env = config.env || {}
   return {
     property: config.property,
+    building: config.property === 'property3' ? env.KIOSK_BUILDING || '' : '',
     pairingKeySet: Boolean(env.TOSS_FRONT_PAIRING_KEY),
     values: {
       tossTransport: env.TOSS_FRONT_TRANSPORT || 'auto',
@@ -20,6 +21,7 @@ function view(config) {
       dispenserPort: env.DISPENSER_PORT || 'COM5',
       bac2400Port: env.BAC2400_PORT || env.BOARD3400_PORT || 'COM5',
       sam4sPrinterName: env.SAM4S_PRINTER_NAME || '',
+      woosimPrinterName: env.WOOSIM_PRINTER_NAME || '',
     },
   }
 }
@@ -34,7 +36,9 @@ function updatedConfig(config, input) {
   if (FIELDS.some(key => values[key].length > 256 || /[\r\n\0]/.test(values[key]))) throw new Error('장비 설정 값이 너무 길거나 올바르지 않습니다.')
   if (!['auto', 'serial', 'websocket'].includes(values.tossTransport)) throw new Error('토스 프론트 연결 방식을 확인해주세요.')
   const portKeys = config.property === 'property4' ? ['bac2400Port']
-    : config.property === 'property2' ? [] : ['printerPort', 'acceptorPort', 'dispenserPort']
+    : config.property === 'property2' ? []
+    : config.property === 'property3' && config.env?.KIOSK_BUILDING === 'B' ? ['acceptorPort', 'dispenserPort']
+    : ['printerPort', 'acceptorPort', 'dispenserPort']
   for (const key of [...portKeys, ...(values.tossSerialPath ? ['tossSerialPath'] : [])]) {
     if (!PORT.test(values[key])) throw new Error('COM 포트는 COM1부터 COM999까지 입력해주세요.')
     values[key] = values[key].toUpperCase()
@@ -73,8 +77,8 @@ function updatedConfig(config, input) {
     env.BAC2400_PORT = values.bac2400Port
     env.SAM4S_PRINTER_NAME = values.sam4sPrinterName
   } else if (config.property !== 'property2') {
-    env.PRINTER_PORT = values.printerPort
-    env.PRINTER_PATH = values.printerPort
+    if (config.property === 'property3' && config.env?.KIOSK_BUILDING === 'B') env.WOOSIM_PRINTER_NAME = values.woosimPrinterName
+    else { env.PRINTER_PORT = values.printerPort; env.PRINTER_PATH = values.printerPort }
     env.ACCEPTOR_PORT = values.acceptorPort
     env.DISPENSER_PORT = values.dispenserPort
   }

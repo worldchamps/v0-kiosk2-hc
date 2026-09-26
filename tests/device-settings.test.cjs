@@ -27,6 +27,7 @@ test('registration view hides pairing key and preserves device identity when sav
     assert.equal(saved.env.TOSS_FRONT_SERIAL_PATH, 'COM8')
     if (property === 'property4') assert.equal(saved.env.BAC2400_PORT, 'COM5')
     else if (property === 'property2') assert.equal(saved.env.PRINTER_PATH, undefined)
+    else if (property === 'property3') assert.equal(saved.env.WOOSIM_PRINTER_NAME, '')
     else assert.equal(saved.env.PRINTER_PATH, 'COM2')
     assert.deepEqual(original.env, config(property).env)
   }
@@ -60,7 +61,7 @@ test('IPC service requires administrator authorization and only writes after val
   assert.equal((await service.read({}, 'correct')).serialPorts[0].path, 'COM8')
   const values = { ...view(stored).values, tossTransport: 'serial', tossSerialPath: 'COM8' }
   assert.equal(service.save({}, { password: 'wrong', values }).success, false)
-  assert.equal(service.save({}, { password: 'correct', values: { ...values, printerPort: 'COM8' } }).success, false)
+  assert.equal(service.save({}, { password: 'correct', values: { ...values, acceptorPort: 'COM8' } }).success, false)
   assert.equal(writes, 0)
   assert.equal(service.save({}, { password: 'correct', values }).success, true)
   assert.equal(writes, 1)

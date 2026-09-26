@@ -7,6 +7,8 @@ import { getKioskPropertyId } from "@/lib/property-utils"
 import { hardwareCallWithin } from "@/lib/hardware-timeout"
 
 let printTransportConnected = false
+let windowsPrinterBackend: "sam4s" | "woosim" | null = null
+export const getWindowsPrinterBackend = () => windowsPrinterBackend
 
 // --------------------------------------------------------
 // ESC/POS Commands
@@ -119,6 +121,15 @@ export interface KioskReceiptData {
 export async function printReceipt(data: KioskReceiptData): Promise<boolean> {
   if (getKioskPropertyId() === "property4") {
     return printSam4sReceipt(data)
+  }
+  if (getKioskPropertyId() === "property3" && typeof window !== "undefined" && window.electronAPI?.getReceiptPrinterStatus) {
+    const status = await hardwareCallWithin(() => window.electronAPI!.getReceiptPrinterStatus())
+    if (!status) return false
+    if (status.backend === "woosim") {
+      const result = await window.electronAPI.printToWoosim(data)
+      if (!result.success) console.error("[WOOSIM] Windows print failed:", result.error)
+      return result.success
+    }
   }
 
   console.log("[Bixolon] Printing receipt...", data)
@@ -324,21 +335,26 @@ function formatReceiptAmount(value: number): string {
 // --------------------------------------------------------
 
 export async function autoConnectPrinter(): Promise<boolean> {
-  if (getKioskPropertyId() === "property4") {
-    return typeof window !== "undefined" && (!!window.electronAPI?.printToSam4s || typeof window.print === "function")
+  const property = getKioskPropertyId()
+  const api = typeof window !== "undefined" ? window.electronAPI : undefined
+  if ((property === "property4" || property === "property3") && api?.getReceiptPrinterStatus) {
+    try {
+      const status = await hardwareCallWithin(() => api.getReceiptPrinterStatus())
+      if (!status) return printTransportConnected = false
+      windowsPrinterBackend = status.backend === "sam4s" || status.backend === "woosim" ? status.backend : null
+      if (windowsPrinterBackend) return printTransportConnected = !!status.connected
+    } catch { return printTransportConnected = false }
+  }
+  if (property === "property4") {
+    return printTransportConnected = typeof window !== "undefined" && !api && typeof window.print === "function"
   }
 
-  const api = typeof window !== "undefined" ? window.electronAPI : undefined
   try { printTransportConnected = !!api && !!(await hardwareCallWithin(() => api.getHardwareStatus()))?.connected }
   catch { printTransportConnected = false }
   return printTransportConnected
 }
 
 export function isPrinterConnected(): boolean {
-  if (getKioskPropertyId() === "property4") {
-    return typeof window !== "undefined" && (!!window.electronAPI?.printToSam4s || typeof window.print === "function")
-  }
-
   // This is the last transport check, not a paper/sensor or physical print guarantee.
   return printTransportConnected;
 }

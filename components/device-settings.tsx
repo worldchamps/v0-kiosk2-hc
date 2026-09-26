@@ -107,8 +107,14 @@ export default function DeviceSettings() {
       </div> : current.property === "property2" ? <p className="rounded border p-4">
         이 숙소는 현재 현금 장비와 영수증 프린터를 사용하지 않습니다. 토스 프론트 연결 설정만 등록할 수 있습니다.
       </p> : <div className="rounded border p-4 space-y-4">
-        <h3 className="text-xl font-semibold">지폐 장비 · Bixolon 프린터</h3>
-        {portInput("printerPort", "Bixolon 프린터", "Hardware Server와 Electron 인쇄 경로에 같은 COM 포트를 적용합니다.")}
+        <h3 className="text-xl font-semibold">지폐 장비 · {current.building === "B" ? "WOOSIM 프린터" : "Bixolon 프린터"}</h3>
+        {current.building === "B" && <label className="block space-y-1">B동 WOOSIM WSP-CP383 Windows 프린터 이름
+          <Input list="kiosk-device-printers" value={values.woosimPrinterName} onChange={event => set("woosimPrinterName", event.target.value)}
+            placeholder="비우면 WSP-CP383 자동 검색" autoComplete="off" />
+          <datalist id="kiosk-device-printers">{current.printers?.map(printer =>
+            <option key={printer.name} value={printer.name}>{printer.displayName}</option>)}</datalist>
+        </label>}
+        {current.building !== "B" && portInput("printerPort", "Bixolon 프린터", "Hardware Server와 Electron 인쇄 경로에 같은 COM 포트를 적용합니다.")}
         {portInput("acceptorPort", "지폐 인식기", "지폐 인식기 COM 포트입니다.")}
         {portInput("dispenserPort", "지폐 방출기", "지폐 방출기 COM 포트입니다.")}
       </div>}

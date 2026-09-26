@@ -80,6 +80,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   cutBixolonPaper: () => ipcRenderer.invoke("cut-bixolon-paper"),
   sendRawToBixolon: (data) => ipcRenderer.invoke("send-raw-to-bixolon", data),
   printToSam4s: (receipt) => ipcRenderer.invoke("print-to-sam4s", receipt),
+  getReceiptPrinterStatus: () => ipcRenderer.invoke("receipt-printer-status"),
+  printToWoosim: (receipt) => ipcRenderer.invoke("print-to-woosim", receipt),
 
   onBillAcceptorData: (callback) => {
     ipcRenderer.removeAllListeners("bill-acceptor-data")

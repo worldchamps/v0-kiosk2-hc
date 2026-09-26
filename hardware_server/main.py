@@ -57,13 +57,14 @@ PROPERTY_ID = (
     or "property3"
 ).lower()
 USE_BAC2400 = PROPERTY_ID == "property4"
+USE_WOOSIM = PROPERTY_ID == "property3" and os.environ.get("KIOSK_BUILDING") == "B"
 
 bac2400 = Bac2400(
     os.environ.get("BAC2400_PORT") or os.environ.get("BOARD3400_PORT", "COM5")
 ) if USE_BAC2400 else None
 dispenser = None if USE_BAC2400 else OnePlusDispenser(DISPENSER_PORT)
 acceptor = None if USE_BAC2400 else OnePlusAcceptor(ACCEPTOR_PORT)
-printer = None if USE_BAC2400 else BixolonPrinter(PRINTER_PORT, baud_rate=115200)
+printer = None if USE_BAC2400 or USE_WOOSIM else BixolonPrinter(PRINTER_PORT, baud_rate=115200)
 
 connected_clients = set()
 
@@ -235,7 +236,7 @@ async def main():
     if printer:
         printer.connect()
     else:
-        logger.info("Property4 selected: SAM4S printer is managed by the Windows driver")
+        logger.info("Windows printer driver manages receipt printing")
 
     logger.info("Starting WebSocket server on ws://localhost:8082")
     # Only the native Electron bridge connects here; web pages must never issue cash/printer commands.

@@ -20,7 +20,7 @@ const { deviceFiles } = require("./device-setup")
 const { createDeviceSettings } = require("./device-settings")
 const { createCashIncidentDelivery } = require("./cash-incidents")
 const { createCashTrace, createCashDiagnostics, responsePacket } = require("./cash-diagnostics")
-const { buildSam4sPrintLines, findSam4sPrinter } = require("./sam4s-receipt")
+const { buildSam4sPrintLines, findSam4sPrinter, findWoosimPrinter } = require("./sam4s-receipt")
 
 let mainWindow
 let billAcceptorPort = null // Now handled by hardware server bridge
@@ -806,6 +806,35 @@ function printSam4sWithWindows(printerName, lines) {
     }, 30_000)
   })
 }
+
+const usesWoosim = () => KIOSK_PROPERTY_ID === "property3" && process.env.KIOSK_BUILDING === "B"
+
+ipcMain.handle("receipt-printer-status", async (event) => {
+  if (KIOSK_PROPERTY_ID !== "property4" && !usesWoosim()) return { backend: "bixolon" }
+  const printers = await event.sender.getPrintersAsync()
+  const printer = usesWoosim()
+    ? findWoosimPrinter(printers, process.env.WOOSIM_PRINTER_NAME || "")
+    : findSam4sPrinter(printers, process.env.SAM4S_PRINTER_NAME || "")
+  return { backend: usesWoosim() ? "woosim" : "sam4s", connected: !!printer }
+})
+
+ipcMain.handle("print-to-woosim", async (event, receipt) => {
+  if (!usesWoosim()) return { success: false, error: "B동 키오스크에서만 사용할 수 있습니다." }
+  if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) return { success: false, error: "영수증 데이터가 올바르지 않습니다." }
+  if (!/^B[\s-]?\d{3}$/i.test(String(receipt.roomNumber || ""))) return { success: false, error: "B동 객실 영수증만 출력할 수 있습니다." }
+  try {
+    const lines = buildSam4sPrintLines(receipt)
+    if (!lines.length || Buffer.byteLength(JSON.stringify(lines), "utf8") > 100_000) throw new Error("영수증 내용이 올바르지 않습니다.")
+    const printers = await event.sender.getPrintersAsync()
+    const printer = findWoosimPrinter(printers, process.env.WOOSIM_PRINTER_NAME || "")
+    if (!printer) throw new Error("WOOSIM WSP-CP383 Windows 프린터를 찾지 못했습니다.")
+    await printSam4sWithWindows(printer.name, lines)
+    return { success: true, printer: printer.displayName || printer.name }
+  } catch (error) {
+    console.error("[WOOSIM] Print failed:", error)
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
+})
 
 ipcMain.handle("print-to-sam4s", async (event, receipt) => {
   if (KIOSK_PROPERTY_ID !== "property4") {

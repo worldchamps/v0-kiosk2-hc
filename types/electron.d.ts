@@ -37,12 +37,14 @@ export interface KioskDeviceSettingsValues {
   dispenserPort: string
   bac2400Port: string
   sam4sPrinterName: string
+  woosimPrinterName: string
 }
 
 export interface KioskDeviceSettingsRead {
   success: boolean
   error?: string
   property?: string
+  building?: string
   pairingKeySet?: boolean
   values?: KioskDeviceSettingsValues
   serialPorts?: { path: string; manufacturer: string }[]
@@ -104,6 +106,8 @@ export interface ElectronAPI {
   cutBixolonPaper: () => Promise<boolean>
   sendRawToBixolon: (data: number[]) => Promise<boolean>
   printToSam4s: (receipt: unknown) => Promise<{ success: boolean; printer?: string; error?: string }>
+  getReceiptPrinterStatus: () => Promise<{ backend: "bixolon" | "sam4s" | "woosim"; connected?: boolean }>
+  printToWoosim: (receipt: unknown) => Promise<{ success: boolean; printer?: string; error?: string }>
 
   // 유틸리티
   listSerialPorts: () => Promise<{ success: boolean; ports?: any[]; error?: string }>
