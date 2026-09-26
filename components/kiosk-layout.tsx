@@ -30,9 +30,10 @@ import { parseReservationQrValue } from "@/lib/reservation-qr"
 import { KioskProgressScreen, RESERVATION_PROGRESS_STEPS } from "@/components/kiosk-progress"
 import { type KioskScope, buildingRestrictionMessage } from "@/lib/kiosk-scope"
 import type { Reservation } from "@/lib/types"
+import { kioskOperatorShortcut } from "@/lib/kiosk-operator-shortcuts"
 
 interface KioskLayoutProps {
-  onChangeMode: () => void
+  onChangeMode: (mode?: "web") => void
   initialLocation?: KioskLocation
 }
 
@@ -63,6 +64,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     floor: "",
   })
   const [showAdminKeypad, setShowAdminKeypad] = useState(false)
+  const adminShortcutRef = useRef(false)
   const [kioskLocation, setKioskLocation] = useState<KioskLocation>(() => initialLocation || getKioskLocation())
   const [isPopupMode, setIsPopupMode] = useState(false)
   const [kioskProperty, setKioskProperty] = useState<PropertyId>("property3")
@@ -161,6 +163,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     document.body.classList.add("kiosk-mode")
     return () => {
       document.body.classList.remove("kiosk-mode")
+      document.body.classList.remove("kiosk-operator-cursor")
       stopAllAudio(true)
     }
   }, [])
@@ -251,22 +254,38 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     }
   }
 
-  const handleModeChangeClick = () => {
+  const handleModeChangeClick = (directWeb = false) => {
     if (paymentSession.isActive || checkInSubmitting.current || checkInPending) {
       alert("진행 중인 결제/체크인 확인을 먼저 완료해주세요. 관리자 문의 010-5126-4644")
       return
     }
+    adminShortcutRef.current = directWeb
     setShowAdminKeypad(true)
   }
 
   const handlePasswordConfirm = (password: string) => {
     setShowAdminKeypad(false)
-    onChangeMode()
+    const directWeb = adminShortcutRef.current
+    adminShortcutRef.current = false
+    onChangeMode(directWeb ? "web" : undefined)
   }
 
   const handleAdminKeypadClose = () => {
+    adminShortcutRef.current = false
     setShowAdminKeypad(false)
   }
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      const shortcut = kioskOperatorShortcut(event)
+      if (!shortcut) return
+      event.preventDefault()
+      if (shortcut === "cursor") document.body.classList.toggle("kiosk-operator-cursor")
+      else if (!showAdminKeypad) handleModeChangeClick(true)
+    }
+    window.addEventListener("keydown", handleShortcut)
+    return () => window.removeEventListener("keydown", handleShortcut)
+  }, [showAdminKeypad, paymentSession.isActive, checkInPending])
 
   const handleCheckReservation = async (name: string) => {
     if (!name.trim() || lookupSubmitting.current) return
@@ -626,7 +645,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         <div className="kiosk-admin-slot absolute top-2 right-2 z-20">
           <button
             className="kiosk-admin-entry"
-            onClick={handleModeChangeClick}
+            onClick={() => handleModeChangeClick()}
             aria-label="관리자 모드"
           >
             관리자

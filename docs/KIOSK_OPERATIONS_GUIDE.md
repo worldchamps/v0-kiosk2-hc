@@ -254,9 +254,14 @@ TOSS_FRONT_PAIRING_KEY=16자-이상의-동일한-키
 
 ### 6.7 설치형 앱에서 외부기기 등록
 
+키오스크 화면에서 `Ctrl+Shift+Backspace`를 누르면 기존 관리자 비밀번호 창이 열리고,
+인증 후 관리자 웹 화면으로 이동합니다. `Ctrl+Shift+M`은 테스트용 마우스 커서를
+표시/숨김 전환하며 앱을 다시 열면 기본 숨김 상태로 돌아갑니다.
+
 장비 설정 화면이 포함된 설치형 앱에서는 관리자 모드 → **외부기기 등록**을 엽니다.
 관리자 비밀번호를 입력하면 이 PC에 저장된 연결 방식과 장비 포트를 볼 수 있습니다.
-property1/3은 Bixolon·지폐 인식기·지폐 방출기, property4는 BAC-2400·SAM4S 프린터,
+property1과 property3 A동은 Bixolon, property3 B동은 WOOSIM WSP-CP383을 사용합니다.
+property4는 BAC-2400·SAM4S 프린터,
 property2는 토스 프론트 연결 항목만 표시합니다. COM 포트 목록과 Windows 프린터 목록은
 선택을 돕기 위한 것이며, 감지되지 않은 장비의 포트도 직접 입력할 수 있습니다.
 
@@ -401,7 +406,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File electron\sam4s-print.ps1
 
 정상 출력은 각각 `SAM4S receipt self-check passed`, `SAM4S GDI self-check passed`입니다.
 
-### 10.2 Bixolon
+### 10.2 property3 B동 WOOSIM WSP-CP383
+
+B동 PC에 WOOSIM Windows 프린터 드라이버를 설치하고 프린터 테스트 페이지를 확인합니다.
+앱은 Windows 프린터 이름에서 `WSP-CP383`을 검색합니다. 이름이 다르면 관리자 모드 →
+**외부기기 등록**에서 정확한 프린터 이름을 선택한 뒤 앱을 재시작합니다.
+이 경로는 Bixolon COM 포트를 사용하지 않습니다.
+
+### 10.3 Bixolon
 
 Bixolon은 Python Hardware Server가 `hardware_server/bin/BXLPAPI_x64.dll` 또는 32비트 DLL을
 불러와 COM 포트로 연결합니다. 한글은 Windows SDK의 KS5601 코드페이지 949로 보내며,

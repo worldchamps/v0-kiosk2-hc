@@ -37,5 +37,5 @@ export default function KioskLocationPage({ params }: { params: Promise<{ locati
     return <div className="flex items-center justify-center min-h-screen">리다이렉트 중...</div>
   }
 
-  return <KioskLayout onChangeMode={() => router.push("/")} initialLocation={location as KioskLocation} />
+  return <KioskLayout onChangeMode={(mode) => router.push(mode === "web" ? "/?mode=web" : "/")} initialLocation={location as KioskLocation} />
 }

@@ -2525,6 +2525,12 @@ textarea {
   background: #fff0f4;
 }
 
+body.kiosk-operator-cursor,
+body.kiosk-operator-cursor .kiosk-mode,
+body.kiosk-operator-cursor .kiosk-mode * {
+  cursor: auto !important;
+}
+
 .kiosk-stay-type-option.is-short-stay:disabled {
   border-color: #c9c5c8;
   color: #706a70;

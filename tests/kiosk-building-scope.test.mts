@@ -294,6 +294,7 @@ test("kiosk UI waits for PC config, overrides a conflicting URL/location, and bl
       "react/jsx-runtime": { jsx: element, jsxs: element },
       "next/navigation": { useRouter: () => ({}) },
       "@/lib/kiosk-scope": scope,
+      "@/lib/kiosk-operator-shortcuts": { kioskOperatorShortcut: () => null },
       "@/lib/property-utils": { ...properties, getKioskPropertyId: () => "property3" },
       "@/lib/location-utils": { getKioskLocation: () => "A" },
       "@/lib/audio-utils": { stopAllAudio() {}, pauseBGM() {}, resumeBGM() {} },

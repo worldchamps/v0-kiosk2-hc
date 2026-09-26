@@ -59,7 +59,12 @@ function HomeContent() {
     localStorage.setItem("appMode", mode)
   }
 
-  const handleChangeMode = () => {
+  const handleChangeMode = (mode?: "web") => {
+    if (mode === "web") {
+      setAppMode("web")
+      localStorage.setItem("appMode", "web")
+      return
+    }
     setAppMode(null)
     localStorage.removeItem("appMode")
     localStorage.removeItem("popupMode")

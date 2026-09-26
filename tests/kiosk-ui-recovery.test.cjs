@@ -449,8 +449,9 @@ async function kiosk(scenario = {}) {
     '@/contexts/payment-context': { usePayment: () => ({ paymentSession: { isActive: false }, ready: true, storageError: '' }) },
     '@/lib/reservation-qr': load('lib/reservation-qr.ts').exports, '@/components/kiosk-progress': { KioskProgressScreen: 'Progress', RESERVATION_PROGRESS_STEPS: [] },
     '@/lib/kiosk-scope': { buildingRestrictionMessage: () => 'B only' },
+    '@/lib/kiosk-operator-shortcuts': { kioskOperatorShortcut: () => null },
   });
-  const h = load('components/kiosk-layout.tsx', deps, { window: { location: { search: '' }, electronAPI: { tossFront: { scanReservationQr: scenario.scan || (async () => ({success: true, value: 'AGAIN:RESERVATION:QA-ONLY'})) } } }, document: { body: { classList: { add() {}, remove() {} } } },
+  const h = load('components/kiosk-layout.tsx', deps, { window: { location: { search: '' }, addEventListener() {}, removeEventListener() {}, electronAPI: { tossFront: { scanReservationQr: scenario.scan || (async () => ({success: true, value: 'AGAIN:RESERVATION:QA-ONLY'})) } } }, document: { body: { classList: { add() {}, remove() {} } } },
     fetch: async (url, options) => {
       if (url === '/api/kiosk-config') return { ok: true, json: async () => ({ property: 'property3', building: 'B' }) };
       if (url.startsWith('/api/reservations')) return scenario.lookup ? scenario.lookup(url, options) : { ok: true, json: async () => ({ reservations: [{ reservationId: 'QA-ONLY', roomNumber: 'B901', guestName: 'QA', roomType: 'Test', price: '30000', checkInDate: '2026-09-10', checkOutDate: '2026-09-11', password: '' }] }) };
