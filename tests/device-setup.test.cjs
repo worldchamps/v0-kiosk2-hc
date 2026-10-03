@@ -93,6 +93,15 @@ test("malformed registration, mismatched property and missing building cause no 
   }
 })
 
+test("property2 registration requires the existing overlay setting", async t => {
+  const missing = harness(t, { registration: { property: "property2" }, env: "KIOSK_PROPERTY_ID=property2" })
+  assert.match((await missing.submit()).error, /OVERLAY_MODE=true/)
+  assert.equal(missing.snapshot.pairs, 0)
+  const valid = harness(t, { registration: { property: "property2" }, env: "KIOSK_PROPERTY_ID=property2\nOVERLAY_MODE=true" })
+  assert.equal((await valid.submit()).ok, true)
+  assert.equal((await valid.completion).env.OVERLAY_MODE, "true")
+})
+
 test("Windows case-insensitive execution-control variables cannot be imported", async t => {
   for (const key of ["NODE_OPTIONS", "node_options", "PaTh", "nOdE_pAtH", "electron_run_as_node", "kiosk_update_public_key_file"]) {
     const h = harness(t, { env: `KIOSK_PROPERTY_ID=property3\nKIOSK_BUILDING=B\n${key}=qa-blocked` })

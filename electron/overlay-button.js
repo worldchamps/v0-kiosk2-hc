@@ -1,4 +1,5 @@
-const { BrowserWindow, ipcMain, screen } = require("electron")
+const { app, BrowserWindow, ipcMain, screen } = require("electron")
+const fs = require("node:fs")
 const path = require("path")
 const { exec } = require("child_process")
 
@@ -6,8 +7,15 @@ let overlayButton = null
 let kioskPopup = null
 let aggressiveCheckInterval = null
 
+function logPopup(message) {
+  const line = `[${new Date().toISOString()}] ${message}`
+  console.log(line)
+  try { fs.appendFileSync(path.join(app.getPath("userData"), "overlay-popup.log"), line + "\n", { mode: 0o600 }) }
+  catch (error) { console.error("[OVERLAY_POPUP] diagnostic log unavailable:", error.message) }
+}
+
 const AGGRESSIVE_MODE = process.env.AGGRESSIVE_TOPMOST === "true"
-const CHECK_INTERVAL = AGGRESSIVE_MODE ? 10 : 10 // 10ms 기본값
+const CHECK_INTERVAL = 10 // 타사 키오스크의 최상위 창 재설정보다 자주 복구
 
 /**
  * Electron 고급 메서드로 최상위 유지
@@ -25,8 +33,7 @@ function keepOnTopAggressive(window) {
 
 /**
  * 최상위 유지 시작
- * AGGRESSIVE_MODE=true 시 10ms마다 체크 (4GB RAM 권장)
- * AGGRESSIVE_MODE=false 시 3초마다 체크 (2GB RAM 환경)
+ * 두 모드 모두 10ms마다 최상위 창을 복구한다.
  */
 function startTopmostKeeper(window) {
   stopTopmostKeeper()
@@ -40,7 +47,7 @@ function startTopmostKeeper(window) {
     }
   }, CHECK_INTERVAL)
 
-  console.log(`[v0] Topmost keeper started: ${AGGRESSIVE_MODE ? "AGGRESSIVE (10ms)" : "LIGHT (3s)"}`)
+  console.log(`[v0] Topmost keeper started: ${AGGRESSIVE_MODE ? "AGGRESSIVE" : "LIGHT"} (10ms)`)
 }
 
 /**
@@ -112,6 +119,7 @@ function createOverlayButton() {
 
   overlayButton.webContents.on("did-finish-load", () => {
     console.log("[v0] Overlay button page loaded")
+    overlayButton.webContents.send("kiosk:overlay-idle", true)
     keepOnTopAggressive(overlayButton)
   })
 
@@ -192,19 +200,27 @@ function createKioskPopup() {
     })
   })
 
-  const isDev = process.env.NODE_ENV !== "production"
-  const startUrl = isDev
-    ? "http://localhost:3000?mode=kiosk&popup=true&direct=reservationConfirm"
-    : `file://${path.join(__dirname, "../.next/server/app/index.html")}?mode=kiosk&popup=true&direct=reservationConfirm`
+  const startUrl = "http://localhost:3000?mode=kiosk&popup=true&direct=reservationConfirm"
 
-  console.log("[v0] Loading popup URL:", startUrl)
-  kioskPopup.loadURL(startUrl)
+  logPopup(`[OVERLAY_POPUP] loading ${startUrl}`)
+  kioskPopup.webContents.on("did-finish-load", () => logPopup("[OVERLAY_POPUP] page loaded"))
+  kioskPopup.webContents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
+    if (isMainFrame && code !== -3) logPopup(`[OVERLAY_POPUP] load failed: ${code} ${description} ${url}`)
+  })
+  kioskPopup.webContents.on("render-process-gone", (_event, details) => {
+    logPopup(`[OVERLAY_POPUP] renderer stopped: ${details.reason}`)
+  })
+  kioskPopup.webContents.on("console-message", (_event, level, message) => {
+    if (level >= 3) logPopup(`[OVERLAY_POPUP] script error: ${String(message).replace(/https?:\/\/\S+/g, "[URL]").slice(0, 300)}`)
+  })
+  kioskPopup.loadURL(startUrl).catch(error => logPopup(`[OVERLAY_POPUP] loadURL failed: ${error.message}`))
 
   kioskPopup.on("closed", () => {
     stopTopmostKeeper()
     kioskPopup = null
     if (overlayButton) {
       overlayButton.show()
+      overlayButton.webContents.send("kiosk:overlay-idle", true)
       keepOnTopAggressive(overlayButton)
       startTopmostKeeper(overlayButton)
     }
@@ -255,6 +271,7 @@ ipcMain.on("overlay-button-clicked", () => {
   stopTopmostKeeper()
 
   if (overlayButton) {
+    overlayButton.webContents.send("kiosk:overlay-idle", false)
     overlayButton.hide()
     console.log("[v0] Overlay button hidden")
   }
@@ -294,4 +311,6 @@ module.exports = {
   createOverlayButton,
   createKioskPopup,
   restorePMSFocus,
+  isIdleButtonSender: sender => !!overlayButton && !overlayButton.isDestroyed() &&
+    overlayButton.isVisible() && !kioskPopup && overlayButton.webContents === sender,
 }

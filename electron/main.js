@@ -1245,9 +1245,7 @@ global.shutdownKiosk = async () => {
 }
 
 app.whenReady().then(async () => {
-  if (!OVERLAY_MODE) {
-    await startNextServer()
-  }
+  await startNextServer()
   createWindow()
 }).catch((error) => {
   require("electron").dialog.showErrorBox("키오스크 실행 오류", error.message)

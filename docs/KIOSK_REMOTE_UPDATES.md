@@ -127,6 +127,20 @@ property3의 A동/B동 PC는 각각 해당 동 객실만 판매·체크인한다
 등록 전에 [A/B동 설치 설정](KIOSK_BUILDING_SCOPE.md)에 따라 각 PC의 `KIOSK_BUILDING`을 지정한다.
 같은 등록파일이나 암호화된 사용자 데이터 폴더를 두 PC에 복사하지 않는다.
 
+카리브 `property2`는 타사 키오스크 위의 예약 확인 버튼을 유지한다. 설치형 등록에 사용할
+기존 `.env.local`에는 `KIOSK_PROPERTY_ID=property2`와 `OVERLAY_MODE=true`가 있어야 한다.
+설치형 앱은 자체 Next 서버를 시작한 뒤 버튼을 띄우고, 팝업도 그 서버의
+`http://localhost:3000`을 연다. 서버 포트가 이미 점유돼 있으면 다른 프로세스에
+붙지 않고 시작 오류를 표시한다. 기존 BAT의 Electron과 Next 서버를 각각 정상 종료하고
+포트 3000이 비어 있는지 확인한 뒤 설치형 앱을 실행한다. 다른 Node/Electron 프로그램까지
+종료하는 `stop-kiosk.bat`를 사용하지 않는다.
+
+원격 업데이트는 예약 확인 팝업이 닫히고 버튼만 보이는 상태에서 60초 이상 입력이 없을
+때에만 준비된다. 팝업 로딩 실패와 렌더러 종료는 설치형 앱의 사용자 데이터 폴더에 있는
+`overlay-popup.log`의 `[OVERLAY_POPUP]` 기록으로 구분한다.
+카리브 현장 검증에서는 버튼이 타사 화면 위에 유지되는지, 팝업 조회와 종료가 되는지,
+실제 키 배출 결과를 별도로 확인한다. 큐 완료 기록만으로 물리 배출을 완료로 보지 않는다.
+
 ```powershell
 node scripts/kiosk-deploy.cjs register --device property3-kiosk-01 --property property3 --out .local/property3-registration.json
 # 새 32비트 PC 등록 예시. 실제 승인된 장비 ID로 변경한다.

@@ -15,11 +15,13 @@ if (!app.isPackaged) {
   app.whenReady().then(async () => {
     const files = deviceFiles(app, safeStorage)
     const config = await ensureDevice({ app, BrowserWindow, ipcMain, dialog, files })
+    if (config.property === "property2" && config.env?.OVERLAY_MODE !== "true")
+      throw new Error("카리브 장비 설정에 OVERLAY_MODE=true가 필요합니다.")
+    const overlayMode = config.property === "property2" && config.env?.OVERLAY_MODE === "true"
     Object.assign(process.env, config.env, {
       NODE_ENV: "production", KIOSK_PROPERTY_ID: config.property,
-      NEXT_PUBLIC_KIOSK_PROPERTY_ID: config.property, OVERLAY_MODE: "false",
+      NEXT_PUBLIC_KIOSK_PROPERTY_ID: config.property, OVERLAY_MODE: String(overlayMode),
     })
-    // Dedicated kiosks only. Never start the local room-management overlay.
     app.setLoginItemSettings({ openAtLogin: true, path: app.getPath("exe") })
     let heartbeat = { safe: false, at: 0, lastActivity: Date.now() }, locked = false, renderer = null, ack = null
     let activeOperations = 0, lastOperation = Date.now()
@@ -44,7 +46,12 @@ if (!app.isPackaged) {
       }
     })
     const localSender = (event) => {
-      try { return new URL(event.senderFrame.url).origin === "http://localhost:3000" && event.senderFrame === event.sender.mainFrame }
+      try {
+        if (event.senderFrame !== event.sender.mainFrame) return false
+        if (new URL(event.senderFrame.url).origin === "http://localhost:3000") return true
+        return overlayMode && require("./overlay-button").isIdleButtonSender(event.sender) &&
+          event.senderFrame.url === require("node:url").pathToFileURL(path.join(__dirname, "overlay-button.html")).href
+      }
       catch { return false }
     }
     ipcMain.on("kiosk:update-heartbeat", (event, status) => {
@@ -57,6 +64,7 @@ if (!app.isPackaged) {
     })
     const resume = () => { locked = false; global.kioskMaintenance = false; renderer?.send("kiosk:update-resume") }
     const installationBlocker = () => {
+      if (overlayMode && !require("./overlay-button").isIdleButtonSender(renderer)) return "예약 확인 화면 종료 대기"
       if (!renderer || renderer.isDestroyed() || !heartbeat.at || Date.now() - heartbeat.at >= 10000 || heartbeat.at > Date.now())
         return "키오스크 화면 응답 확인 대기"
       if (!heartbeat.safe) return "첫 화면 또는 결제·체크인 미확정 상태 해제 대기"

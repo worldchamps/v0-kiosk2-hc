@@ -32,6 +32,11 @@ if (publicConfig?.propertyId) {
     maintenance = false
     document.getElementById("kiosk-update-maintenance")?.remove()
   })
+  ipcRenderer.on("kiosk:overlay-idle", (_event, idle) => {
+    updateSafe = idle === true
+    lastActivity = Date.now()
+    reportUpdateState()
+  })
 }
 
 // Renderer 프로세스에서 사용할 수 있는 안전한 API 노출

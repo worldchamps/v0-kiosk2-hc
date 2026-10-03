@@ -7,17 +7,22 @@ const { safeToInstall } = require("../electron/update-protocol")
 
 // Execute the actual native readiness/prepare code with fake IPC and devices.
 // No Electron window, socket, payment, printer or installer is started.
-function harness() {
+function harness({ overlay = false } = {}) {
   let now = 100000, acknowledge = true, duringPrepare = () => {}
+  let overlayIdle = true
   const events = new Map(), handles = new Map(), sent = []
   const context = {
-    global: {}, config: { property: "property3" }, process: { env: {} },
+    global: {}, config: { property: overlay ? "property2" : "property3" }, overlayMode: overlay, path,
+    __dirname: path.join(__dirname, "../electron"),
+    process: { env: {} },
     Date: { now: () => now }, safeToInstall: status => safeToInstall(status, now), URL, require,
     setTimeout: callback => setTimeout(callback, 5), clearTimeout,
     ipcMain: { on: (name, callback) => events.set(name, callback), handle: (name, callback) => handles.set(name, callback) },
     hardwareBridge: { isConnected: true }, hardwareServerProcess: {},
     tossFrontBridge: { configured: true, authenticated: false, pending: new Map() },
   }
+  context.require = name => name === "./overlay-button" ?
+    { isIdleButtonSender: sender => overlayIdle && sender === renderer } : require(name)
   const native = fs.readFileSync(path.join(__dirname, "../electron/main.js"), "utf8")
   vm.runInNewContext(native.slice(native.indexOf("global.kioskHardwareReady ="), native.indexOf("global.shutdownKiosk =")), context)
   const bootstrap = fs.readFileSync(path.join(__dirname, "../electron/bootstrap.js"), "utf8")
@@ -25,7 +30,7 @@ function harness() {
   const end = bootstrap.indexOf('    require("./main")', start)
   assert(start > 0 && end > start)
   vm.runInNewContext(bootstrap.slice(start, end) + "\nglobal.probe = { prepare, resume }", context)
-  const frame = { url: "http://localhost:3000/kiosk/A" }
+  const frame = { url: overlay ? require("node:url").pathToFileURL(path.join(__dirname, "../electron/overlay-button.html")).href : "http://localhost:3000/kiosk/A" }
   const renderer = { mainFrame: frame, isDestroyed: () => false, send(name, nonce) {
     sent.push(name)
     if (name === "kiosk:update-prepare") {
@@ -38,8 +43,21 @@ function harness() {
   now += 11000
   heartbeat()
   return { context, renderer, sent, handles, heartbeat, prepare: context.global.probe.prepare,
-    tick: ms => { now += ms }, acknowledge: value => { acknowledge = value }, duringPrepare: value => { duringPrepare = value } }
+    tick: ms => { now += ms }, acknowledge: value => { acknowledge = value }, duringPrepare: value => { duringPrepare = value },
+    setOverlayIdle: value => { overlayIdle = value } }
 }
+
+test("property2 update waits for the overlay button to be idle and cancels if a popup opens", async () => {
+  const h = harness({ overlay: true })
+  assert.equal(await h.prepare(), true)
+  const busy = harness({ overlay: true })
+  busy.setOverlayIdle(false)
+  assert.match(await busy.prepare(), /예약 확인 화면 종료/)
+  const racing = harness({ overlay: true })
+  racing.duringPrepare(() => racing.setOverlayIdle(false))
+  assert.match(await racing.prepare(), /예약 확인 화면 종료/)
+  assert.equal(racing.context.global.kioskMaintenance, false)
+})
 
 test("idle kiosk can prepare an update when configured Toss Front is disconnected or unauthenticated", async () => {
   const h = harness()
