@@ -2322,6 +2322,64 @@ textarea {
   background: #e6e7e9;
 }
 
+@media (orientation: landscape) and (min-width: 900px) {
+  .kiosk-reservation-lookup--popup {
+    padding: 12px 24px 18px;
+    gap: 12px;
+    overflow-y: auto;
+  }
+
+  .kiosk-reservation-lookup--popup .kiosk-reservation-header { min-height: 58px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-back { height: 52px; font-size: 18px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-brand strong { font-size: 22px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-intro {
+    padding: 0 4px;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-intro p { margin: 0; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-intro h1 { font-size: 28px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-intro h1 br { display: none; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-intro > span { margin: 0; font-size: 18px; }
+
+  .kiosk-reservation-lookup--popup .kiosk-reservation-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    grid-template-rows: auto auto 1fr auto;
+    gap: 10px 22px;
+    padding: 18px;
+    overflow-y: auto;
+  }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-qr { grid-column: 1; min-height: 80px; padding: 12px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-qr-icon { width: 48px; height: 48px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-qr-copy strong { font-size: 22px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-qr-copy small { font-size: 14px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-divider { grid-column: 1; height: 26px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-divider span { font-size: 15px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-name { grid-column: 1; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-name label { margin-bottom: 5px; font-size: 20px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-name .kiosk-reservation-input { height: 64px; font-size: 26px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-name p { font-size: 14px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-keyboard {
+    grid-column: 2;
+    grid-row: 1 / 5;
+    align-self: center;
+    margin: 0;
+  }
+  .kiosk-reservation-lookup--popup .korean-keyboard-wrapper .hg-button {
+    height: clamp(42px, 6vh, 60px);
+    margin: 3px;
+    font-size: clamp(17px, 1.5vw, 24px);
+  }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-submit {
+    grid-column: 1;
+    min-height: 68px;
+    margin: 0;
+    font-size: 22px;
+  }
+}
+
 .kiosk-reservation-progress {
   min-height: 82px;
   margin: 0;

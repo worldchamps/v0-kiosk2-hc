@@ -74,7 +74,7 @@ export default function ReservationConfirm({
   }
 
   return (
-    <main className="kiosk-reservation-lookup">
+    <main className={`kiosk-reservation-lookup${isPopupMode ? " kiosk-reservation-lookup--popup" : ""}`}>
       <header className="kiosk-reservation-header">
         <button
           type="button"
@@ -96,7 +96,7 @@ export default function ReservationConfirm({
 
       <section className="kiosk-reservation-intro" aria-labelledby="reservation-lookup-title">
         <p>예약 고객 전용</p>
-        <h1 id="reservation-lookup-title">예약을 어떻게<br />찾을까요?</h1>
+        <h1 id="reservation-lookup-title">예약을 어떻게 <br />찾을까요?</h1>
         <span>QR을 스캔하거나 예약자명을 입력해주세요.</span>
       </section>
 
