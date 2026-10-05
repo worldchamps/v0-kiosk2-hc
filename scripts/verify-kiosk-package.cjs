@@ -15,6 +15,13 @@ assert.equal(pkg.version, require("../package.json").version)
 for (const name of [".env.local", ".env", ".local", "ops", "scripts"]) assert.equal(fs.existsSync(path.join(appDir, name)), false, name)
 for (const name of ["electron/bootstrap.js", "electron/setup.html", "electron/firebase-updates.js", "electron/private-release-provider.js", "electron/update-cloud.json", ".next/BUILD_ID", "next.config.mjs"]) assert.ok(fs.existsSync(path.join(appDir, name)), name)
 assert.equal(require(path.join(appDir, "electron/update-cloud.json")).projectId, "beachstay-kiosk-updates")
+// Catch stale Next CSS artifacts even when the updated JS and version are present.
+const cssDir = path.join(appDir, ".next/static/css")
+const bundledCss = fs.readdirSync(cssDir).filter(name => name.endsWith(".css"))
+  .map(name => fs.readFileSync(path.join(cssDir, name), "utf8")).join("\n")
+for (const selector of [".kiosk-reservation-details--popup", ".kiosk-smoking-dialog-backdrop--popup", ".is-photo-unavailable"]) {
+  assert.ok(bundledCss.includes(selector), "Missing packaged landscape style: " + selector)
+}
 function inspectSecrets(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (entry.name === "node_modules") continue

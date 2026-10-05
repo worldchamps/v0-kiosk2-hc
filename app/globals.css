@@ -2344,40 +2344,99 @@ textarea {
   .kiosk-reservation-lookup--popup .kiosk-reservation-intro > span { margin: 0; font-size: 18px; }
 
   .kiosk-reservation-lookup--popup .kiosk-reservation-panel {
+    flex: 0 0 auto;
+    width: min(1560px, 100%);
+    margin: auto;
     display: grid;
-    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-    grid-template-rows: auto auto 1fr auto;
-    gap: 10px 22px;
+    grid-template-columns: minmax(240px, 0.6fr) minmax(0, 1.4fr);
+    grid-template-rows: auto auto auto;
+    gap: 10px 32px;
     padding: 18px;
-    overflow-y: auto;
   }
-  .kiosk-reservation-lookup--popup .kiosk-reservation-qr { grid-column: 1; min-height: 80px; padding: 12px; }
-  .kiosk-reservation-lookup--popup .kiosk-reservation-qr-icon { width: 48px; height: 48px; }
-  .kiosk-reservation-lookup--popup .kiosk-reservation-qr-copy strong { font-size: 22px; }
-  .kiosk-reservation-lookup--popup .kiosk-reservation-qr-copy small { font-size: 14px; }
-  .kiosk-reservation-lookup--popup .kiosk-reservation-divider { grid-column: 1; height: 26px; }
-  .kiosk-reservation-lookup--popup .kiosk-reservation-divider span { font-size: 15px; }
-  .kiosk-reservation-lookup--popup .kiosk-reservation-name { grid-column: 1; }
-  .kiosk-reservation-lookup--popup .kiosk-reservation-name label { margin-bottom: 5px; font-size: 20px; }
-  .kiosk-reservation-lookup--popup .kiosk-reservation-name .kiosk-reservation-input { height: 64px; font-size: 26px; }
-  .kiosk-reservation-lookup--popup .kiosk-reservation-name p { font-size: 14px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-qr {
+    grid-column: 1;
+    grid-row: 1 / 4;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 24px;
+    text-align: center;
+  }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-qr-icon { width: 80px; height: 80px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-qr-copy strong { font-size: clamp(26px, 2vw, 34px); }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-qr-copy small { font-size: 18px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-divider { display: none; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-name { grid-column: 2; grid-row: 1; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-name label { margin-bottom: 5px; font-size: 24px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-name .kiosk-reservation-input { height: clamp(60px, 7vh, 80px); font-size: 30px; }
+  .kiosk-reservation-lookup--popup .kiosk-reservation-name p { margin-top: 5px; font-size: 16px; }
   .kiosk-reservation-lookup--popup .kiosk-reservation-keyboard {
     grid-column: 2;
-    grid-row: 1 / 5;
-    align-self: center;
+    grid-row: 2;
     margin: 0;
   }
   .kiosk-reservation-lookup--popup .korean-keyboard-wrapper .hg-button {
-    height: clamp(42px, 6vh, 60px);
+    height: clamp(48px, 6.5vh, 76px);
     margin: 3px;
-    font-size: clamp(17px, 1.5vw, 24px);
+    font-size: clamp(24px, 1.8vw, 32px);
   }
   .kiosk-reservation-lookup--popup .kiosk-reservation-submit {
-    grid-column: 1;
-    min-height: 68px;
+    grid-column: 2;
+    grid-row: 3;
+    min-height: clamp(60px, 7vh, 80px);
     margin: 0;
-    font-size: 22px;
+    font-size: 26px;
   }
+
+  .kiosk-reservation-details--popup { overflow-y: auto; background: var(--kiosk-canvas); }
+  .kiosk-reservation-details--popup .kiosk-content-container {
+    height: auto;
+    width: min(1560px, 100%);
+    margin: auto;
+    padding: 18px 24px;
+    gap: 16px;
+  }
+  .kiosk-reservation-details--popup .kiosk-highlight { margin: 0; font-size: 36px; }
+  .kiosk-reservation-details--popup .kiosk-reservation-details-body { margin: 0; padding: 0; }
+  .kiosk-reservation-details--popup .kiosk-reservation-details-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    align-items: center;
+    gap: 24px;
+  }
+  .kiosk-reservation-details--popup .kiosk-reservation-details-image { height: clamp(240px, 34vh, 380px); }
+  .kiosk-reservation-details--popup.is-photo-unavailable .kiosk-content-container { width: min(1160px, 100%); }
+  .kiosk-reservation-details--popup.is-photo-unavailable .kiosk-reservation-details-grid { grid-template-columns: minmax(0, 1fr); }
+  .kiosk-reservation-details--popup.is-photo-unavailable .kiosk-reservation-details-photo { display: none; }
+  .kiosk-reservation-details--popup .kiosk-reservation-details-photo p { font-size: 22px; }
+  .kiosk-reservation-details--popup .kiosk-reservation-details-info .grid { gap: 10px; }
+  .kiosk-reservation-details--popup .kiosk-reservation-details-info p { overflow-wrap: anywhere; }
+  .kiosk-reservation-details--popup .kiosk-reservation-details-info p:first-child { font-size: 18px; }
+  .kiosk-reservation-details--popup .kiosk-reservation-details-info p + p,
+  .kiosk-reservation-details--popup .kiosk-reservation-details-info .flex p { margin-top: 4px; font-size: 26px; line-height: 1.25; }
+  .kiosk-reservation-details--popup .kiosk-reservation-details-info button { width: 48px; height: 48px; }
+  .kiosk-reservation-details--popup .kiosk-reservation-details-actions { margin: 0; gap: 16px; }
+  .kiosk-reservation-details--popup .kiosk-reservation-details-actions > button { height: 68px; font-size: 26px; }
+
+  .kiosk-smoking-dialog-backdrop--popup { padding: 98px 24px 24px; overflow-y: auto; }
+  .kiosk-smoking-dialog-backdrop--popup .kiosk-smoking-dialog {
+    width: min(1120px, 100%);
+    margin: auto;
+    padding: 28px 36px;
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr);
+    align-items: center;
+    gap: 24px;
+  }
+  .kiosk-smoking-dialog-backdrop--popup .kiosk-smoking-dialog-icon { width: 112px; height: 112px; margin: 0; }
+  .kiosk-smoking-dialog-backdrop--popup .kiosk-smoking-dialog-copy { text-align: left; }
+  .kiosk-smoking-dialog-backdrop--popup .kiosk-smoking-dialog-copy > p { font-size: 24px; }
+  .kiosk-smoking-dialog-backdrop--popup .kiosk-smoking-dialog-copy h2 { font-size: clamp(36px, 3.3vw, 50px); }
+  .kiosk-smoking-dialog-backdrop--popup .kiosk-smoking-dialog-copy > div { margin-top: 20px; padding: 20px; }
+  .kiosk-smoking-dialog-backdrop--popup .kiosk-smoking-dialog-copy > div span { font-size: 26px; }
+  .kiosk-smoking-dialog-backdrop--popup .kiosk-smoking-dialog-actions { grid-column: 1 / -1; margin: 0; }
+  .kiosk-smoking-dialog-backdrop--popup .kiosk-smoking-dialog-actions button { min-height: 76px; font-size: 26px; }
 }
 
 .kiosk-reservation-progress {

@@ -9,6 +9,7 @@ interface SmokingPolicyDialogProps {
   onCancel: () => void
   actionLabel: string
   cancelLabel?: string
+  isPopupMode?: boolean
 }
 
 export default function SmokingPolicyDialog({
@@ -17,11 +18,12 @@ export default function SmokingPolicyDialog({
   onCancel,
   actionLabel,
   cancelLabel = "취소",
+  isPopupMode = false,
 }: SmokingPolicyDialogProps) {
   if (!open) return null
 
   return (
-    <div className="kiosk-smoking-dialog-backdrop" role="presentation">
+    <div className={`kiosk-smoking-dialog-backdrop${isPopupMode ? " kiosk-smoking-dialog-backdrop--popup" : ""}`} role="presentation">
       <KioskProgress steps={RESERVATION_PROGRESS_STEPS} currentStep={1} />
       <div
         className="kiosk-smoking-dialog"

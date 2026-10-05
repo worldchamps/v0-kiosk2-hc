@@ -52,8 +52,8 @@ export default function ReservationDetails({
   kioskLocation,
 }: ReservationDetailsProps) {
   const [checkInComplete, setCheckInComplete] = useState(false)
-  const [roomImagePath, setRoomImagePath] = useState("/hotel-floor-plan.png")
-  const [imageExists, setImageExists] = useState(true)
+  const [roomImagePath, setRoomImagePath] = useState("/placeholder.svg")
+  const [imageExists, setImageExists] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [showSmokingPolicy, setShowSmokingPolicy] = useState(false)
   const [now, setNow] = useState(() => new Date())
@@ -77,8 +77,8 @@ export default function ReservationDetails({
   useEffect(() => {
     setCheckInComplete(false)
 
-    setRoomImagePath("/hotel-floor-plan.png")
-    setImageExists(true)
+    setRoomImagePath("/placeholder.svg")
+    setImageExists(false)
 
     playAudio("RESERVATION_FOUND")
 
@@ -100,14 +100,14 @@ export default function ReservationDetails({
             setImageExists(true)
           } else {
             console.warn(`Room image not found: ${imagePath}`)
-            setRoomImagePath("/hotel-floor-plan.png")
+            setRoomImagePath("/placeholder.svg")
           }
         } else {
           console.log("Missing room number or type:", { roomNumber, roomType: reservation?.roomType })
         }
       } catch (error) {
         console.error("Error loading room image:", error)
-        setRoomImagePath("/hotel-floor-plan.png")
+        setRoomImagePath("/placeholder.svg")
       }
     }
 
@@ -173,16 +173,16 @@ export default function ReservationDetails({
   const displayPassword = revealedInfo?.password || reservation.password || ""
 
   return (
-    <div className="flex items-start justify-start w-full h-full">
+    <div className={`flex items-start justify-start w-full h-full${isPopupMode ? " kiosk-reservation-details--popup" : ""}${!imageExists ? " is-photo-unavailable" : ""}`}>
       <div className="kiosk-content-container">
         <div>
-          <div className="kiosk-highlight">예약 확인됨</div>
+          <div className="kiosk-highlight">{isPopupMode && hasRevealedInfo ? "체크인 완료" : "예약 확인됨"}</div>
         </div>
 
-        <div className={`w-full min-h-0 mt-2 ${isPopupMode ? "py-2" : "py-4"}`}>
-          <div className={`flex flex-col ${isPopupMode ? "gap-3" : "gap-6"}`}>
+        <div className={`kiosk-reservation-details-body w-full min-h-0 mt-2 ${isPopupMode ? "py-2" : "py-4"}`}>
+          <div className={`kiosk-reservation-details-grid flex flex-col ${isPopupMode ? "gap-3" : "gap-6"}`}>
             {/* Image Box */}
-            <div className="w-full">
+            <div className="kiosk-reservation-details-photo w-full">
               <Card>
                 <CardContent className={isPopupMode ? "p-3" : "p-6"}>
                   <p
@@ -193,7 +193,7 @@ export default function ReservationDetails({
                     예약한 객실
                   </p>
                   <div className="bg-gray-100 rounded-lg p-2">
-                    <div className={`relative w-full ${isPopupMode ? "h-[260px]" : "h-[440px]"}`}>
+                    <div className={`kiosk-reservation-details-image relative w-full ${isPopupMode ? "h-[260px]" : "h-[440px]"}`}>
                       <Image
                         src={roomImagePath || "/placeholder.svg"}
                         alt={`${reservation.roomType} 객실 이미지`}
@@ -207,7 +207,7 @@ export default function ReservationDetails({
             </div>
 
             {/* Info Box */}
-            <div className="w-full">
+            <div className="kiosk-reservation-details-info w-full">
               <Card>
                 <CardContent className={isPopupMode ? "p-4" : "p-6"}>
                   <div className={`grid grid-cols-2 ${isPopupMode ? "gap-3" : "gap-5"}`}>
@@ -308,7 +308,7 @@ export default function ReservationDetails({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-8 w-full mt-auto">
+        <div className="kiosk-reservation-details-actions grid grid-cols-2 gap-8 w-full mt-auto">
           {!eligibility.allowed && !hasRevealedInfo && (
             <p role="status" className="col-span-2 rounded-xl bg-amber-50 p-4 text-2xl font-bold text-amber-900">
               {eligibility.message}
@@ -349,6 +349,7 @@ export default function ReservationDetails({
           onCancel={() => setShowSmokingPolicy(false)}
           actionLabel="체크인하기"
           cancelLabel="예약 정보로 돌아가기"
+          isPopupMode={isPopupMode}
         />
       </div>
     </div>
