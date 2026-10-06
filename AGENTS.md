@@ -4,7 +4,8 @@
 
 - 저장소: `worldchamps/v0-kiosk2-hc`
 - 운영 브랜치: `main`
-- 개발 작업 폴더: `C:\AGAIN_kiosk\v0-kiosk2-hc`
+- 개발 작업 폴더: `E:\hermes_agent_sandbox\v0-kiosk2-hc`
+- 이 PC의 신규 개발과 빌드는 위 통합 폴더의 최신 `origin/main`을 기준으로 한다. 이전 `v0-kiosk2-hc-ai-assistant`, `v0-kiosk2-hc-kariv-overlay` 작업 폴더는 `E:\hermes_agent_sandbox\_archive_worktrees`에 보관한다.
 - 배포는 개발 PC에서 GitHub의 배포 기준 브랜치로 push한 뒤, 각 키오스크 PC의 기존 clone에서 `git pull --ff-only`로 반영한다.
 - 이 저장소에는 Vercel 배포 절차를 적용하지 않는다.
 - 설치형 키오스크/원격 업데이트는 docs/KIOSK_REMOTE_UPDATES.md를 따른다.
