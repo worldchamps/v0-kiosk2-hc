@@ -411,6 +411,47 @@ class CardDispenserContracts(unittest.TestCase):
                     self.assertEqual(result["failedBlock"], 0)
                     self.assertEqual(result["deviceCode"], 0x46)
 
+    def test_uid_only_uses_existing_full_registration_without_touching_other_blocks(self):
+        device = self.device()
+        profile = {"sectors": [{**self.profile["sectors"][0], "sector": i} for i in range(16)]}
+        original = device.register(profile)
+        record = {"profile": profile, "uid": original["uid"], "blocks": original["blocks"]}
+        device.ser = FakeK750(device)
+        device.ser.uid_response = bytes.fromhex("aabbccdd")
+        device.ser.blocks[0] = bytes.fromhex("aabbccdd00") + bytes(11)
+        for block in range(1, 64):
+            if block % 4 != 3:
+                device.ser.blocks[block] = bytes(16)
+        untouched = {i: value for i, value in device.ser.blocks.items() if i != 0}
+        # Simulate the operator taking 5s to pick up the presented card.
+        result = device.issue(record, lambda p: device.sleep(5) if p["state"] == "presented" else None, "uid_only")
+        self.assertTrue(result["success"])
+        self.assertEqual(result["issueMode"], "uid_only")
+        self.assertTrue(result["uidMatchesSource"])
+        self.assertLess(result["dispenseMs"], 5000)
+        self.assertEqual(device.ser.wrote, {0})
+        self.assertEqual([cmd[2] for cmd in device.ser.commands if cmd[:2] == b";3"], [0])
+        self.assertEqual({i: value for i, value in device.ser.blocks.items() if i != 0}, untouched)
+        self.assertEqual(device.ser.commands.count(b"FC7"), 1)
+        self.assertEqual(device.ser.blocks[0].hex(), record["blocks"]["0"])
+
+    def test_uid_only_never_presents_or_retries_a_failed_identity(self):
+        for behavior in ("reject", "stale_uid", "corrupt_block"):
+            device = self.device()
+            device.ser.uid_write_behavior = behavior
+            result = device.issue(self.record(device), mode="uid_only")
+            self.assertFalse(result["success"])
+            self.assertTrue(result["settled"])
+            self.assertEqual(device.ser.commands.count(b"FC7"), 1)
+            self.assertIn(b"CP", device.ser.commands)
+            self.assertNotIn(b"FC4", device.ser.commands)
+            self.assertTrue(device.ser.wrote.issubset({0}))
+
+    def test_unknown_issue_mode_is_rejected_without_io(self):
+        device = self.device()
+        self.assertEqual(device.issue(self.record(device), mode="fast")["reason"], "invalid_issue_mode")
+        self.assertEqual(device.ser.commands, [])
+
     def test_invalid_source_identity_is_rejected_before_any_card_moves(self):
         for fault in ("missing_uid", "long_uid", "different_uid", "bad_bcc", "missing_sector_zero"):
             with self.subTest(fault=fault):

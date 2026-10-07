@@ -406,8 +406,11 @@ class CardDispenser(SerialDevice):
             return outcome
         return self._run_locked(run)
 
-    def issue(self, record, progress=lambda _: None):
+    def issue(self, record, progress=lambda _: None, mode="full"):
         def run():
+            started = self.clock()
+            if mode not in ("full", "uid_only"):
+                raise CardError("invalid_issue_mode")
             if not isinstance(record, dict) or not isinstance(record.get("blocks"), dict):
                 raise CardError("invalid_record")
             sectors = validate_profile(record.get("profile"))
@@ -443,6 +446,8 @@ class CardDispenser(SerialDevice):
                     uid = self._read_position(deadline - 5)
                     if len(uid) != 8:
                         raise CardError("stock_uid_unsupported")
+                    if mode == "uid_only":
+                        break
                     try:
                         for item in sectors:
                             sector = item["sector"]
@@ -482,6 +487,7 @@ class CardDispenser(SerialDevice):
                     raise CardError("uid_verify_failed", failedCommand="3B33", failedBlock=0)
                 # Presentation must start inside the total 30s issue budget.
                 self._move("present", lambda status: bool(status["sensors"]), deadline)
+                dispense_ms = round((self.clock() - started) * 1000)
             except CardError as exc:
                 settled = not moved
                 if moved:
@@ -496,7 +502,7 @@ class CardDispenser(SerialDevice):
             try:
                 self._wait(lambda status: status["sensors"] == 0, pickup_deadline)
                 return {"success": True, "settled": True, "state": "taken", "uidChanged": uid != source_uid,
-                        "uidMatchesSource": True}
+                        "uidMatchesSource": True, "issueMode": mode, "dispenseMs": dispense_ms}
             except CardError as exc:
                 settled = False
                 try:

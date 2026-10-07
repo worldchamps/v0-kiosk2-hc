@@ -41,6 +41,8 @@ const reasons: Record<string, string> = {
   capture_error: "장비가 카드 회수 오류를 보고했습니다.",
   invalid_record: "저장된 원본 카드 데이터 형식이 올바르지 않습니다.",
   invalid_profile: "카드 인증 설정 형식이 올바르지 않습니다.",
+  invalid_issue_mode: "시험 발급 방식을 확인하세요.",
+  issue_mode_mismatch: "이전 요청과 발급 방식이 다릅니다. 카드 상태를 확인한 뒤 다시 요청하세요.",
 }
 const cardCommands: Record<string, string> = {
   "4150": "장치 상태", "3B30": "카드 인식", "3B31": "고유번호 읽기",
@@ -86,13 +88,13 @@ export default function CardKeyAdmin({ onBusy }: { onBusy: (busy: boolean) => vo
     return true
   }
 
-  const run = async (command: "status" | "register" | "issue" | "capture" | "reset" | "return") => {
+  const run = async (command: "status" | "register" | "issue" | "capture" | "reset" | "return", issueMode: "full" | "uid_only" = "full") => {
     const api = window.electronAPI?.cardKey
     if (!api) return
     setBusy(true)
     setMessage("장비 응답을 기다리고 있습니다.")
     try {
-      const result = await api.run(command, { password, room: roomKey, confirmed,
+      const result = await api.run(command, { password, room: roomKey, confirmed, issueMode,
         replaceRegisteredAt: replacement ? existing?.registeredAt : undefined,
         operationKey: command === "issue" ? crypto.randomUUID() : undefined })
       if (typeof result.recoveryRequired === "boolean") setUnresolved(result.recoveryRequired)
@@ -118,7 +120,7 @@ export default function CardKeyAdmin({ onBusy }: { onBusy: (busy: boolean) => vo
           ((result.recoveryRequired ?? (result.settled === false)) ? " 카드 위치가 미확정이므로 현장에서 확인하세요." : ""))
       } else {
         setMessage(command === "register" ? "원본 카드를 읽어 이 PC에 암호화 저장했습니다." :
-          command === "issue" ? "시험 카드 데이터와 고유번호가 원본과 일치함을 확인했고, 카드 수령을 확인했습니다. 실제 객실 문에서 열리는지 확인하세요." :
+          command === "issue" ? `${result.issueMode === "uid_only" ? "고유번호만 기록·검증했습니다. 나머지 데이터는 복사하지 않았습니다." : "시험 카드 데이터와 고유번호가 원본과 일치함을 확인했습니다."}${result.dispenseMs !== undefined ? ` 배출까지 ${(result.dispenseMs / 1000).toFixed(1)}초 (카드 수령 대기 제외).` : ""} 실제 객실 문에서 열리는지 확인하세요.` :
           command === "return" ? "카드함으로 회수했습니다. 객실 체크아웃은 처리하지 않습니다." :
           command === "capture" ? "회수함으로 회수했습니다." : command === "reset" ? "초기화 응답을 확인했습니다." : "장치 상태를 확인했습니다.")
       }
@@ -152,8 +154,10 @@ export default function CardKeyAdmin({ onBusy }: { onBusy: (busy: boolean) => vo
       <div className="flex flex-wrap gap-3">
         <Button disabled={busy || unresolved || !confirmed || !roomKey || Boolean(existing && !replacement)} onClick={() => run("register")}>원본 카드 등록</Button>
         <Button disabled={busy || unresolved || !confirmed || !existing} onClick={() => run("issue")}>고유번호 포함 · 공카드 1장 시험 발급</Button>
+        <Button disabled={busy || unresolved || !confirmed || !existing} variant="outline" onClick={() => run("issue", "uid_only")}>고유번호만 · 빠른 시험 발급</Button>
         <Button disabled={busy || unresolved || !confirmed} variant="outline" onClick={() => run("return")}>시험 카드 반납</Button>
       </div>
+      <p className="text-sm text-amber-800">‘고유번호만’ 시험에는 이전에 복사한 적 없는 새 CUID 공카드를 넣어주세요. 고유번호가 있는 첫 블록만 기록하며, 이 카드로 실제 문이 열려야 빠른 발급 가능 여부를 확인할 수 있습니다.</p>
       <p className="text-sm text-gray-600">공장 기본 인증키와 다시 기록할 수 있는 접근권한을 사용하는 카드로 시험합니다. 원본 카드는 읽기만 합니다. 인증에 실패하면 실패 섹터를 확인하고 등록을 중단합니다.</p>
       <table className="w-full text-left"><caption className="text-left font-semibold mb-2">등록된 객실 카드</caption><thead><tr><th>호수</th><th>등록일시</th></tr></thead>
         <tbody>{rooms.map(item => <tr key={item.room}><td className="py-2">{item.room}</td><td>{new Date(item.registeredAt).toLocaleString("ko-KR")}</td></tr>)}</tbody></table>

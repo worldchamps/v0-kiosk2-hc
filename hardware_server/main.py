@@ -104,7 +104,7 @@ async def handle_card_command(websocket, message):
             if command == "card_register":
                 result = await asyncio.to_thread(card_dispenser.register, message.get("profile"), progress)
             elif command == "card_issue":
-                result = await asyncio.to_thread(card_dispenser.issue, message.get("record"), progress)
+                result = await asyncio.to_thread(card_dispenser.issue, message.get("record"), progress, message.get("issueMode", "full"))
             elif command == "card_return":
                 result = await asyncio.to_thread(card_dispenser.accept_return, progress)
             elif command in ("card_status", "card_capture", "card_reset"):

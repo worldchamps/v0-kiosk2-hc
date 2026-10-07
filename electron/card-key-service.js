@@ -19,7 +19,7 @@ function validateProfile(value) {
   }
   return value
 }
-const publicResult = result => Object.fromEntries(['success', 'reason', 'settled', 'state', 'failedSectors', 'bits', 'sensors', 'moving', 'empty', 'low', 'hopperFull', 'captureFull', 'uidChanged', 'uidMatchesSource', 'port', 'baudRate', 'address', 'errorStage', 'receivedBytes', 'failedCommand', 'deviceCode', 'failedBlock', 'responseBytes']
+const publicResult = result => Object.fromEntries(['success', 'reason', 'settled', 'state', 'failedSectors', 'bits', 'sensors', 'moving', 'empty', 'low', 'hopperFull', 'captureFull', 'uidChanged', 'uidMatchesSource', 'issueMode', 'dispenseMs', 'port', 'baudRate', 'address', 'errorStage', 'receivedBytes', 'failedCommand', 'deviceCode', 'failedBlock', 'responseBytes']
   .filter(key => Object.hasOwn(result, key)).map(key => [key, result[key]]))
 
 function createCardKeyService({ env, store, bridge, authorize, isIdle, setBusy, token, timeoutMs = 105000 }) {
@@ -82,18 +82,21 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, setBusy, 
           }
         } else if (command === 'issue') {
           const room = scopedRoom(input.room, env)
+          const issueMode = input.issueMode ?? 'full'
+          if (!['full', 'uid_only'].includes(issueMode)) return { success: false, reason: 'invalid_issue_mode' }
           if (input.confirmed !== true || typeof input.operationKey !== 'string' || !/^[a-zA-Z0-9-]{8,80}$/.test(input.operationKey)) return { success: false, reason: 'confirmation_required' }
           const id = 'operation-' + createHash('sha256').update(room + ':' + input.operationKey).digest('hex')
           const previous = store.read(id)
           if (previous) {
+            if ((previous.issueMode || 'full') !== issueMode) return { success: false, reason: 'issue_mode_mismatch' }
             unresolved = !previous.result || previous.result.settled === false
             return previous.result || { success: false, reason: 'inspection_required', settled: false }
           }
           const record = store.read('room-' + room)
           if (!record) return { success: false, reason: 'room_not_registered', settled: true }
-          store.write(id, { room, state: 'started', occurredAt: new Date().toISOString() })
-          result = await hardware('issue', { record }, event)
-          store.write(id, { room, state: 'complete', result: publicResult(result) })
+          store.write(id, { room, issueMode, state: 'started', occurredAt: new Date().toISOString() })
+          result = await hardware('issue', { record, issueMode }, event)
+          store.write(id, { room, issueMode, state: 'complete', result: publicResult(result) })
         } else if (['status', 'capture', 'return', 'reset'].includes(command)) {
           if (command !== 'status' && input.confirmed !== true) return { success: false, reason: 'confirmation_required' }
           result = await hardware(command, {}, event)

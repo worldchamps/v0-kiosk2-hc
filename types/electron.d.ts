@@ -59,6 +59,8 @@ export interface CardKeyResult {
   captureFull?: boolean
   uidChanged?: boolean
   uidMatchesSource?: boolean
+  issueMode?: "full" | "uid_only"
+  dispenseMs?: number
   recoveryRequired?: boolean
   port?: string
   baudRate?: number
@@ -89,6 +91,7 @@ export interface ElectronAPI {
     available: () => Promise<boolean>
     run: (command: "status" | "list" | "register" | "issue" | "capture" | "reset" | "return" | "profile", input: {
       password: string; room?: string; replaceRegisteredAt?: string; confirmed?: boolean; operationKey?: string;
+      issueMode?: "full" | "uid_only";
       profile?: { sectors: { sector: number; keyA: string; keyB: string }[] }
     }) => Promise<CardKeyResult>
     onProgress: (callback: (progress: { state: string }) => void) => () => void

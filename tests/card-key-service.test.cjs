@@ -101,6 +101,24 @@ test('card port configuration defaults off and rejects collisions and unsupporte
   assert.deepEqual(publicResult({ success: true, blocks: 'secret', uid: 'secret', profile: 'secret', token: 'secret' }), { success: true })
 })
 
+test('UID-only issuance is explicit, idempotent, and cannot change mode for an existing request', async () => {
+  const f = fixture()
+  f.records.set('room-C105', { room: 'C105', profile: defaultProfile(), blocks: {}, uid: '01020304' })
+  const input = { password: 'correct', room: 'C105', confirmed: true, operationKey: 'uid-only-test', issueMode: 'uid_only' }
+  f.respond({ success: true, settled: true, issueMode: 'uid_only', dispenseMs: 1400, uid: 'private', blocks: {} })
+  const result = await f.service.run(f.event, 'issue', input)
+  assert.equal(result.dispenseMs, 1400)
+  assert.equal(result.issueMode, 'uid_only')
+  assert.equal('uid' in result || 'blocks' in result, false)
+  assert.equal(f.sent[0].issueMode, 'uid_only')
+  assert.equal((await f.create().run(f.event, 'issue', input)).success, true)
+  assert.equal((await f.create().run(f.event, 'issue', { ...input, issueMode: 'full' })).reason, 'issue_mode_mismatch')
+  assert.equal((await f.create().run(f.event, 'issue', { ...input, issueMode: 'fast' })).reason, 'invalid_issue_mode')
+  assert.equal(f.sent.length, 1)
+  await f.create().run(f.event, 'issue', { ...input, issueMode: undefined, operationKey: 'full-mode-test' })
+  assert.equal(f.sent[1].issueMode, 'full')
+})
+
 test('failed status polls allow settings recovery but cannot clear an unresolved card operation', async () => {
   const f = fixture(), input = { password: 'correct' }
   const failure = { success: false, reason: 'timeout', settled: false,
