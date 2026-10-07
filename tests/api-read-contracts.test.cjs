@@ -168,6 +168,8 @@ test("Sheets read APIs handle empty, unavailable, and unconfigured data without 
 test("room status composes room/building/floor filters and handles an unavailable transport", async () => {
   for (const fail of [false, true]) {
     const handler = load("app/api/room-status/route.ts", { "next/server": next,
+      "@/lib/kiosk-scope": { ...scope, getKioskScope: () => scope.getKioskScope({ KIOSK_PROPERTY_ID: "property3", KIOSK_BUILDING: "B" }) },
+      "@/lib/property-utils": properties,
       "@/lib/firebase-beach-rooms": { getBeachRoomStatusFromFirebase: async () => {
         if (fail) throw new Error("offline failure")
         return [beachRoom("A101"), beachRoom("B101")]
@@ -183,6 +185,18 @@ test("room status composes room/building/floor filters and handles an unavailabl
     }
   }
 })
+
+for (const [property, building, expected] of [['property1', undefined, ['C101', 'D101']], ['property3', 'A', ['A101']], ['property3', 'B', ['B101']]]) {
+  test(`administrator rooms follow ${property}/${building || 'CD'} device scope, including unregistered rooms`, async () => {
+    const handler = load('app/api/room-status/route.ts', { 'next/server': next,
+      '@/lib/kiosk-scope': { ...scope, getKioskScope: () => scope.getKioskScope({ KIOSK_PROPERTY_ID: property, KIOSK_BUILDING: building }) },
+      '@/lib/property-utils': properties,
+      '@/lib/firebase-beach-rooms': { getBeachRoomStatusFromFirebase: async () => ['A101', 'B101', 'C101', 'D101', 'Camp101'].map(beachRoom) },
+    });
+    const result = await (await handler.GET(new Request('http://offline.invalid/api/room-status?property=property4&kioskProperty=property4'))).json();
+    assert.deepEqual(result.rooms.map(room => room.roomNumber), expected);
+  });
+}
 
 test("PMS rates API selects the requested property, disables caching and contains transport errors", async () => {
   for (const fail of [false, true]) {

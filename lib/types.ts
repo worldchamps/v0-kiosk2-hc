@@ -38,6 +38,7 @@ export interface RoomStatus {
 }
 
 export interface Reservation {
+  cardDelivery?: import("@/types/electron").CardKeyResult
   place: string
   guestName: string
   reservationId: string

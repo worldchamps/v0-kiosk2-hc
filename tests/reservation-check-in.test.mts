@@ -8,6 +8,7 @@ import * as jsxRuntime from "react/jsx-runtime"
 import { renderToStaticMarkup } from "react-dom/server"
 import * as dates from "../lib/date-utils.ts"
 import * as kioskScope from "../lib/kiosk-scope.ts"
+import cardProof from "../electron/card-issue-proof.js"
 
 test("scheduled entry is closed until the exact H-column time, in KST", () => {
   const before = new Date("2026-09-06T05:59:59.999Z")
@@ -73,7 +74,7 @@ function loadModule(path: string, dependencies: Record<string, unknown>) {
 function createApiHarness(checkInDate: string, now: string) {
   const columns = loadModule("../lib/google-sheets.ts", { googleapis: { google: {} } }).SHEET_COLUMNS
   const row = ["test-property", "Test Guest", "test-reservation", "test-platform", "test-room", "100", "",
-    checkInDate, "26.09.07/11:00", "A101", "test-password", "", "", "1"]
+    checkInDate, "26.09.07/11:00", "C101", "test-password", "", "", "1"]
   const writes: any[] = []
   const queue: any[] = []
   let beforeWriteRead = () => {}
@@ -85,6 +86,7 @@ function createApiHarness(checkInDate: string, now: string) {
     batchUpdate: async (request: any) => { writes.push(request) },
   }
   const dependencies = {
+    "@/electron/card-issue-proof": { issueTicket: (data: any) => cardProof.issueTicket(data, { KIOSK_PROPERTY_ID: "property1", CARD_DISPENSER_ENABLED: "true", CARD_BRIDGE_TOKEN: "a".repeat(64) }, new Date(now).getTime()) },
     "@/lib/kiosk-scope": { ...kioskScope, getKioskScope: () => kioskScope.getKioskScope({ KIOSK_PROPERTY_ID: "property1" }) },
     "next/server": { NextResponse: Response },
     "next/headers": { headers: async () => new Headers() },
@@ -134,6 +136,7 @@ test("early direct API requests cannot write check-in state, enqueue PMS, or rev
     assert.equal(body.code, "CHECK_IN_NOT_OPEN")
     assert.equal(body.data, undefined)
     assert.equal(body.password, undefined)
+    assert.equal(body.cardIssue, undefined)
   }
   assert.equal(api.writes.length, 0)
   assert.equal(api.queue.length, 0)
@@ -146,6 +149,9 @@ test("entry at the scheduled time completes the existing flow without changing p
   const body = await response.json()
   assert.equal(body.success, true)
   assert.equal(body.data.password, "test-password")
+  const claim = cardProof.verifyTicket(body.cardIssue.ticket, { KIOSK_PROPERTY_ID: "property1", CARD_BRIDGE_TOKEN: "a".repeat(64) }, new Date("2026-09-06T06:00:00Z").getTime())
+  assert.equal(claim.room, body.data.roomNumber)
+  assert.equal(claim.reservationId, body.data.reservationId)
   assert.equal(api.writes.length, 1)
   assert.deepEqual(Array.from(api.writes[0].requestBody.data, (entry: any) => entry.range), ["Reservations!L2", "Reservations!M2"])
   assert.equal(api.queue.length, 1)

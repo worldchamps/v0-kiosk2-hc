@@ -9,6 +9,7 @@ import type { KioskLocation } from "@/lib/location-utils"
 import { playCheckInGuide, stopAllAudio } from "@/lib/audio-utils"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 import { getKioskPropertyId, propertyUsesElectron } from "@/lib/property-utils"
+import { cardFailure } from "@/lib/check-in-card"
 
 interface CheckInCompleteProps {
   reservation?: any
@@ -51,6 +52,8 @@ export default function CheckInComplete({
   }
 
   const roomNumber = revealedInfo?.roomNumber || reservation?.roomNumber || ""
+  const cardDelivery = reservation?.cardDelivery
+  const cardUnresolved = cardDelivery?.settled === false
   const buildingZoomImagePath = getBuildingZoomImagePath(roomNumber)
 
   const getBuildingType = (): string => {
@@ -226,6 +229,7 @@ export default function CheckInComplete({
 
   const startRedirectCountdown = () => {
     clearAllTimers()
+    if (cardUnresolved) { setCountdown(null); return }
     if (assistantOpenRef.current) {
       assistantPausedRedirectRef.current = true
       setCountdown(null)
@@ -265,6 +269,7 @@ export default function CheckInComplete({
   }, [assistantOpen])
 
   const handleRedirect = () => {
+    if (cardUnresolved) return
     if (isPopupMode) {
       const property = getKioskPropertyId()
       if (propertyUsesElectron(property)) {
@@ -303,7 +308,7 @@ export default function CheckInComplete({
       }
     },
     idleTime: 60000,
-    enabled: !isPopupMode,
+    enabled: !isPopupMode && !cardUnresolved,
   })
 
   return (
@@ -313,6 +318,11 @@ export default function CheckInComplete({
         <p>결제와 체크인이 완료되었습니다</p>
         <h1>객실 정보를 확인해주세요</h1>
       </header>
+
+      {cardDelivery && <section role="status" className="rounded-xl border p-6 text-center text-2xl">
+        <h2 className="text-3xl font-bold">{cardDelivery.success ? "객실 카드키를 수령했습니다" : "카드키 발급 확인이 필요합니다"}</h2>
+        <p>{cardDelivery.success ? "받으신 카드키를 객실 도어락에 대주세요." : `${cardFailure(cardDelivery)} 결제와 체크인은 완료되었습니다. 다시 결제하지 마세요. 관리자 문의 010-5126-4644`}</p>
+      </section>}
 
       {revealedInfo && (
         <section className="kiosk-complete-room">
@@ -361,6 +371,7 @@ export default function CheckInComplete({
         <button
           type="button"
           className="is-primary"
+          disabled={cardUnresolved}
           onClick={() => {
             logDebug("Back button clicked: clearing all timers")
             clearAllTimers()

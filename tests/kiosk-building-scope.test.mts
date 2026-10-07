@@ -8,6 +8,7 @@ import * as properties from "../lib/property-utils.ts"
 import * as dates from "../lib/date-utils.ts"
 import * as sales from "../lib/kiosk-sales-config.ts"
 import * as firebaseTransaction from "../lib/firebase-transaction.ts"
+import cardProof from "../electron/card-issue-proof.js"
 
 // Real handlers with in-memory dependencies. No customer data, payment,
 // Firebase writes, PC commands, or printers are contacted by these tests.
@@ -54,6 +55,7 @@ function harness(building: string | undefined = "A", property = "property3") {
     append: async () => { effects.push("booking") },
   }
   const dependencies: Record<string, any> = {
+    "@/electron/card-issue-proof": { issueTicket: (data: any) => cardProof.issueTicket(data, env) },
     "@/lib/firebase-transaction": firebaseTransaction,
     "next/server": { NextResponse: Response },
     "next/headers": { headers: async () => new Headers() },
@@ -283,6 +285,8 @@ test("kiosk UI waits for PC config, overrides a conflicting URL/location, and bl
     let cursor = 0
     const element = (type: any, props: any) => ({ type, props })
     const dependencies: Record<string, any> = {
+      "@/components/check-in-card-progress": { default: "CardProgress" },
+      "@/lib/check-in-card": { checkCardBeforePayment: async () => {}, issueCheckInCard: async () => undefined },
       react: {
         useState: (initial: any) => {
           const index = cursor++

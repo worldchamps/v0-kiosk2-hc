@@ -7,6 +7,7 @@ import { getPropertyFromReservation, canCheckInAtKiosk } from "@/lib/property-ut
 import type { PropertyId } from "@/lib/property-utils"
 import { getReservationStayEligibility } from "@/lib/date-utils"
 import { getKioskScope, isRoomInBuilding, buildingRestrictionMessage } from "@/lib/kiosk-scope"
+import { issueTicket } from "@/electron/card-issue-proof"
 
 export async function POST(request: NextRequest) {
   try {
@@ -87,7 +88,9 @@ export async function POST(request: NextRequest) {
         }, { timeout: 15000, retry: false })
       },
     })
-    return NextResponse.json(result, { status: result.success ? 200 : "pending" in result && result.pending ? 202 : 409 })
+    return NextResponse.json(result.success && "data" in result
+      ? { ...result, cardIssue: issueTicket(result.data) } : result,
+      { status: result.success ? 200 : "pending" in result && result.pending ? 202 : 409 })
   } catch (error) {
     console.error("[check-in] Failed:", error)
     return NextResponse.json({ error: "체크인 처리 결과를 확인하지 못했습니다. 관리자에게 확인하거나 같은 예약으로 다시 확인해주세요." }, { status: 503 })

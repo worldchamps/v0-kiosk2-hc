@@ -32,6 +32,8 @@ import PaymentScreen from "@/components/payment-screen"
 import PaymentRecoveryPanel from "@/components/payment-recovery-panel"
 import type { CompletedPayment } from "@/lib/payment-types"
 import CheckInComplete from "@/components/check-in-complete"
+import CheckInCardProgress from "@/components/check-in-card-progress"
+import { checkCardBeforePayment, issueCheckInCard } from "@/lib/check-in-card"
 import { KioskProgressScreen, ON_SITE_PROGRESS_STEPS } from "@/components/kiosk-progress"
 import type { PmsPaymentRates, PmsRoomRates } from "@/lib/pms-rates"
 
@@ -144,6 +146,11 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
   useEffect(() => { onAssistantStepChange?.(step) }, [step, onAssistantStepChange])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  const [deliveringCard, setDeliveringCard] = useState(false)
+  const [checkingCard, setCheckingCard] = useState(false)
+  const checkingCardRef = useRef(false)
+  const mountedRef = useRef(true)
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
   const [roomsByType, setRoomsByType] = useState<Record<string, AvailableRoom[]>>({})
   const [selectedRoomType, setSelectedRoomType] = useState<string>("")
   const [selectedStay, setSelectedStay] = useState<StaySelection | null>(null)
@@ -210,7 +217,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
   )
 
   const resetToHome = useCallback(async () => {
-    if (submittingRef.current || submitting || paymentSession.cardInFlight || paymentSession.pendingBooking || paymentSession.recoveryRequired || step === "payment") return
+    if (checkingCard || deliveringCard || reservationData?.cardDelivery?.settled === false || submittingRef.current || submitting || paymentSession.cardInFlight || paymentSession.pendingBooking || paymentSession.recoveryRequired || step === "payment") return
     if (paymentSession.isActive && paymentSession.acceptedAmount > 0) {
       console.warn("[v0] Cash has been inserted. Keeping the payment screen active.")
       return
@@ -228,7 +235,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
     setReservationData(null)
     setStep("stayType")
     await fetchAvailableRooms(false)
-  }, [cancelPayment, fetchAvailableRooms, paymentSession, step, submitting])
+  }, [cancelPayment, fetchAvailableRooms, paymentSession, step, submitting, checkingCard, deliveringCard, reservationData])
 
   useIdleTimer({
     onIdle: async () => {
@@ -236,7 +243,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
       await resetToHome()
     },
     idleTime: 60000,
-    enabled: true,
+    enabled: !checkingCard && !deliveringCard && reservationData?.cardDelivery?.settled !== false,
   })
 
   useEffect(() => {
@@ -274,8 +281,13 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
     setStep("roomSelect")
   }
 
-  const startRoomPayment = (room: AvailableRoom) => {
-    if (!selectedStay) return
+  const startRoomPayment = async (room: AvailableRoom) => {
+    if (!selectedStay || checkingCardRef.current) return
+    checkingCardRef.current = true; setCheckingCard(true)
+    try { await checkCardBeforePayment(room.roomCode) }
+    catch (error) { alert(error instanceof Error ? error.message : "카드 발급기를 확인해주세요."); return }
+    finally { checkingCardRef.current = false; setCheckingCard(false) }
+    if (!mountedRef.current) return
 
     setSelectedRoom(room)
 
@@ -323,6 +335,13 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
       return
     }
 
+    if (checkingCardRef.current) return
+    checkingCardRef.current = true; setCheckingCard(true)
+    try { await checkCardBeforePayment(selectedRoom.roomCode) }
+    catch (error) { alert(error instanceof Error ? error.message : "카드 발급기를 확인해주세요."); return }
+    finally { checkingCardRef.current = false; setCheckingCard(false) }
+    if (!mountedRef.current) return
+
     const reservationInfo = {
       guestName,
       phoneNumber,
@@ -367,8 +386,11 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
           requireRecovery("예약은 처리되었지만 객실 입실 정보를 확인하지 못했습니다. 다시 결제하지 말고 관리자에게 문의해주세요.")
           return
         }
+        setDeliveringCard(Boolean(data.cardIssue?.required))
+        const cardDelivery = await issueCheckInCard(data.cardIssue)
+        setDeliveringCard(false)
         if (completePayment() === false) return
-        setReservationData(data.data)
+        setReservationData({ ...data.data, cardDelivery })
         setStep("complete")
         void fetchAvailableRooms(false)
       } else if (data.canCancelPayment === true && !data.pending) {
@@ -397,6 +419,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
     } finally {
       submittingRef.current = false
       setSubmitting(false)
+      setDeliveringCard(false)
     }
   }
 
@@ -418,6 +441,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
     setStep("confirm")
   }
 
+  if (deliveringCard) return <CheckInCardProgress />
   if (ready === false) return <div role="status" className="p-12 text-2xl">이전 결제 기록을 확인하고 있습니다.</div>
   if (paymentSession.pendingBooking || paymentSession.recoveryRequired || storageError) {
     return <div className="kiosk-content-container space-y-8 p-8" role="alert">
@@ -777,11 +801,11 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
         </section>
 
         <div className="kiosk-booking-confirm-actions">
-          <button type="button" className="is-secondary" onClick={() => setStep("roomSelect")}>
+          <button type="button" className="is-secondary" disabled={checkingCard} onClick={() => setStep("roomSelect")}>
             객실 다시 선택
           </button>
-          <button type="button" className="is-primary" onClick={() => startRoomPayment(selectedRoom)}>
-            확인하고 결제하기
+          <button type="button" className="is-primary" disabled={checkingCard} onClick={() => startRoomPayment(selectedRoom)}>
+            {checkingCard ? "카드 발급기 확인 중..." : "확인하고 결제하기"}
           </button>
         </div>
         </main>

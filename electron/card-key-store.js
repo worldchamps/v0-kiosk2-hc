@@ -10,7 +10,7 @@ function createCardKeyStore({ directory, safeStorage }) {
     if (fs.lstatSync(directory).isSymbolicLink()) throw new Error('card_store_invalid')
   }
   function filename(id) {
-    if (!/^(?:profile|room-[ACD]\d{3}|operation-[a-f0-9]{64})$/.test(id)) throw new Error('card_record_invalid')
+    if (!/^(?:profile|active-check-in|room-[ACD]\d{3}|operation-[a-f0-9]{64})$/.test(id)) throw new Error('card_record_invalid')
     return path.join(directory, id + '.bin')
   }
   function read(id) {

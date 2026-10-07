@@ -2,12 +2,15 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { createCardKeyService, defaultProfile, roomKey, publicResult } = require('../electron/card-key-service')
 const { view, updatedConfig } = require('../electron/device-settings')
+const { issueTicket, verifyTicket } = require('../electron/card-issue-proof')
+const customerEnv = { KIOSK_PROPERTY_ID: 'property1', CARD_DISPENSER_ENABLED: 'true', CARD_BRIDGE_TOKEN: 'a'.repeat(64) }
+const ticket = (reservationId = 'test-reservation', room = 'C105', env = customerEnv) => issueTicket({ reservationId, roomNumber: room }, env).ticket
 
 function fixture(env = { KIOSK_PROPERTY_ID: 'property1', CARD_DISPENSER_ENABLED: 'true' }, records = new Map()) {
   const mainFrame = { url: 'http://localhost:3000/?mode=web' }, sent = [], progress = [], listeners = new Set()
   const event = { senderFrame: mainFrame, sender: { mainFrame, isDestroyed: () => false, send: (_channel, value) => progress.push(value) } }
   const store = { read: id => records.get(id) || null, write: (id, value) => records.set(id, structuredClone(value)),
-    list: () => [...records.values()].filter(value => value.registeredAt).map(({ room, registeredAt }) => ({ room, registeredAt })) }
+    list: () => [...records.values()].filter(value => value?.registeredAt).map(({ room, registeredAt }) => ({ room, registeredAt })) }
   let busy = false, hold = false, response = { success: true, settled: true, state: 'taken' }
   const bridge = { isConnected: true, subscribeMessage: fn => { listeners.add(fn); return () => listeners.delete(fn) },
     send: value => {
@@ -23,9 +26,90 @@ function fixture(env = { KIOSK_PROPERTY_ID: 'property1', CARD_DISPENSER_ENABLED:
   const create = () => createCardKeyService({ env, store, bridge, token: 'x'.repeat(64), timeoutMs: 30,
     authorize: (_event, password) => ({ success: password === 'correct', error: 'auth failed' }), isIdle: () => true,
     setBusy: value => { busy = value } })
-  return { service: create(), create, event, sent, progress, records, get busy() { return busy },
-    respond: value => { response = value }, hold: () => { hold = true }, listeners }
+  return { service: create(), create, event, sent, progress, records, store, get busy() { return busy },
+    respond: value => { response = value }, hold: (value = true) => { hold = value }, listeners }
 }
+
+test('check-in tickets bind committed reservation, room, property and expiry', () => {
+  const now = 1000000, data = { reservationId: 'synthetic', roomNumber: 'C-105' }
+  const signed = issueTicket(data, customerEnv, now).ticket
+  assert.equal(verifyTicket(signed, customerEnv, now).room, 'C105')
+  assert.throws(() => verifyTicket(signed, customerEnv, now + 300000))
+  assert.throws(() => verifyTicket(signed + '0', customerEnv, now))
+  assert.throws(() => verifyTicket(signed, { ...customerEnv, CARD_BRIDGE_TOKEN: 'b'.repeat(64) }, now))
+  assert.throws(() => verifyTicket(signed, { ...customerEnv, KIOSK_PROPERTY_ID: 'property3', KIOSK_BUILDING: 'A' }, now))
+  for (const [property, building] of [['property2', ''], ['property3', 'B'], ['property4', '']])
+    assert.equal(issueTicket(data, { ...customerEnv, KIOSK_PROPERTY_ID: property, KIOSK_BUILDING: building }), undefined)
+})
+
+test('customer preflight checks registered room and stock without moving a card or requiring admin auth', async () => {
+  const f = fixture(customerEnv)
+  assert.equal((await f.service.run(f.event, 'ready', { room: 'C105' })).reason, 'room_not_registered')
+  assert.equal(f.sent.length, 0)
+  f.records.set('room-C105', { room: 'C105' })
+  f.respond({ success: true, settled: true, empty: true })
+  assert.equal((await f.service.run(f.event, 'ready', { room: 'C105' })).reason, 'empty')
+  f.respond({ success: true, settled: true })
+  assert.equal((await f.service.run(f.event, 'ready', { room: 'C105' })).success, true)
+  assert(f.sent.every(value => value.type === 'card_status'))
+  f.respond({ success: false, reason: 'disconnected', settled: false })
+  assert.equal((await f.service.run(f.event, 'ready', { room: 'C105' })).success, false)
+  assert.equal(f.busy, false)
+  const disabled = fixture({ ...customerEnv, CARD_DISPENSER_ENABLED: 'false' })
+  assert(disabled.service.checkInRequired(disabled.event))
+  assert.equal((await disabled.service.run(disabled.event, 'ready', { room: 'C105' })).reason, 'disabled')
+  assert.equal(issueTicket({ reservationId: 'test', roomNumber: 'C105' }, { ...customerEnv, CARD_DISPENSER_ENABLED: 'false' }), undefined)
+})
+
+test('valid customer ticket dispenses one UID-only card across duplicate clicks, re-signing and restart', async () => {
+  const f = fixture(customerEnv)
+  f.records.set('room-C105', { room: 'C105', blocks: {}, uid: '01020304' })
+  const first = f.service.run(f.event, 'checkin_issue', { ticket: ticket() })
+  const concurrent = await f.service.run(f.event, 'checkin_issue', { ticket: ticket() })
+  assert.equal(concurrent.success, false)
+  assert.equal((await first).success, true)
+  const restarted = f.create()
+  assert.equal((await restarted.run(f.event, 'checkin_issue', { ticket: ticket() })).success, true)
+  assert.equal(f.sent.length, 1); assert.equal(f.sent[0].issueMode, 'uid_only')
+  assert.equal(f.records.get('active-check-in'), null)
+  assert.equal((await restarted.run(f.event, 'checkin_issue', { ticket: ticket('test-reservation', 'D101') })).success, false)
+  assert.equal(f.sent.length, 1)
+})
+
+test('customer cannot issue an arbitrary room, an expired ticket or a ticket from a foreign frame', async () => {
+  const f = fixture(customerEnv)
+  for (const input of [{ room: 'C105' }, { ticket: 'forged' }, { ticket: ticket('foreign', 'A105') },
+    { ticket: issueTicket({ reservationId: 'old', roomNumber: 'C105' }, customerEnv, Date.now() - 300001).ticket }])
+    assert.equal((await f.service.run(f.event, 'checkin_issue', input)).success, false)
+  assert.equal((await f.service.run({ ...f.event, senderFrame: { url: 'http://localhost:3000/' } }, 'checkin_issue', { ticket: ticket() })).success, false)
+  assert.equal(f.sent.length, 0)
+})
+
+test('uncertain check-in survives restart, blocks another reservation and is resolved only by device recovery', async () => {
+  const f = fixture(customerEnv)
+  f.records.set('room-C105', { room: 'C105' }); f.hold()
+  assert.equal((await f.service.run(f.event, 'checkin_issue', { ticket: ticket() })).settled, false)
+  const restarted = f.create()
+  assert.equal((await restarted.run(f.event, 'checkin_issue', { ticket: ticket('other') })).reason, 'inspection_required')
+  assert.equal(f.sent.length, 1); assert.equal(f.busy, true)
+  f.hold(false); f.respond({ success: true, sensors: 0, moving: false })
+  assert.equal((await restarted.run(f.event, 'status', { password: 'correct' })).success, true)
+  assert.equal(f.busy, false)
+  assert.equal((await restarted.run(f.event, 'checkin_issue', { ticket: ticket() })).reason, 'operator_recovered')
+  assert.equal(f.sent.length, 2)
+})
+
+test('failed durable write prevents card movement and failed result persistence cannot reissue after restart', async () => {
+  for (const stage of ['started', 'complete']) {
+    const f = fixture(customerEnv); f.records.set('room-C105', { room: 'C105' })
+    const write = f.store.write
+    f.store.write = (id, value) => { if (value?.state === stage) throw Error('disk full'); return write(id, value) }
+    assert.equal((await f.service.run(f.event, 'checkin_issue', { ticket: ticket() })).success, false)
+    assert.equal(f.sent.length, stage === 'started' ? 0 : 1)
+    assert.equal((await f.create().run(f.event, 'checkin_issue', { ticket: ticket() })).settled, false)
+    assert.equal(f.sent.length, stage === 'started' ? 0 : 1)
+  }
+})
 
 test('card IPC gate rejects unsupported PCs, flag-off, bad auth and cross-room access without hardware I/O', async () => {
   for (const [property, building, flag] of [['property2', '', 'true'], ['property4', '', 'true'], ['property3', 'B', 'true'], ['property3', '', 'true'], ['property1', '', 'false']]) {

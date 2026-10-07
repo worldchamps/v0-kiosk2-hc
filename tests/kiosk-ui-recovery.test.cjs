@@ -20,6 +20,8 @@ function load(file, extra = {}, globals = {}) {
     createContext: () => ({ Provider: 'Provider' }), useContext: () => undefined,
   };
   const deps = { react, 'react/jsx-runtime': { jsx: element, jsxs: element }, 'lucide-react': {},
+    '@/components/check-in-card-progress': { default: 'CardProgress' },
+    '@/lib/check-in-card': { checkCardBeforePayment: async () => {}, issueCheckInCard: async () => undefined, cardFailure: () => '카드 발급 실패' },
     '@/contexts/admin-context': { useAdmin: () => ({ password: '', authenticating: false, authenticate: async () => false, lock() {} }) },
     '@/components/payment-recovery-panel': { default: 'PaymentRecoveryPanel' }, ...extra };
   for (const name of ['button', 'card', 'input', 'label', 'alert']) deps['@/components/ui/' + name] ||= {
@@ -295,7 +297,7 @@ for (const action of ['completion', 'cancellation']) {
   });
 }
 
-async function onsite(stay = 'shortStay') {
+async function onsite(stay = 'shortStay', scenario = {}) {
   let idle, responseMode = 'success', release, roomLookupFails = false, roomPayload; const posts = [], intervals = [];
   const session = { isActive: false, acceptedAmount: 0 };
   const observed = { cancelledApprovals: 0, completed: 0 };
@@ -308,6 +310,7 @@ async function onsite(stay = 'shortStay') {
   let rooms = ['B901', 'B902'].map(roomCode => ({ roomCode, roomType: 'Standard', building: 'B', floor: 'test', password: 'TEST',
     rates: { shortStay: { card: 30000, cash: 30000 }, overnight: { card: 60000, cash: 60000 } }, stayEnabled: { shortStay: true, overnight: true } }));
   const h = load('components/on-site-reservation.tsx', {
+    ...(scenario.cardHelpers ? { '@/lib/check-in-card': scenario.cardHelpers } : {}),
     '@/contexts/payment-context': { usePayment: () => payment }, '@/hooks/use-idle-timer': { useIdleTimer: options => idle = options.onIdle },
     '@/lib/room-utils': { getRoomImagePath: () => '/test.png' }, '@/lib/room-type-order': { sortRoomTypes: types => types.sort() },
     '@/components/payment-screen': { default: 'PaymentScreen' }, '@/components/check-in-complete': { default: 'CheckInComplete' },
@@ -321,7 +324,7 @@ async function onsite(stay = 'shortStay') {
       if (responseMode === 'waiting') await new Promise(resolve => release = resolve);
       return { ok: true, status: responseMode === 'pending' ? 202 : 200,
         json: async () => responseMode === 'pending' ? { success: false, pending: true } : responseMode === 'reject' ?
-          { success: false, canCancelPayment: true, error: 'Room unavailable' } : { success: true, data: { roomCode: 'B901', password: responseMode === 'missing-key' ? undefined : responseMode === 'empty-key' ? '' : 'SERVER-TEST' } } };
+          { success: false, canCancelPayment: true, error: 'Room unavailable' } : { success: true, cardIssue: scenario.cardIssue, data: { roomCode: 'B901', password: responseMode === 'missing-key' ? undefined : responseMode === 'empty-key' ? '' : 'SERVER-TEST' } } };
     } });
   const render = () => h.render({ location: 'B', onNavigate() {} });
   const settle = async () => { await new Promise(resolve => setImmediate(resolve)); render(); };
@@ -335,6 +338,31 @@ async function onsite(stay = 'shortStay') {
     async roomLookupFailure(value = true) { roomLookupFails = value; intervals[0](); await settle(); },
     async malformedRooms(value) { roomPayload = value; intervals[0](); await settle(); } };
 }
+test('missing room original blocks payment before any payment session or booking is created', async () => {
+  const h = await onsite('overnight', { cardHelpers: { checkCardBeforePayment: async () => { throw Error('missing original') } } });
+  await h.pay(); assert.equal(h.session.isActive, false); assert.equal(h.posts.length, 0);
+  assert.equal(h.component('PaymentScreen'), undefined);
+});
+
+for (const outcome of [{ success: true, settled: true }, { success: false, reason: 'timeout', settled: false }]) {
+  test(`on-site card delivery ${outcome.success}: pending payment survives dispensing and failures do not cancel a committed booking`, async () => {
+    let finish, issued = 0;
+    const auth = { required: true, ticket: 'server-only-test' };
+    const h = await onsite('overnight', { cardIssue: auth, cardHelpers: {
+      checkCardBeforePayment: async () => {}, issueCheckInCard: value => { assert.equal(value, auth); issued++; return new Promise(resolve => finish = resolve) },
+    } });
+    await h.pay(); const complete = h.component('PaymentScreen').props.onPaymentComplete;
+    const pending = complete({ method: 'CASH', paidAmount: 60000 }); await h.settle();
+    assert(h.component('CardProgress')); assert(h.session.pendingBooking); assert.equal(h.observed.completed, 0);
+    await complete({ method: 'CASH', paidAmount: 60000 }); await h.idle();
+    assert.equal(issued, 1); assert.equal(h.posts.length, 1);
+    finish(outcome); await pending; await h.settle();
+    assert.equal(h.observed.completed, 1); assert.equal(h.observed.cancelledApprovals, 0);
+    assert.equal(h.component('CheckInComplete').props.reservation.cardDelivery, outcome);
+    if (!outcome.settled) { await h.idle(); assert(h.component('CheckInComplete')); }
+  });
+}
+
 test('ended short stay keeps its card visible and blocks selection while lodging remains usable', async () => {
   const h = await onsite();
   assert.equal(h.button('대실 잠시 이용').disabled, false);
@@ -444,6 +472,7 @@ async function kiosk(scenario = {}) {
     'reservation-details', 'check-in-complete', 'reservation-not-found', 'reservation-list', 'admin-keypad', 'property-mismatch-dialog', 'property-redirect-dialog'];
   const deps = Object.fromEntries([...components, 'kiosk-ai-assistant'].map(name => ['@/components/' + name, { default: name }]));
   Object.assign(deps, {
+    ...(scenario.cardHelpers ? { '@/lib/check-in-card': scenario.cardHelpers } : {}),
     'next/navigation': { useRouter: () => ({}) }, '@/lib/location-utils': { getKioskLocation: () => 'B' },
     '@/lib/audio-utils': { stopAllAudio() {}, pauseBGM() {}, resumeBGM() {} }, '@/components/print-queue-listener': { PrintQueueListener: 'PrintQueue' },
     '@/lib/property-utils': { getKioskPropertyId: () => 'property3', getPropertyDisplayName: x => x, propertyUsesElectron: () => true },
@@ -457,7 +486,7 @@ async function kiosk(scenario = {}) {
     fetch: async (url, options) => {
       if (url === '/api/kiosk-config') return { ok: true, json: async () => ({ property: 'property3', building: 'B' }) };
       if (url.startsWith('/api/reservations')) return scenario.lookup ? scenario.lookup(url, options) : { ok: true, json: async () => ({ reservations: [{ reservationId: 'QA-ONLY', roomNumber: 'B901', guestName: 'QA', roomType: 'Test', price: '30000', checkInDate: '2026-09-10', checkOutDate: '2026-09-11', password: '' }] }) };
-      posts.push(options.body); return { ok: true, status: pending ? 202 : 200, json: async () => ({ success: !pending, pending, data: { roomNumber: 'B901', password: 'TEST' } }) };
+      posts.push(options.body); return { ok: true, status: pending ? 202 : 200, json: async () => ({ success: !pending, pending, cardIssue: pending ? undefined : scenario.cardIssue, data: { roomNumber: 'B901', password: 'TEST' } }) };
     } });
   const render = () => h.render({ onChangeMode: scenario.onChangeMode || (() => {}) }); const settle = async () => { await new Promise(resolve => setImmediate(resolve)); render(); };
   render(); for (const effect of h.effects) effect(); await settle();
@@ -465,6 +494,22 @@ async function kiosk(scenario = {}) {
   await navigate('reservationConfirm'); await settle();
   return { ...h, settle, render, navigate, posts, keyHandlers, confirmCheckIn: () => pending = false };
 }
+test('reservation card issue waits for committed response, protects navigation, and preserves confirmed check-in on card failure', async () => {
+  let finish, issued = 0;
+  const h = await kiosk({ cardIssue: { required: true, ticket: 'committed' }, cardHelpers: {
+    checkCardBeforePayment: async () => {}, issueCheckInCard: async authorization => {
+      if (!authorization) return; issued++; return new Promise(resolve => finish = resolve);
+    },
+  } });
+  await h.component('reservation-confirm').props.onCheckReservation('QA'); await h.settle();
+  await h.component('reservation-details').props.onCheckIn(); await h.settle(); assert.equal(issued, 0);
+  h.confirmCheckIn(); const pending = h.component('reservation-details').props.onCheckIn(); await h.settle();
+  assert(h.component('CardProgress')); await h.navigate('idle'); await h.settle(); assert(h.component('reservation-details'));
+  finish({ success: false, reason: 'timeout', settled: false }); await pending; await h.settle();
+  assert.equal(h.component('check-in-complete').props.reservation.cardDelivery.success, false);
+  await h.component('check-in-complete').props.onNavigate('idle'); await h.settle(); assert(h.component('check-in-complete')); assert.equal(issued, 1);
+});
+
 test('existing reservation check-in 202 retains its screen and keys stay hidden until confirmed success', async () => {
   const h = await kiosk();
   await h.component('reservation-confirm').props.onCheckReservation('QA-ONLY'); await h.settle();
@@ -726,7 +771,40 @@ test('password keypad supports physical typing, Enter without duplicate verifica
   assert.deepEqual(confirmed, ['typed-test']); listeners.forEach(fn => fn({ key: 'Escape' })); assert.equal(closes, 1);
 });
 
-test('card tab reuses entry authentication and forwards the explicit UID-only trial', async () => {
+test('room cards register the exact listed room, show immediate readiness and confirm only replacement', async () => {
+  let registered = false, confirmations = 0, allowReplace = false;
+  const h = load('components/room-info.tsx', {
+    '@/components/card-key-admin': { default: 'CardKeyAdmin' }, '@/lib/printer-utils': {},
+    '@/contexts/admin-context': { useAdmin: () => ({ password: 'verified-test' }) },
+  }, { window: { confirm: () => { confirmations++; return allowReplace }, electronAPI: { cardKey: {
+    checkInRequired: async () => true, available: async () => true,
+    run: async () => ({ success: true, rooms: registered ? [{ room: 'C105', registeredAt: '2026-10-07' }] : [] }),
+  } } }, fetch: async () => ({ ok: true, json: async () => ({ rooms: [{ roomNumber: 'C105', building: 'C', floor: '1', roomType: 'Test', status: '공실' }] }) }) });
+  const props = { onBusy() {} }; h.render(props); for (const effect of h.effects) effect();
+  await new Promise(resolve => setImmediate(resolve)); h.render(props);
+  assert(h.visible('원본 카드 미등록')); h.button('원본 카드 등록').onClick(); h.render(props);
+  assert.equal(h.component('CardKeyAdmin').props.request.room, 'C105'); assert.equal(confirmations, 0);
+  registered = true; h.component('CardKeyAdmin').props.onRegistered(); await new Promise(resolve => setImmediate(resolve));
+  h.component('CardKeyAdmin').props.onClose(); h.render(props);
+  assert(h.visible('카드 등록됨 · 자동 발급 사용')); assert(!h.visible('문 열림'));
+  h.button('원본 카드 변경').onClick(); h.render(props); assert.equal(h.component('CardKeyAdmin'), undefined);
+  allowReplace = true; h.button('원본 카드 변경').onClick(); h.render(props);
+  assert.equal(h.component('CardKeyAdmin').props.request.registeredAt, '2026-10-07');
+});
+
+test('customer card helper retries only busy, never repeats a physical failure and skips unsupported properties', async () => {
+  let calls = 0; const responses = [{ success: false, reason: 'busy' }, { success: false, reason: 'not_taken', settled: true }];
+  const { exports: helper } = load('lib/check-in-card.ts', {}, { setTimeout: fn => fn(), window: { electronAPI: { cardKey: {
+    checkInRequired: async () => true, available: async () => true, ready: async () => ({ success: false, reason: 'empty' }),
+    issueCheckIn: async () => { calls++; return responses.shift() },
+  } } } });
+  assert.equal(await helper.issueCheckInCard(undefined), undefined); assert.equal(calls, 0);
+  await assert.rejects(() => helper.checkCardBeforePayment('C105'), /카드가 없습니다/);
+  assert.equal((await helper.issueCheckInCard({ required: true, ticket: 'signed' })).reason, 'not_taken'); assert.equal(calls, 2);
+  assert.equal((await helper.issueCheckInCard({ required: true })).reason, 'disabled'); assert.equal(calls, 2);
+});
+
+test('room issuance reuses entry authentication, starts once, and defaults to UID-only', async () => {
   const calls = [];
   const h = load('components/card-key-admin.tsx', {
     '@/contexts/admin-context': { useAdmin: () => ({ password: 'verified-test' }) },
@@ -734,12 +812,11 @@ test('card tab reuses entry authentication and forwards the explicit UID-only tr
     calls.push({ command, input }); return command === 'list' ? { success: true, rooms: [{ room: 'C105', registeredAt: '2026-10-07' }] } :
       { success: true, settled: true, issueMode: input.issueMode, dispenseMs: 1600 };
   } } } } });
-  const props = { onBusy() {} }; h.render(props); h.effects.forEach(fn => fn()); await new Promise(resolve => setImmediate(resolve));
-  let tree = h.render(props); assert.equal(calls[0].command, 'list'); assert.equal(calls[0].input.password, 'verified-test');
-  nodes(tree).find(n => n.type === 'input' && n.props.list === 'card-key-rooms').props.onChange({ target: { value: 'C105' } });
-  nodes(tree).find(n => n.type === 'input' && n.props.type === 'checkbox').props.onChange({ target: { checked: true } }); h.render(props);
-  assert.equal(h.button('고유번호만 · 빠른 시험 발급').disabled, false);
-  await h.button('고유번호만 · 빠른 시험 발급').onClick(); h.render(props);
-  assert.equal(calls[1].input.issueMode, 'uid_only'); assert.equal(calls[1].input.password, 'verified-test');
-  assert(h.visible('1.6초')); assert(h.visible('나머지 데이터는 복사하지 않았습니다'));
+  const props = { onBusy() {}, request: { room: 'C105', command: 'issue' } };
+  h.render(props); h.effects.forEach(fn => fn()); h.effects.forEach(fn => fn());
+  await new Promise(resolve => setImmediate(resolve)); h.render(props);
+  assert.equal(calls.length, 1); assert.equal(calls[0].command, 'issue');
+  assert.equal(calls[0].input.room, 'C105'); assert.equal(calls[0].input.issueMode, 'uid_only');
+  assert.equal(calls[0].input.password, 'verified-test'); assert.equal(calls[0].input.confirmed, true);
+  assert(h.visible('1.6초')); assert(h.visible('수령이 완료'));
 });

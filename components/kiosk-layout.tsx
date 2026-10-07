@@ -31,6 +31,8 @@ import { KioskProgressScreen, RESERVATION_PROGRESS_STEPS } from "@/components/ki
 import { type KioskScope, buildingRestrictionMessage } from "@/lib/kiosk-scope"
 import type { Reservation } from "@/lib/types"
 import { kioskOperatorShortcut } from "@/lib/kiosk-operator-shortcuts"
+import CheckInCardProgress from "@/components/check-in-card-progress"
+import { checkCardBeforePayment, issueCheckInCard, cardFailure } from "@/lib/check-in-card"
 
 interface KioskLayoutProps {
   onChangeMode: (mode?: "web") => void
@@ -56,6 +58,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   const [error, setError] = useState("")
   const [lookupError, setLookupError] = useState(false)
   const [checkInPending, setCheckInPending] = useState(false)
+  const [deliveringCard, setDeliveringCard] = useState(false)
   const checkInSubmitting = useRef(false)
   const lookupSubmitting = useRef(false)
   const [revealedInfo, setRevealedInfo] = useState({
@@ -220,7 +223,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
 
   const handleNavigate = async (screen: string) => {
     // A navigation is never proof that cash was returned or an approval was cancelled.
-    if (paymentSession.isActive || checkInSubmitting.current || checkInPending || lookupSubmitting.current) return
+    if (paymentSession.isActive || checkInSubmitting.current || checkInPending || lookupSubmitting.current || reservationData?.cardDelivery?.settled === false) return
 
     stopAllAudio(false)
 
@@ -430,6 +433,10 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     let definitiveFailure = false
 
     try {
+      if (!checkInPending) {
+        try { await checkCardBeforePayment(reservationData.roomNumber, reservationData.reservationId) }
+        catch (error) { definitiveFailure = true; throw error }
+      }
       const response = await fetch("/api/check-in", {
         method: "POST",
         signal: AbortSignal.timeout(30000),
@@ -488,13 +495,18 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         })
       }
 
+      setDeliveringCard(Boolean(data.cardIssue?.required))
+      const cardDelivery = await issueCheckInCard(data.cardIssue)
+      setDeliveringCard(false)
+      setReservationData(previous => previous ? { ...previous, cardDelivery } : previous)
+      if (isPopupMode && cardDelivery && !cardDelivery.success) alert(cardFailure(cardDelivery) + " 체크인은 완료되었습니다. 관리자 문의 010-5126-4644")
       setAdminOverride(false)
       setCheckInPending(false)
 
-      if (!isPopupMode) {
+      if (!isPopupMode || data.cardIssue?.required) {
         setCurrentScreen("checkInComplete")
       }
-      return true
+      return cardDelivery?.settled !== false
     } catch (err) {
       console.error("[v0] Check-in error:", err)
       const message = err instanceof Error ? err.message : "체크인 중 오류가 발생했습니다. 다시 시도해 주세요."
@@ -506,6 +518,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       }
       return false
     } finally {
+      setDeliveringCard(false)
       checkInSubmitting.current = false
       setLoading(false)
     }
@@ -581,6 +594,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
           <OnSiteReservation key={homeSessionKey} onNavigate={handleNavigate} location={kioskLocation} onUpdateSafeChange={setOnSiteUpdateSafe} />
         )}
 
+        {deliveringCard && <CheckInCardProgress />}
         {currentScreen === "reservationDetails" && reservationData && (
           <KioskProgressScreen
             steps={RESERVATION_PROGRESS_STEPS}

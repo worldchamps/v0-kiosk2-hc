@@ -1,11 +1,14 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Loader2, Printer, Building, Search } from "lucide-react"
 import { connectPrinter, printRoomInfoReceipt } from "@/lib/printer-utils"
+
+import { useAdmin } from "@/contexts/admin-context"
+import CardKeyAdmin from "@/components/card-key-admin"
 
 interface Room {
   building: string
@@ -18,9 +21,10 @@ interface Room {
 
 interface RoomInfoProps {
   reservations?: any[]
+  onBusy: (busy: boolean) => void
 }
 
-export default function RoomInfo({ reservations = [] }: RoomInfoProps) {
+export default function RoomInfo({ reservations = [], onBusy }: RoomInfoProps) {
   const [rooms, setRooms] = useState<Room[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -30,6 +34,32 @@ export default function RoomInfo({ reservations = [] }: RoomInfoProps) {
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null)
   const [isPrinting, setIsPrinting] = useState(false)
   const [printSuccess, setPrintSuccess] = useState<boolean | null>(null)
+
+  const { password } = useAdmin()
+  const [cardSupported, setCardSupported] = useState(false)
+  const [registrations, setRegistrations] = useState<{ room: string; registeredAt: string }[] | null>(null)
+  const [cardError, setCardError] = useState("")
+  const [cardRequest, setCardRequest] = useState<{ room: string; command: "register" | "issue"; registeredAt?: string } | null>(null)
+  const refreshCards = useCallback(async () => {
+    const api = window.electronAPI?.cardKey
+    if (!api) return
+    try {
+      if (!await api.checkInRequired()) return
+      setCardSupported(true)
+      if (!await api.available()) throw new Error("외부기기 등록에서 카드 발급기를 설정하고 앱을 다시 실행해주세요.")
+      const result = await api.run("list", { password })
+      if (!result.success) throw new Error("등록 카드 목록을 읽지 못했습니다. 새로고침해주세요.")
+      setRegistrations(result.rooms || [])
+      setCardError("")
+    } catch (error) { setRegistrations(null); setCardError(error instanceof Error ? error.message : "카드 발급기 연결을 확인해주세요.") }
+  }, [password])
+  useEffect(() => { void refreshCards() }, [refreshCards])
+  const startCard = (room: string, command: "register" | "issue") => {
+    const existing = registrations?.find(item => item.room === room)
+    if (command === "register" && existing && !window.confirm(room + "의 기존 원본 카드를 새 카드로 변경하시겠습니까?")) return
+    onBusy(true)
+    setCardRequest({ room, command, registeredAt: existing?.registeredAt })
+  }
 
   // Fetch room data when component mounts
   useEffect(() => {
@@ -136,15 +166,23 @@ export default function RoomInfo({ reservations = [] }: RoomInfoProps) {
 
   return (
     <div className="space-y-6">
+      {cardRequest && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-6" role="dialog" aria-modal="true" aria-label={cardRequest.room + " 카드 작업"}>
+        <div className="w-full max-w-3xl rounded-xl bg-white p-4 shadow-xl">
+          <CardKeyAdmin request={cardRequest} onBusy={onBusy} onRegistered={() => { void refreshCards() }} onClose={() => { setCardRequest(null); onBusy(false) }} />
+        </div>
+      </div>}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-2">
           <CardTitle className="text-xl">객실 정보 관리</CardTitle>
-          <Button onClick={fetchRoomData} disabled={loading}>
+          <Button onClick={() => { void fetchRoomData(); void refreshCards() }} disabled={loading}>
             {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "새로고침"}
           </Button>
         </CardHeader>
         <CardContent>
           {error && <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-md">{error}</div>}
+
+          {cardError && <p role="alert" className="mb-4 rounded border border-amber-400 p-3">{cardError}</p>}
+          {cardSupported && registrations && <p className="mb-4">원본 카드가 등록된 객실은 체크인 시 카드키가 자동 발급됩니다. 미등록 객실: {rooms.filter(room => !registrations.some(item => item.room === room.roomNumber)).length}개</p>}
 
           {printSuccess === true && (
             <div className="mb-4 p-3 bg-green-100 text-green-700 rounded-md">
@@ -211,63 +249,25 @@ export default function RoomInfo({ reservations = [] }: RoomInfoProps) {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="col-span-2">
               <h3 className="font-medium mb-2">객실 목록 ({filteredRooms.length}개)</h3>
-              <div className="border rounded-md overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          건물
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          객실 번호
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          객실 타입
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          상태
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          층
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          가격
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {loading ? (
-                        <tr>
-                          <td colSpan={6} className="px-6 py-4 text-center">
-                            <Loader2 className="h-5 w-5 animate-spin mx-auto" />
-                          </td>
-                        </tr>
-                      ) : filteredRooms.length > 0 ? (
-                        filteredRooms.map((room, index) => (
-                          <tr
-                            key={`${room.building}-${room.roomNumber}`}
-                            className={`hover:bg-gray-50 cursor-pointer ${selectedRoom?.roomNumber === room.roomNumber && selectedRoom?.building === room.building ? "bg-blue-50" : ""}`}
-                            onClick={() => handleSelectRoom(room)}
-                          >
-                            <td className="px-6 py-4 whitespace-nowrap">{room.building}동</td>
-                            <td className="px-6 py-4 whitespace-nowrap">{room.roomNumber}</td>
-                            <td className="px-6 py-4 whitespace-nowrap">{room.roomType}</td>
-                            <td className="px-6 py-4 whitespace-nowrap">{room.status}</td>
-                            <td className="px-6 py-4 whitespace-nowrap">{room.floor}</td>
-                            <td className="px-6 py-4 whitespace-nowrap">{room.price}</td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={6} className="px-6 py-4 text-center text-gray-500">
-                            검색 결과가 없습니다
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                {loading ? <Loader2 className="animate-spin" /> : filteredRooms.map(room => {
+                  const registration = registrations?.find(item => item.room === room.roomNumber)
+                  return <article key={room.roomNumber} className={"rounded-lg border p-4 space-y-3 " + (selectedRoom?.roomNumber === room.roomNumber ? "border-blue-500 bg-blue-50" : "bg-white")}>
+                    <button className="w-full text-left" onClick={() => handleSelectRoom(room)}>
+                      <strong className="text-xl">{room.roomNumber}</strong>
+                      <span className="block text-sm text-gray-600">{room.roomType} · {room.status} · {room.floor}</span>
+                    </button>
+                    {cardSupported && <>
+                      <p className={registration ? "text-green-800" : "text-amber-800"}>{registrations === null ? "등록 상태 확인 필요" : registration ? "카드 등록됨 · 자동 발급 사용" : "원본 카드 미등록"}</p>
+                      {registration && <p className="text-xs text-gray-500">등록: {new Date(registration.registeredAt).toLocaleString("ko-KR")}</p>}
+                      <div className="flex flex-wrap gap-2">
+                        {registration && <Button onClick={() => startCard(room.roomNumber, "issue")}>카드 1장 발급</Button>}
+                        <Button variant={registration ? "outline" : "default"} disabled={registrations === null} onClick={() => startCard(room.roomNumber, "register")}>{registration ? "원본 카드 변경" : "원본 카드 등록"}</Button>
+                      </div>
+                    </>}
+                  </article>
+                })}
+                {!loading && !filteredRooms.length && <p>검색 결과가 없습니다.</p>}
               </div>
             </div>
 

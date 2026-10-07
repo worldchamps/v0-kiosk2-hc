@@ -1,4 +1,5 @@
 const { randomUUID, createHash } = require('node:crypto')
+const { verifyTicket, operationId, supported } = require('./card-issue-proof')
 
 const supportsCardKey = (property, building) => property === 'property1' || property === 'property3' && building === 'A'
 const enabled = env => supportsCardKey(env.KIOSK_PROPERTY_ID || 'property3', env.KIOSK_BUILDING) && env.CARD_DISPENSER_ENABLED === 'true'
@@ -27,9 +28,10 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, setBusy, 
   function local(event) {
     return event?.senderFrame === event?.sender?.mainFrame && (() => { try { return new URL(event.senderFrame.url).origin === 'http://localhost:3000' } catch { return false } })()
   }
-  function check(event, input) {
+  function check(event, input, customer = false) {
     if (!local(event)) throw new Error('local_frame_required')
     if (!enabled(env)) throw new Error('disabled')
+    if (customer) return null
     const auth = authorize(event, input?.password)
     if (!auth.success) return auth
     return null
@@ -55,11 +57,29 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, setBusy, 
   }
   return {
     available(event) { return local(event) && enabled(env) },
+    checkInRequired(event) { return local(event) && supported(env) },
     async run(event, command, input = {}) {
       let acquired = false
       try {
-        const auth = check(event, input)
+        const auth = check(event, input, ['ready', 'checkin_issue'].includes(command))
         if (auth) return auth
+        const active = store.read('active-check-in')
+        if (active?.id) {
+          const pending = store.read(active.id)
+          if (pending?.result?.settled === true) store.write('active-check-in', null)
+          else { unresolved = true; setBusy(true) }
+        }
+        // Return durable results before idle/preflight checks: a retry must never
+        // take another card, even after restart or a newly signed server response.
+        let claim
+        if (command === 'checkin_issue') {
+          claim = verifyTicket(input.ticket, env)
+          const previous = store.read('operation-' + claim.operationId)
+          if (previous) {
+            if (previous.room !== claim.room || previous.kind !== 'checkin') throw new Error('invalid_checkin_ticket')
+            return previous.result || { success: false, reason: 'inspection_required', settled: false }
+          }
+        }
         if (command === 'list') return { success: true, rooms: store.list(), sectors: (store.read('profile') || defaultProfile()).sectors.map(item => item.sector) }
         if (busy || !isIdle()) return { success: false, reason: 'busy', settled: false }
         if (unresolved && !['status', 'capture'].includes(command)) return { success: false, reason: 'inspection_required', settled: false }
@@ -70,7 +90,27 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, setBusy, 
         }
         if (!bridge.isConnected) return { success: false, reason: 'disconnected', settled: !unresolved }
         let result
-        if (command === 'register') {
+        if (command === 'ready') {
+          const room = scopedRoom(input.room, env)
+          if (typeof input.reservationId === 'string' && input.reservationId.length <= 200) {
+            const previous = store.read('operation-' + operationId(env.KIOSK_PROPERTY_ID || 'property3', input.reservationId))
+            if (previous?.kind === 'checkin' && previous.room === room) return { success: true, settled: true }
+          }
+          if (!store.read('room-' + room)) return { success: false, reason: 'room_not_registered', settled: true }
+          result = await hardware('status', {}, event)
+          if (result.success && (result.reason || result.empty || result.sensors || result.moving))
+            result = { ...result, success: false, reason: result.reason || (result.empty ? 'empty' : 'card_present') }
+        } else if (command === 'checkin_issue') {
+          const room = scopedRoom(claim.room, env), id = 'operation-' + claim.operationId
+          const record = store.read('room-' + room)
+          if (!record) return { success: false, reason: 'room_not_registered', settled: true }
+          unresolved = true
+          store.write('active-check-in', { id })
+          store.write(id, { room, kind: 'checkin', state: 'started', occurredAt: new Date().toISOString() })
+          result = await hardware('issue', { record, issueMode: 'uid_only' }, event)
+          store.write(id, { room, kind: 'checkin', state: 'complete', result: publicResult(result) })
+          if (result.settled === true) store.write('active-check-in', null)
+        } else if (command === 'register') {
           if (input.confirmed !== true) return { success: false, reason: 'confirmation_required' }
           const room = scopedRoom(input.room, env), id = 'room-' + room, previous = store.read(id)
           if (previous && input.replaceRegisteredAt !== previous.registeredAt) return { success: false, reason: 'replacement_confirmation_required' }
@@ -101,14 +141,21 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, setBusy, 
           if (command !== 'status' && input.confirmed !== true) return { success: false, reason: 'confirmation_required' }
           result = await hardware(command, {}, event)
         } else return { success: false, reason: 'invalid_command' }
-        if (command === 'status') {
+        if (['status', 'ready'].includes(command)) {
           if (result.success) unresolved = Boolean(result.sensors || result.moving)
           // A failed read-only poll must not create a pending card movement.
           // Preserve a lock that was already set by an unresolved operation.
         } else if (Object.hasOwn(result, 'settled')) unresolved = !result.settled
+        if (active?.id && !unresolved && ['status', 'capture'].includes(command) && result.success) {
+          const previous = store.read(active.id)
+          store.write(active.id, { ...previous, state: 'complete', result: {
+            success: false, reason: 'operator_recovered', settled: true,
+          } })
+          store.write('active-check-in', null)
+        }
         return { ...publicResult(result), recoveryRequired: unresolved }
-      } catch {
-        return { success: false, reason: 'card_operation_failed', settled: !unresolved, recoveryRequired: unresolved }
+      } catch (error) {
+        return { success: false, reason: ['disabled', 'invalid_checkin_ticket'].includes(error.message) ? error.message : 'card_operation_failed', settled: !unresolved, recoveryRequired: unresolved }
       } finally { if (acquired) { busy = false; setBusy(unresolved) } }
     },
   }

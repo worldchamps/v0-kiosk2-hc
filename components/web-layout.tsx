@@ -59,7 +59,7 @@ function AdminWorkspace({ onChangeMode }: { onChangeMode: () => void }) {
             <TabsTrigger value="paymentCancel">카드 승인취소</TabsTrigger>
           </TabsList>
           <TabsContent value="roomInfo">
-            <RoomInfo reservations={[]} />
+            <RoomInfo reservations={[]} onBusy={setCardBusy} />
           </TabsContent>
           <TabsContent value="printer">
             <PrinterTest />

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server"
 import { randomUUID } from "crypto"
+import { issueTicket } from "@/electron/card-issue-proof"
 import { createSheetsClient } from "@/lib/google-sheets"
 import { claimPayment, releasePaymentClaim, getPaymentClaim } from "@/lib/firebase-admin"
 import { transactionWithReadCache } from "@/lib/firebase-transaction"
@@ -27,7 +28,7 @@ const resultOf = (record: OnSiteBookingRecord) => {
   if (record.state === "complete") {
     const stay = getReservationStayEligibility(String(record.data.checkInDate || ""), String(record.data.checkOutDate || ""))
     if (!stay.allowed) return NextResponse.json({ success: false, canCancelPayment: false, error: stay.message }, { status: 409 })
-    return NextResponse.json({ success: true, data: record.data })
+    return NextResponse.json({ success: true, data: record.data, cardIssue: issueTicket(record.data) })
   }
   return record.state === "rejected"
     ? NextResponse.json({ success: false, canCancelPayment: record.canCancelPayment === true, error: record.error }, { status: 409 })

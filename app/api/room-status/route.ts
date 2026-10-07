@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { getBeachRoomStatusFromFirebase } from "@/lib/firebase-beach-rooms"
+import { getKioskScope, isRoomInBuilding } from "@/lib/kiosk-scope"
+import { getPropertyFromRoomNumber } from "@/lib/property-utils"
 
 export async function GET(request: NextRequest) {
   try {
+    const scope = getKioskScope()
     const { searchParams } = new URL(request.url)
     const building = searchParams.get("building")
     const roomNumber = searchParams.get("roomNumber")
@@ -19,9 +22,10 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    const mappedRooms = roomsData.map((room) => ({
+    const mappedRooms = roomsData.filter(room => getPropertyFromRoomNumber(room.matchingRoomNumber) === scope.property &&
+      isRoomInBuilding(room.matchingRoomNumber, scope.building)).map((room) => ({
       building: room.category,
-      roomNumber: room.roomNumber,
+      roomNumber: room.matchingRoomNumber.replace(/[\s-]+/g, "").toUpperCase(),
       roomType: room.roomType,
       status: room.status,
       price: "", // Price not stored in Firebase

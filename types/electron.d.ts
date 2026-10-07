@@ -88,6 +88,9 @@ export interface KioskDeviceSettingsRead {
 
 export interface ElectronAPI {
   cardKey?: {
+    checkInRequired: () => Promise<boolean>
+    ready: (room: string, reservationId?: string) => Promise<CardKeyResult>
+    issueCheckIn: (ticket: string) => Promise<CardKeyResult>
     available: () => Promise<boolean>
     run: (command: "status" | "list" | "register" | "issue" | "capture" | "reset" | "return" | "profile", input: {
       password: string; room?: string; replaceRegisteredAt?: string; confirmed?: boolean; operationKey?: string;

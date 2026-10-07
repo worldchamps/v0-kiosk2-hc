@@ -10,10 +10,11 @@ const ts = require('typescript');
 const root = path.resolve(__dirname, '..');
 const copy = value => value == null ? value : structuredClone(value);
 function harness(options = {}) {
+  const roomCode = options.roomCode || 'B901';
   const env = { GOOGLE_SHEETS_SPREADSHEET_ID: 'qa-sheet', KIOSK_PROPERTY_ID: 'property3', KIOSK_BUILDING: 'B',
-    FIREBASE_PROJECT_ID: 'qa-fake', FIREBASE_CLIENT_EMAIL: 'qa-invalid', FIREBASE_PRIVATE_KEY: 'qa-fake', FIREBASE_DATABASE_URL: 'https://qa.invalid' };
-  let state = { beach_room_status: { rooms: { room901: { matchingRoomNumber: 'B901', roomNumber: '901',
-    status: '공실', floor: 'TEST', password: 'NOT-A-REAL-CODE', category: 'Beach B', roomType: 'QA' } } } };
+    FIREBASE_PROJECT_ID: 'qa-fake', FIREBASE_CLIENT_EMAIL: 'qa-invalid', FIREBASE_PRIVATE_KEY: 'qa-fake', FIREBASE_DATABASE_URL: 'https://qa.invalid', ...options.env };
+  let state = { beach_room_status: { rooms: { room901: { matchingRoomNumber: roomCode, roomNumber: '901',
+    status: '공실', floor: 'TEST', password: 'NOT-A-REAL-CODE', category: 'Beach ' + roomCode[0], roomType: 'QA' } } } };
   let price = 30000, appendCount = 0, queueCount = 0, now = '2026-09-10T01:00:00Z';
   const rows = copy(options.rows || []), effects = [];
   const listeners = new Map();
@@ -56,6 +57,7 @@ function harness(options = {}) {
     };
   } };
   const dependencies = { crypto, 'next/server': { NextResponse: Response },
+    '@/electron/card-issue-proof': { issueTicket: data => require('../electron/card-issue-proof').issueTicket(data, env, new Date(now).getTime()) },
     'firebase-admin/app': { getApps: () => [{}] }, 'firebase-admin/database': { getDatabase: () => db },
     '@/lib/google-sheets': { createSheetsClient: () => ({ spreadsheets: { values: {
       get: async request => {
@@ -97,7 +99,7 @@ function harness(options = {}) {
     dependencies['@/lib/' + name] = load('lib/' + name + '.ts');
   }
   const post = load('app/api/on-site-booking/route.ts').POST;
-  const base = { requestId: 'qa-cash-request-00000001', roomCode: 'B901', roomNumber: 'B901', roomType: 'QA',
+  const base = { requestId: 'qa-cash-request-00000001', roomCode, roomNumber: roomCode, roomType: 'QA',
     guestName: 'QA GUEST', phoneNumber: '00000000000', checkInDate: '2026-09-10', checkOutDate: '2026-09-11',
     stayType: 'overnight', price: 30000, payment: { method: 'CASH' } };
   return { rows, effects, get, set: (key, value) => set(state, key, value), modules: dependencies,
@@ -109,6 +111,22 @@ function harness(options = {}) {
   };
 }
 const card = id => ({ method: 'CARD', provider: 'TOSS_PAY', payToken: id, orderNo: 'QA-' + id });
+
+for (const [property, building, roomCode] of [['property1', '', 'C901'], ['property1', '', 'D901'], ['property3', 'A', 'A901']]) {
+  test(`committed ${roomCode} on-site sale authorizes one room card and recovery keeps the same operation`, async () => {
+    const proof = require('../electron/card-issue-proof');
+    const env = { KIOSK_PROPERTY_ID: property, KIOSK_BUILDING: building, CARD_DISPENSER_ENABLED: 'true', CARD_BRIDGE_TOKEN: 'a'.repeat(64) };
+    const h = harness({ env, roomCode });
+    const first = await h.post(); assert.equal(first.body.success, true);
+    const claim = proof.verifyTicket(first.body.cardIssue.ticket, env, Date.parse('2026-09-10T01:00:00Z'));
+    assert.equal(claim.room, roomCode); assert.equal(claim.reservationId, first.body.data.reservationId);
+    h.now('2026-09-10T01:01:00Z'); const again = await h.post();
+    assert.equal(proof.verifyTicket(again.body.cardIssue.ticket, env, Date.parse('2026-09-10T01:01:00Z')).operationId, claim.operationId);
+    assert.deepEqual(h.counts(), { append: 1, queue: 1 });
+    const failed = harness({ env, roomCode, appendFailure: 'before' });
+    const response = await failed.post(); assert.equal(response.body.cardIssue, undefined); assert.equal(response.body.success, false);
+  });
+}
 test('normal sale atomically reflects room/queue and replays without writing again', async () => {
   const h = harness(); const first = await h.post();
   assert.equal(first.status, 200); assert.equal(first.body.success, true);

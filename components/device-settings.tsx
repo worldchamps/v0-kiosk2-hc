@@ -119,7 +119,7 @@ export default function DeviceSettings() {
         {portInput("dispenserPort", "지폐 방출기", "지폐 방출기 COM 포트입니다.")}
       </div>}
       {propertyUsesCardKey(current.property || "", current.building) && <div className="rounded border p-4 space-y-4">
-        <h3 className="text-xl font-semibold">SNR-K750L 카드키 · 관리자 시험용</h3>
+        <h3 className="text-xl font-semibold">SNR-K750L 카드키 발급기</h3>
         {portInput("cardDispenserPort", "카드키 발급기 COM 포트", "장치 관리자에서 확인한 카드 발급기 포트를 입력하세요. 제조사 데모 프로그램은 종료해야 합니다.")}
         <label className="block space-y-2">장비 주소 (Device Number)
           <Input value={values.cardDispenserAddress} onChange={event => set("cardDispenserAddress", event.target.value)}
@@ -127,8 +127,8 @@ export default function DeviceSettings() {
           <span className="block text-sm text-gray-600">제조사 데모의 Device Number와 같은 값을 입력하세요. 범위는 00~15이며 통신 속도는 9600bps입니다.</span>
         </label>
         <label className="flex gap-3 items-center"><input type="checkbox" checked={values.cardDispenserEnabled === "true"}
-          onChange={event => set("cardDispenserEnabled", String(event.target.checked))} />관리자 카드키 시험 기능 사용</label>
-        <p className="text-sm">재시작 후 ‘카드키’ 탭이 표시됩니다. 고객 체크인 자동 발급은 아직 연결되지 않습니다.</p>
+          onChange={event => set("cardDispenserEnabled", String(event.target.checked))} />체크인 카드키 자동 발급 사용</label>
+        <p className="text-sm">저장 후 앱을 다시 실행하고 ‘객실 정보’에서 객실별 원본 카드를 등록하세요. 사용 중에는 원본이 등록된 객실만 체크인할 수 있습니다. 기능을 끄면 기존 영수증 안내로 운영됩니다.</p>
       </div>}
       <p className="text-sm text-gray-700">감지된 COM 포트: {current.serialPorts?.map(port => port.path).join(", ") || "없음"}. 목록에 없는 포트도 직접 입력할 수 있습니다. 하나의 COM 포트를 여러 장비에 지정할 수 없습니다.</p>
       <p className="text-sm text-gray-700">저장만으로 실행 중인 연결은 바뀌지 않습니다. 거래가 없는 때에 앱을 정상 종료하고 다시 실행한 뒤 ‘기기 연결 상태’와 실제 테스트 출력을 확인하세요.</p>
