@@ -1,6 +1,7 @@
 """Byte-level K750 fake. No COM device or customer card is accessed."""
 from collections import deque
 import unittest
+from unittest.mock import patch
 
 from card_dispenser import CardDispenser, CardError, card_enabled
 
@@ -30,11 +31,14 @@ class FakeK750:
         self.wrote = set()
         self.denied_sector = None
         self.write_delay = 0
+        self.controls = []
     @property
     def in_waiting(self):
         return min(len(self.input), 1)  # fragment every ACK/frame into individual bytes
     def read(self, size):
         return bytes(self.input.popleft() for _ in range(min(size, len(self.input))))
+    def close(self):
+        self.is_open = False
     def write(self, data):
         if data[0] == 2:
             if self.pending is not None:
@@ -80,15 +84,16 @@ class FakeK750:
                 frame[-1] ^= 1
             self.input.extend(frame)
         elif data[0] == 4:
+            self.controls.append(data)
             self.pending = None
         return len(data)
 
 
 class CardDispenserContracts(unittest.TestCase):
     profile = {"sectors": [{"sector": 0, "keyA": "FFFFFFFFFFFF", "keyB": "FFFFFFFFFFFF"}]}
-    def device(self):
+    def device(self, address=b"00"):
         clock = FakeClock()
-        device = CardDispenser("QA-FAKE", clock=clock, sleep=clock.sleep)
+        device = CardDispenser("QA-FAKE", address=address, clock=clock, sleep=clock.sleep)
         device.ser = FakeK750(device)
         return device
 
@@ -116,6 +121,24 @@ class CardDispenserContracts(unittest.TestCase):
         self.assertTrue(device.capture()["settled"])
         self.assertEqual(device.ser.commands, [b"AP", b"CP", b"AP"])
         self.assertGreaterEqual(device.clock(), .2)
+
+    def test_device_number_08_is_used_for_command_and_control_frames(self):
+        device = self.device(b"08")
+        self.assertEqual(device.frame(b"AP"), bytes.fromhex("02303800024150031a"))
+        with patch.object(device.ser, "write", wraps=device.ser.write) as write:
+            status = device.status()
+            self.assertTrue(status["success"])
+            self.assertEqual(status["address"], "08")
+            self.assertEqual([call.args[0] for call in write.call_args_list],
+                             [bytes.fromhex("02303800024150031a"), b"\x0508"])
+
+    def test_expired_recovery_does_not_unlock_or_issue_a_command(self):
+        device = self.device()
+        device.desynchronized = True
+        with self.assertRaisesRegex(CardError, "timeout"):
+            device._recover_channel(device.clock() + 1)
+        self.assertTrue(device.desynchronized)
+        self.assertEqual(device.ser.commands, [])
 
     def test_nak_checksum_silent_failure_and_single_operation_lock(self):
         for fault, reason in [("nak", "nak"), ("bcc", "checksum"), ("silent", "timeout")]:
@@ -158,13 +181,42 @@ class CardDispenserContracts(unittest.TestCase):
             device.start()
         self.assertIsNone(device.thread)
 
-    def test_corrupt_frame_cannot_satisfy_next_request(self):
+    def test_corrupt_frame_blocks_card_commands_until_explicit_status_recovery(self):
         device = self.device()
         device.ser.fault = "bcc"
         self.assertFalse(device.status()["success"])
         device.ser.fault = None
-        self.assertEqual(device.status()["reason"], "protocol_unsynchronized")
-        self.assertEqual(len(device.ser.commands), 1)
+        with self.assertRaisesRegex(CardError, "protocol_unsynchronized"):
+            device._read_block(1, 10)
+        device.ser.input.extend(device.frame(b"SF0002"))  # stale reply must be discarded
+        result = device.status()
+        self.assertTrue(result["success"])
+        self.assertEqual(result["sensors"], 0)
+        self.assertEqual(device.ser.controls, [b"\x0400"])
+        self.assertEqual(device.ser.commands, [b"AP", b"AP"])
+
+    def test_status_retries_report_real_timeout_phase_without_moving_cards(self):
+        device = self.device()
+        device.ser.fault = "silent"
+        for _ in range(2):
+            result = device.status()
+            self.assertEqual(result["reason"], "timeout")
+            self.assertEqual(result["errorStage"], "ack")
+            self.assertEqual(result["receivedBytes"], 0)
+            self.assertEqual(result["address"], "00")
+        self.assertEqual(device.ser.commands, [b"AP", b"AP"])
+
+    def test_manual_status_reopens_unavailable_port_when_it_becomes_free(self):
+        device = self.device()
+        device.ser.close()
+        with patch("serial_manager.serial.Serial", side_effect=PermissionError("busy")):
+            result = device.status()
+        self.assertFalse(result["success"])
+        self.assertEqual(result["errorStage"], "port")
+        replacement = FakeK750(device)
+        with patch("serial_manager.serial.Serial", return_value=replacement):
+            self.assertTrue(device.status()["success"])
+        self.assertEqual(replacement.commands, [b"AP"])
 
     def record(self, device):
         return {"profile": self.profile, "uid": "ffffffff", "blocks": {str(i): device.ser.blocks[i].hex() for i in range(4)}}

@@ -122,6 +122,11 @@ export default function DeviceSettings() {
       {propertyUsesCardKey(current.property || "", current.building) && <div className="rounded border p-4 space-y-4">
         <h3 className="text-xl font-semibold">SNR-K750L 카드키 · 관리자 시험용</h3>
         {portInput("cardDispenserPort", "카드키 발급기 COM 포트", "장치 관리자에서 확인한 카드 발급기 포트를 입력하세요. 제조사 데모 프로그램은 종료해야 합니다.")}
+        <label className="block space-y-2">장비 주소 (Device Number)
+          <Input value={values.cardDispenserAddress} onChange={event => set("cardDispenserAddress", event.target.value)}
+            inputMode="numeric" maxLength={2} placeholder="00" autoComplete="off" />
+          <span className="block text-sm text-gray-600">제조사 데모의 Device Number와 같은 값을 입력하세요. 범위는 00~15이며 통신 속도는 9600bps입니다.</span>
+        </label>
         <label className="flex gap-3 items-center"><input type="checkbox" checked={values.cardDispenserEnabled === "true"}
           onChange={event => set("cardDispenserEnabled", String(event.target.checked))} />관리자 카드키 시험 기능 사용</label>
         <p className="text-sm">재시작 후 ‘카드키’ 탭이 표시됩니다. 고객 체크인 자동 발급은 아직 연결되지 않습니다.</p>

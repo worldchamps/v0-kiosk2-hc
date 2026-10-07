@@ -62,6 +62,8 @@ class CardDispenser(SerialDevice):
         self.replies = deque()
         self.last_status = -1.0
         self.desynchronized = False
+        self.error_stage, self.received_bytes = "", 0
+        self.last_failure = None
 
     def start(self, callback=None):
         # Read synchronously under the operation lock. SerialDevice._run logs raw bytes.
@@ -119,7 +121,9 @@ class CardDispenser(SerialDevice):
             if not self.ser or not self.ser.is_open:
                 raise CardError("disconnected")
             try:
-                self.process_incoming(self.ser.read(max(1, min(self.ser.in_waiting, 300))))
+                data = self.ser.read(max(1, min(self.ser.in_waiting, 300)))
+                self.received_bytes += len(data)
+                self.process_incoming(data)
             except CardError:
                 raise
             except Exception:
@@ -133,14 +137,19 @@ class CardDispenser(SerialDevice):
         if self.desynchronized:
             raise CardError("protocol_unsynchronized")
         try:
+            self.error_stage, self.received_bytes = "write", 0
             if not self.send(self.frame(command)):
                 raise CardError("disconnected")
+            self.error_stage = "ack"
             self._receive("ack", min(deadline, self.clock() + 1))
+            self.error_stage = "execute"
             if not self.send(b"\x05" + self.address):
                 raise CardError("disconnected")
             if not response:
                 return b""
+            self.error_stage, self.received_bytes = "response", 0
             payload = self._receive("frame", min(deadline, self.clock() + 2))
+            self.error_stage = "decode"
             if command == b"AP":
                 if not re.fullmatch(b"SF[0-9A-Fa-f]{4}", payload):
                     raise CardError("invalid_status")
@@ -153,6 +162,7 @@ class CardDispenser(SerialDevice):
                 raise CardError("invalid_frame")
             return payload[3:]
         except CardError as exc:
+            self.last_failure = exc.reason
             # No wire request ID exists. Never let a late response satisfy a subsequent command.
             if exc.reason not in ("nak", "card_command_failed"):
                 self.desynchronized = True
@@ -182,13 +192,17 @@ class CardDispenser(SerialDevice):
         return self._wait(predicate, deadline, allow_errors)
 
     def _recover_channel(self, deadline):
-        # EOT cancels a pending exchange. Require a quiet input window before sending CP.
+        # EOT cancels a pending exchange. Drain replies for the full response timeout
+        # before allowing a fresh request; a noisy/expired channel remains locked.
         if not self.desynchronized:
             return
+        self.error_stage, self.received_bytes = "recovery", 0
         if not self.send(b"\x04" + self.address):
             raise CardError("disconnected")
         quiet_since = self.clock()
-        while self.clock() < min(deadline, quiet_since + 0.4):
+        while self.clock() - quiet_since < 2:
+            if self.clock() >= deadline:
+                raise CardError("timeout")
             if self.ser.in_waiting:
                 self.ser.read(self.ser.in_waiting)
                 quiet_since = self.clock()
@@ -217,7 +231,29 @@ class CardDispenser(SerialDevice):
             self.lock.release()
 
     def status(self):
-        return self._run_locked(lambda: {"success": True, **self._status(self.clock() + 3)})
+        def run():
+            deadline = self.clock() + 8
+            self.error_stage, self.received_bytes = "port", 0
+            try:
+                # Explicit status requests may reopen this configured port. Never
+                # reconnect/retry a card write or move automatically.
+                if not self.ser or not self.ser.is_open or self.last_failure == "disconnected":
+                    if self.ser:
+                        self.ser.close()
+                    if not self.connect():
+                        raise CardError("disconnected")
+                    self.desynchronized = True
+                self._recover_channel(deadline)
+                result = {"success": True, **self._status(deadline)}
+                self.last_failure = None
+            except CardError as exc:
+                self.last_failure = exc.reason
+                result = {"success": False, "reason": exc.reason, "settled": False,
+                          "errorStage": self.error_stage, "receivedBytes": self.received_bytes}
+            # Only transport metadata, never raw serial bytes/card data, is exposed.
+            return {**result, "port": self.port, "baudRate": self.baudrate,
+                    "address": self.address.decode("ascii")}
+        return self._run_locked(run)
 
     def capture(self):
         return self._run_locked(lambda: {"success": True, "settled": True,

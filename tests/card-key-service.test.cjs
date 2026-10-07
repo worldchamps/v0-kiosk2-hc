@@ -85,12 +85,39 @@ test('card port configuration defaults off and rejects collisions and unsupporte
   const config = { registered: true, property: 'property1', env: {} }
   const values = view(config).values
   assert.equal(values.cardDispenserEnabled, 'false')
+  assert.equal(values.cardDispenserAddress, '00')
   assert.throws(() => updatedConfig(config, { ...values, cardDispenserEnabled: 'true' }), /COM/)
   assert.throws(() => updatedConfig(config, { ...values, cardDispenserEnabled: 'true', cardDispenserPort: 'com4' }), /동일한/)
-  const next = updatedConfig(config, { ...values, cardDispenserEnabled: 'true', cardDispenserPort: 'com8' })
+  const next = updatedConfig(config, { ...values, cardDispenserEnabled: 'true', cardDispenserPort: 'com8', cardDispenserAddress: '8' })
   assert.equal(next.env.CARD_DISPENSER_PORT, 'COM8')
   assert.equal(next.env.CARD_DISPENSER_ENABLED, 'true')
+  assert.equal(next.env.CARD_DISPENSER_ADDRESS, '08')
+  assert.equal(view(next).values.cardDispenserAddress, '08')
+  for (const address of ['', '-1', '16', '0x08', '008', '1.5', 'AB']) {
+    assert.throws(() => updatedConfig(config, { ...values, cardDispenserAddress: address }), /장비 주소/)
+  }
   assert.throws(() => updatedConfig({ ...config, property: 'property3', env: { KIOSK_BUILDING: 'B' } },
     { ...values, cardDispenserEnabled: 'true', cardDispenserPort: 'COM8' }), /사용할 수 없습니다/)
   assert.deepEqual(publicResult({ success: true, blocks: 'secret', uid: 'secret', profile: 'secret', token: 'secret' }), { success: true })
+})
+
+test('failed status polls allow settings recovery but cannot clear an unresolved card operation', async () => {
+  const f = fixture(), input = { password: 'correct' }
+  const failure = { success: false, reason: 'timeout', settled: false,
+    port: 'COM3', baudRate: 9600, address: '08', errorStage: 'ack', receivedBytes: 0 }
+  f.respond(failure)
+  assert.deepEqual(await f.service.run(f.event, 'status', input), { ...failure, recoveryRequired: false })
+  assert.equal(f.busy, false)
+  f.respond({ success: false, reason: 'timeout', settled: false })
+  assert.equal((await f.service.run(f.event, 'return', { ...input, confirmed: true })).recoveryRequired, true)
+  assert.equal(f.busy, true)
+  f.respond(failure)
+  assert.equal((await f.service.run(f.event, 'status', input)).recoveryRequired, true)
+  assert.equal(f.busy, true)
+  for (const [sensors, moving] of [[2, false], [0, true], [0, false]]) {
+    f.respond({ success: true, sensors, moving })
+    const expected = Boolean(sensors || moving)
+    assert.equal((await f.service.run(f.event, 'status', input)).recoveryRequired, expected)
+    assert.equal(f.busy, expected)
+  }
 })

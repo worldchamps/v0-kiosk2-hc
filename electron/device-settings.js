@@ -3,7 +3,7 @@ const { supportsCardKey } = require('./card-key-service')
 const FIELDS = [
   'tossTransport', 'tossSerialPath', 'tossSerialBaudRate', 'tossWsUrl', 'tossPairingKey',
   'printerPort', 'acceptorPort', 'dispenserPort', 'bac2400Port', 'sam4sPrinterName', 'woosimPrinterName',
-  'cardDispenserPort', 'cardDispenserEnabled',
+  'cardDispenserPort', 'cardDispenserAddress', 'cardDispenserEnabled',
 ]
 
 function view(config) {
@@ -25,6 +25,7 @@ function view(config) {
       sam4sPrinterName: env.SAM4S_PRINTER_NAME || '',
       woosimPrinterName: env.WOOSIM_PRINTER_NAME || '',
       cardDispenserPort: env.CARD_DISPENSER_PORT || '',
+      cardDispenserAddress: env.CARD_DISPENSER_ADDRESS || '00',
       cardDispenserEnabled: supportsCardKey(config.property, env.KIOSK_BUILDING) && env.CARD_DISPENSER_ENABLED === 'true' ? 'true' : 'false',
     },
   }
@@ -40,6 +41,7 @@ function updatedConfig(config, input) {
   const cardSupported = supportsCardKey(config.property, config.env?.KIOSK_BUILDING)
   if (!['true', 'false'].includes(values.cardDispenserEnabled) || !cardSupported && values.cardDispenserEnabled !== 'false') throw new Error('이 PC에서는 카드키 발급기를 사용할 수 없습니다.')
   if (FIELDS.some(key => values[key].length > 256 || /[\r\n\0]/.test(values[key]))) throw new Error('장비 설정 값이 너무 길거나 올바르지 않습니다.')
+  if (cardSupported && !/^(?:0?[0-9]|1[0-5])$/.test(values.cardDispenserAddress)) throw new Error('카드 발급기 장비 주소는 제조사 데모의 Device Number와 같은 값(00~15)을 입력해주세요.')
   if (!['auto', 'serial', 'websocket'].includes(values.tossTransport)) throw new Error('토스 프론트 연결 방식을 확인해주세요.')
   const portKeys = config.property === 'property4' ? ['bac2400Port']
     : config.property === 'property2' ? []
@@ -82,6 +84,7 @@ function updatedConfig(config, input) {
   if (values.tossPairingKey) env.TOSS_FRONT_PAIRING_KEY = values.tossPairingKey
   if (cardSupported) {
     env.CARD_DISPENSER_PORT = values.cardDispenserPort
+    env.CARD_DISPENSER_ADDRESS = values.cardDispenserAddress.padStart(2, '0')
     env.CARD_DISPENSER_ENABLED = values.cardDispenserEnabled
   }
   if (config.property === 'property4') {

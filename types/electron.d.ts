@@ -39,6 +39,7 @@ export interface KioskDeviceSettingsValues {
   sam4sPrinterName: string
   woosimPrinterName: string
   cardDispenserPort: string
+  cardDispenserAddress: string
   cardDispenserEnabled: "true" | "false"
 }
 
@@ -58,6 +59,12 @@ export interface CardKeyResult {
   captureFull?: boolean
   uidChanged?: boolean
   uidMatchesSource?: boolean
+  recoveryRequired?: boolean
+  port?: string
+  baudRate?: number
+  address?: string
+  errorStage?: string
+  receivedBytes?: number
   rooms?: { room: string; registeredAt: string }[]
   sectors?: number[]
 }

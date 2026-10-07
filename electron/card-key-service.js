@@ -19,7 +19,7 @@ function validateProfile(value) {
   }
   return value
 }
-const publicResult = result => Object.fromEntries(['success', 'reason', 'settled', 'state', 'failedSectors', 'bits', 'sensors', 'moving', 'empty', 'low', 'hopperFull', 'captureFull', 'uidChanged', 'uidMatchesSource']
+const publicResult = result => Object.fromEntries(['success', 'reason', 'settled', 'state', 'failedSectors', 'bits', 'sensors', 'moving', 'empty', 'low', 'hopperFull', 'captureFull', 'uidChanged', 'uidMatchesSource', 'port', 'baudRate', 'address', 'errorStage', 'receivedBytes']
   .filter(key => Object.hasOwn(result, key)).map(key => [key, result[key]]))
 
 function createCardKeyService({ env, store, bridge, authorize, isIdle, setBusy, token, timeoutMs = 105000 }) {
@@ -35,7 +35,7 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, setBusy, 
     return null
   }
   function hardware(type, payload, event) {
-    unresolved = true
+    if (type !== 'status') unresolved = true
     return new Promise(resolve => {
       const requestId = randomUUID()
       let timer, unsubscribe = () => {}, finished = false
@@ -98,11 +98,14 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, setBusy, 
           if (command !== 'status' && input.confirmed !== true) return { success: false, reason: 'confirmation_required' }
           result = await hardware(command, {}, event)
         } else return { success: false, reason: 'invalid_command' }
-        if (result.success && command === 'status') unresolved = Boolean(result.sensors || result.moving)
-        else if (Object.hasOwn(result, 'settled')) unresolved = !result.settled
-        return publicResult(result)
+        if (command === 'status') {
+          if (result.success) unresolved = Boolean(result.sensors || result.moving)
+          // A failed read-only poll must not create a pending card movement.
+          // Preserve a lock that was already set by an unresolved operation.
+        } else if (Object.hasOwn(result, 'settled')) unresolved = !result.settled
+        return { ...publicResult(result), recoveryRequired: unresolved }
       } catch {
-        return { success: false, reason: 'card_operation_failed', settled: !unresolved }
+        return { success: false, reason: 'card_operation_failed', settled: !unresolved, recoveryRequired: unresolved }
       } finally { if (acquired) { busy = false; setBusy(unresolved) } }
     },
   }

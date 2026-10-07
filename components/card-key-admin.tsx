@@ -18,7 +18,10 @@ const reasons: Record<string, string> = {
   empty: "발급할 카드가 없습니다.", jam: "카드가 걸렸습니다.", overlap: "카드가 겹쳤습니다.",
   capture_full: "회수함이 가득 찼습니다.", hopper_full: "카드함이 가득 찼습니다.",
   verify_failed: "기록한 카드의 재읽기 검증에 실패했습니다.", not_taken: "60초 동안 수령되지 않아 카드를 회수했습니다.",
-  protocol_unsynchronized: "통신 확인이 필요합니다. 카드를 확인한 뒤 회수를 실행하세요.",
+  protocol_unsynchronized: "통신을 다시 확인해야 합니다. ‘장치 상태’를 눌러 재연결과 상태 조회를 실행하세요.",
+  invalid_status: "장비에서 받은 상태 응답 형식이 예상과 다릅니다.",
+  invalid_frame: "장비에서 받은 통신 프레임 형식이 예상과 다릅니다.",
+  unexpected_response: "명령 순서와 일치하지 않는 응답을 받았습니다.",
   checksum: "통신 응답 검증에 실패했습니다.", nak: "장비가 명령을 거부했습니다.",
   room_not_registered: "먼저 해당 객실의 원본 카드를 등록하세요.",
   replacement_confirmation_required: "기존 등록일시를 확인한 뒤 교체를 승인하세요.",
@@ -28,6 +31,10 @@ const progressText: Record<string, string> = {
   insert_original: "원본 객실 카드를 앞 투입구에 넣어주세요.", reading: "원본 카드를 읽고 있습니다.",
   issuing: "카드함에서 공카드를 가져와 기록·검증하고 있습니다.", presented: "앞 투입구의 카드를 가져가세요. 60초 후에는 회수함으로 회수합니다.",
   insert_return: "반납할 시험 카드를 앞 투입구에 넣어주세요.",
+}
+const communicationStages: Record<string, string> = {
+  port: "COM 포트 열기", write: "명령 전송", ack: "명령 수신 확인 대기", execute: "실행 요청 전송",
+  response: "상태 응답 대기", decode: "상태 응답 해석", recovery: "이전 통신 정리",
 }
 
 export default function CardKeyAdmin({ onBusy }: { onBusy: (busy: boolean) => void }) {
@@ -63,13 +70,20 @@ export default function CardKeyAdmin({ onBusy }: { onBusy: (busy: boolean) => vo
       const result = await api.run(command, { password, room: roomKey, confirmed,
         replaceRegisteredAt: replacement ? existing?.registeredAt : undefined,
         operationKey: command === "issue" ? crypto.randomUUID() : undefined })
-      if (result.settled === false) setUnresolved(true)
+      if (typeof result.recoveryRequired === "boolean") setUnresolved(result.recoveryRequired)
+      else if (result.settled === false) setUnresolved(true)
       else if (result.settled === true) setUnresolved(false)
       if (command === "status" && result.success) { setStatus(result); setUnresolved(Boolean(result.sensors || result.moving)) }
       if (!result.success) {
-        setMessage((result.error || reasons[result.reason || ""] || "카드 작업에 실패했습니다.") +
+        const detail = result.errorStage ? ` [${result.port}, ${result.baudRate}bps, 장비 주소 ${result.address}: ${communicationStages[result.errorStage] || "통신 확인"}, 수신 ${result.receivedBytes || 0}바이트]` : ""
+        const failure = result.reason === "timeout" && result.errorStage === "ack" && result.receivedBytes === 0
+          ? "COM 포트는 열렸지만 발급기에서 응답이 없습니다. 발급기 전원·RS232 케이블·장비 주소를 확인하세요."
+          : result.reason === "disconnected" && result.errorStage === "port"
+          ? "COM 포트를 열지 못했습니다. 제조사 데모를 종료하고 USB 연결을 확인한 뒤 ‘장치 상태’를 다시 누르세요."
+          : result.error || reasons[result.reason || ""] || "카드 작업에 실패했습니다."
+        setMessage(failure + detail +
           (result.failedSectors?.length ? ` 실패 섹터: ${result.failedSectors.join(", ")}` : "") +
-          (result.settled === false ? " 카드 위치가 미확정이므로 현장에서 확인하세요." : ""))
+          ((result.recoveryRequired ?? (result.settled === false)) ? " 카드 위치가 미확정이므로 현장에서 확인하세요." : ""))
       } else {
         setMessage(command === "register" ? "원본 카드를 읽어 이 PC에 암호화 저장했습니다." :
           command === "issue" ? "시험 카드 기록·검증 및 수령을 확인했습니다. 고유번호는 변경하지 않았습니다. 실제 객실 문에서 열리는지 확인하세요." :
