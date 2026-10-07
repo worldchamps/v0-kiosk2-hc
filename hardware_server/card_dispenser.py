@@ -165,7 +165,7 @@ class CardDispenser(SerialDevice):
         except CardError as exc:
             # Command code and block index only; never expose key/card payloads.
             exc.details["failedCommand"] = command[:2].hex().upper()
-            if command[:2] in (b";2", b";3", b";4") and len(command) > 2:
+            if command[:2] in (b";3", b";4") and len(command) > 2:
                 exc.details["failedBlock"] = command[2]
             self.last_failure = exc.reason
             # No wire request ID exists. Never let a late response satisfy a subsequent command.
@@ -280,7 +280,8 @@ class CardDispenser(SerialDevice):
                 not isinstance(key, str) or not re.fullmatch(r"[a-fA-F0-9]{12}", key):
             raise CardError("invalid_profile")
         try:
-            self._command(b";2" + bytes([sector * 4, 0x30 if key_type == "A" else 0x31]) + bytes.fromhex(key), deadline)
+            # K720_S50LoadSecKey sends the sector (00..0F), unlike block read/write.
+            self._command(b";2" + bytes([sector, 0x30 if key_type == "A" else 0x31]) + bytes.fromhex(key), deadline)
         except CardError as exc:
             if exc.reason == "card_command_failed":
                 raise CardError("authentication_failed", [sector], **exc.details) from None

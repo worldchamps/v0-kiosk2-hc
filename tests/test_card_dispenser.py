@@ -32,6 +32,7 @@ class FakeK750:
         self.mismatch_count = 0
         self.wrote = set()
         self.denied_sector = None
+        self.authenticated_sector = None
         self.write_delay = 0
         self.controls = []
         self.denied_block = None
@@ -60,16 +61,29 @@ class FakeK750:
                         self.bits = 0
                 reply = b"SF" + f"{self.bits:04X}".encode()
             elif command in self.device.MOVES.values():
+                self.authenticated_sector = None
                 self.bits = 0 if command in (b"CP", b"DB", b"RS") else 2 if command in (b"FC7", b"FC8") else 1
                 if command == b"FC4":
                     self.present_queries = 0
                 return len(data)
+            elif command == b";0":
+                self.authenticated_sector = None
+                reply = b"P;0"
             elif command == b";1":
                 reply = b"P;1" + self.uid_response
-            elif command[:2] == b";2" and command[2] // 4 == self.denied_sector:
-                reply = b"N;2\x01"
-            elif command[:2] == b";3" and command[2] == self.denied_block:
+            elif command[:2] == b";2":
+                # Vendor K720_S50LoadSecKey sends SectorAddr unchanged (00..0F).
+                self.authenticated_sector = None
+                if command[2] >= 16 or command[2] == self.denied_sector:
+                    reply = b"N;2\x43"
+                else:
+                    self.authenticated_sector = command[2]
+                    reply = b"P;2"
+            elif command[:2] == b";3" and (command[2] == self.denied_block or
+                                          command[2] // 4 != self.authenticated_sector):
                 reply = b"N;3\x45"
+            elif command[:2] == b";4" and command[2] // 4 != self.authenticated_sector:
+                reply = b"N;4\x46"
             elif command[:2] == b";3":
                 value = self.blocks[command[2]]
                 if command[2] % 4 == 3:
@@ -181,6 +195,7 @@ class CardDispenserContracts(unittest.TestCase):
     def test_card_bytes_do_not_use_raw_serial_log_or_reader_thread(self):
         device = self.device()
         with self.assertNoLogs("SerialManager"):
+            device._authenticate(0, "ffffffffffff", "A", 5)
             device._write_block(1, "a1" * 16, 5)
             self.assertEqual(device._read_block(1, 5), "a1" * 16)
             device.start()
@@ -246,6 +261,41 @@ class CardDispenserContracts(unittest.TestCase):
         self.assertEqual(result["failedSectors"], [0])
         self.assertIn(b"FC4", device.ser.commands)
         self.assertNotIn("blocks", result)
+
+    def test_all_sixteen_sectors_register_and_issue_with_vendor_sector_addressing(self):
+        device = self.device(b"08")
+        profile = {"sectors": [{**self.profile["sectors"][0], "sector": i} for i in range(16)]}
+        source_blocks = {str(i): value.hex() for i, value in device.ser.blocks.items()}
+        registered = device.register(profile)
+        self.assertTrue(registered["success"], registered)
+        self.assertEqual(registered["blocks"], source_blocks)
+        self.assertEqual(device.ser.wrote, set())
+        auth_commands = [cmd for cmd in device.ser.commands if cmd[:2] == b";2"]
+        self.assertEqual([cmd[2] for cmd in auth_commands], list(range(16)))
+        self.assertEqual(auth_commands[1], bytes.fromhex("3b320130ffffffffffff"))
+        device.ser.commands.clear()
+        for block in range(1, 64):
+            if block % 4 != 3:
+                device.ser.blocks[block] = bytes(16)
+        issued = device.issue({"profile": profile, "uid": registered["uid"], "blocks": registered["blocks"]})
+        self.assertTrue(issued["success"], issued)
+        self.assertEqual(device.ser.wrote, set(range(1, 64)))
+        self.assertEqual([cmd[2] for cmd in device.ser.commands if cmd[:2] == b";2"], list(range(16)))
+        self.assertEqual(device.ser.blocks[0].hex(), source_blocks["0"])
+        self.assertEqual({str(i): value.hex() for i, value in device.ser.blocks.items()}, source_blocks)
+
+    def test_nonzero_authentication_failure_reports_sector_without_a_block_number(self):
+        device = self.device()
+        device.ser.denied_sector = 1
+        profile = {"sectors": [{**self.profile["sectors"][0], "sector": i} for i in range(2)]}
+        result = device.register(profile)
+        self.assertEqual(result["reason"], "authentication_failed")
+        self.assertEqual(result["failedSectors"], [1])
+        self.assertNotIn("failedBlock", result)
+        self.assertNotIn("blocks", result)
+        self.assertEqual(device.ser.wrote, set())
+        self.assertTrue(result["settled"])
+        self.assertIn(b"FC4", device.ser.commands)
 
     def test_five_byte_vendor_id_registers_and_issues_using_the_first_four_bytes(self):
         device = self.device(b"08")
