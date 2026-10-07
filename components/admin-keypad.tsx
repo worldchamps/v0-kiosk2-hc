@@ -20,6 +20,8 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword, verifyP
   const [error, setError] = useState("")
   const [verifying, setVerifying] = useState(false)
   const verifyingRef = useRef(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { if (!verifying) inputRef.current?.focus() }, [verifying])
 
   const [printerConnected, setPrinterConnected] = useState(false)
   const [acceptorConnected, setAcceptorConnected] = useState(false)
@@ -201,9 +203,13 @@ export default function AdminKeypad({ onClose, onConfirm, adminPassword, verifyP
         </div>}
 
         <div className="relative mb-6">
-          <input aria-label="관리자 비밀번호" type="password" autoComplete="off" maxLength={128}
+          <input ref={inputRef} aria-label="관리자 비밀번호" type="password" autoComplete="off" maxLength={128} autoFocus
             className="h-16 w-full border-2 rounded-lg px-4 bg-gray-50 text-2xl" value={input} disabled={verifying}
-            onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === "Enter") void handleConfirm() }} />
+            onChange={event => { setInput(event.target.value); setError("") }}
+            onKeyDown={event => {
+              if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void handleConfirm() }
+            }} />
+          <p className="mt-2 text-sm text-gray-600">키보드로 입력하고 Enter를 누르세요. Esc로 닫을 수 있습니다.</p>
           {error && <p className="text-red-500 mt-2">{error}</p>}
         </div>
 

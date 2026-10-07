@@ -300,6 +300,7 @@ test("kiosk UI waits for PC config, overrides a conflicting URL/location, and bl
       "@/lib/audio-utils": { stopAllAudio() {}, pauseBGM() {}, resumeBGM() {} },
       "@/lib/reservation-qr": {},
       "@/contexts/payment-context": { usePayment: () => ({ paymentSession: { isActive: false } }) },
+      "@/contexts/admin-context": { useAdmin: () => ({ authenticating: false, authenticate: async () => false, lock() {} }) },
       "@/components/print-queue-listener": { PrintQueueListener: "PrintQueueListener" },
       "@/components/kiosk-progress": {},
     }

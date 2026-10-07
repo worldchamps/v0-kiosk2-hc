@@ -8,7 +8,7 @@ const vm = require('node:vm')
 const { createPaymentRecovery, STORAGE_KEY } = require('../electron/payment-recovery')
 const { incidentSignature, verifyIncident, incidentFromArchive, createCashIncidentDelivery } = require('../electron/cash-incidents')
 
-const existingPassword = fs.readFileSync(path.join(__dirname, '../components/kiosk-layout.tsx'), 'utf8')
+const existingPassword = fs.readFileSync(path.join(__dirname, '../contexts/admin-context.tsx'), 'utf8')
   .match(/const adminPassword = "([^"]+)"/)[1]
 const base = { isActive: true, method: 'cash', acceptedAmount: 0, requiredAmount: 30000,
   acceptedBills: [], sessionStartTime: 1789147000000, recoveryRequired: 'Synthetic unresolved cash cancellation' }

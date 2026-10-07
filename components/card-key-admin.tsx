@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import AdminKeypad from "@/components/admin-keypad"
+import { useAdmin } from "@/contexts/admin-context"
 import type { CardKeyResult } from "@/types/electron"
 
 const reasons: Record<string, string> = {
@@ -65,8 +65,7 @@ const communicationStages: Record<string, string> = {
 }
 
 export default function CardKeyAdmin({ onBusy }: { onBusy: (busy: boolean) => void }) {
-  const [password, setPassword] = useState("")
-  const [unlocking, setUnlocking] = useState(false)
+  const { password } = useAdmin()
   const [busy, setBusy] = useState(false)
   const [unresolved, setUnresolved] = useState(false)
   const [room, setRoom] = useState("")
@@ -87,6 +86,9 @@ export default function CardKeyAdmin({ onBusy }: { onBusy: (busy: boolean) => vo
     setRooms(result.rooms || [])
     return true
   }
+  useEffect(() => {
+    if (password) void readList(password).catch(error => setMessage(error.message))
+  }, [password])
 
   const run = async (command: "status" | "register" | "issue" | "capture" | "reset" | "return", issueMode: "full" | "uid_only" = "full") => {
     const api = window.electronAPI?.cardKey
@@ -133,9 +135,6 @@ export default function CardKeyAdmin({ onBusy }: { onBusy: (busy: boolean) => vo
     <h2 className="text-2xl font-bold">카드키 · 현장 시험</h2>
     <p>원본 객실 카드를 등록하고 공카드에 시험 기록합니다. 고객 체크인의 자동 발급은 아직 연결되지 않습니다.</p>
     <p className="rounded border border-amber-400 bg-amber-50 p-3">CUID 공카드에 원본의 데이터와 고유번호까지 기록하는 시험입니다. 원본 카드는 읽기만 합니다. 발급 후 실제 객실 문에서 열리는지 확인해야 합니다.</p>
-    {!password && <Button onClick={() => setUnlocking(true)}>관리자 인증 후 열기</Button>}
-    {unlocking && <AdminKeypad showDevices={false} verifyPassword={readList} onClose={() => setUnlocking(false)}
-      onConfirm={candidate => { setPassword(candidate); setUnlocking(false) }} />}
     {password && <>
       <label className="flex gap-3 items-start"><input type="checkbox" checked={confirmed} disabled={busy}
         onChange={event => setConfirmed(event.target.checked)} />고객 거래가 없고, 제조사 데모를 종료했으며, 직원이 장비 앞에 있습니다. 발급용 카드함에는 CUID 공카드만 넣었습니다.</label>
@@ -162,6 +161,6 @@ export default function CardKeyAdmin({ onBusy }: { onBusy: (busy: boolean) => vo
       <table className="w-full text-left"><caption className="text-left font-semibold mb-2">등록된 객실 카드</caption><thead><tr><th>호수</th><th>등록일시</th></tr></thead>
         <tbody>{rooms.map(item => <tr key={item.room}><td className="py-2">{item.room}</td><td>{new Date(item.registeredAt).toLocaleString("ko-KR")}</td></tr>)}</tbody></table>
     </>}
-    <p role="status" aria-live="polite" className="rounded border p-3 min-h-14">{message || "관리자 인증 후 장치 상태부터 확인하세요."}</p>
+    <p role="status" aria-live="polite" className="rounded border p-3 min-h-14">{message || "장치 상태부터 확인하세요."}</p>
   </section>
 }

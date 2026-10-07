@@ -1,28 +1,30 @@
 "use client"
 
 import { useState } from "react"
-import AdminKeypad from "@/components/admin-keypad"
+import { useAdmin } from "@/contexts/admin-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { KioskDeviceSettingsRead, KioskDeviceSettingsValues } from "@/types/electron"
 import { propertyUsesCardKey } from "@/lib/property-utils"
 
 export default function DeviceSettings() {
-  const [unlocking, setUnlocking] = useState(false)
-  const [password, setPassword] = useState("")
+  const { password } = useAdmin()
   const [current, setCurrent] = useState<KioskDeviceSettingsRead | null>(null)
   const [values, setValues] = useState<KioskDeviceSettingsValues | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState("")
 
-  const unlock = async (candidate: string) => {
+  const open = async () => {
     const api = window.electronAPI?.deviceSettings
-    if (!api) throw new Error("설치형 키오스크에서만 장비를 등록할 수 있습니다.")
-    const result = await api.read(candidate)
-    if (!result.success || !result.values) throw new Error(result.error || "장비 설정을 읽지 못했습니다.")
-    setCurrent(result)
-    setValues(result.values)
-    return true
+    setBusy(true); setMessage("")
+    try {
+      if (!api) throw new Error("설치형 키오스크에서만 장비를 등록할 수 있습니다.")
+      const result = await api.read(password)
+      if (!result.success || !result.values) throw new Error(result.error || "장비 설정을 읽지 못했습니다.")
+      setCurrent(result)
+      setValues(result.values)
+    } catch (error) { setMessage(error instanceof Error ? error.message : "장비 설정을 읽지 못했습니다.") }
+    finally { setBusy(false) }
   }
 
   const set = (key: keyof KioskDeviceSettingsValues, value: string) => {
@@ -39,7 +41,6 @@ export default function DeviceSettings() {
       if (!result.success) { setMessage(result.error || "장비 설정을 저장하지 못했습니다."); return }
       setCurrent(null)
       setValues(null)
-      setPassword("")
       setMessage("장비 설정을 저장했습니다. 진행 중인 거래가 끝난 뒤 설치형 앱을 정상 종료하고 다시 실행하면 적용됩니다.")
     } catch {
       setMessage("프로그램 업데이트나 다른 장비 작업 중입니다. 완료 후 다시 시도해주세요.")
@@ -57,14 +58,12 @@ export default function DeviceSettings() {
   return <section className="max-w-4xl space-y-5 p-4">
     <h2 className="text-2xl font-bold">외부기기 등록</h2>
     <p>이 PC에 연결한 장비의 포트와 프린터를 지정합니다. 저장한 값은 이 설치형 앱의 암호화된 장비 설정에 보관됩니다.</p>
-    {!values && <Button onClick={() => { setMessage(""); setUnlocking(true) }}>관리자 인증 후 장비 설정 열기</Button>}
+    {!values && <Button disabled={busy || !password} onClick={open}>장비 설정 열기</Button>}
     {message && <p role="status" aria-live="polite" className="rounded border p-3">{message}</p>}
-    {unlocking && <AdminKeypad showDevices={false} onClose={() => setUnlocking(false)} verifyPassword={unlock}
-      onConfirm={candidate => { setPassword(candidate); setUnlocking(false) }} />}
     {values && current && <>
       <div className="flex items-center justify-between gap-3">
         <p className="font-medium">등록 숙소: {current.property}</p>
-        <Button variant="outline" onClick={() => { setPassword(""); setValues(null); setCurrent(null) }}>설정 닫기</Button>
+        <Button variant="outline" disabled={busy} onClick={() => { setValues(null); setCurrent(null) }}>설정 닫기</Button>
       </div>
       <datalist id="kiosk-device-serial-ports">
         {current.serialPorts?.map(port => <option key={port.path} value={port.path}>{port.manufacturer}</option>)}

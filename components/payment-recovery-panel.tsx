@@ -2,13 +2,13 @@
 
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import AdminKeypad from "@/components/admin-keypad"
+import { useAdmin } from "@/contexts/admin-context"
 import { usePayment } from "@/contexts/payment-context"
 
 export default function PaymentRecoveryPanel({ disabled = false, onResolved }: { disabled?: boolean; onResolved: () => void }) {
   const { paymentSession: session, storageError, resolveRecovery, reportCashRecovery } = usePayment()
   const [open, setOpen] = useState(false)
-  const [password, setPassword] = useState("")
+  const { password, authenticate, lock } = useAdmin()
   const [confirmed, setConfirmed] = useState(false)
   const [note, setNote] = useState("")
   const [error, setError] = useState("")
@@ -40,14 +40,14 @@ export default function PaymentRecoveryPanel({ disabled = false, onResolved }: {
   const zeroCash = !storageError && session.method === "cash" && session.acceptedAmount === 0 &&
     session.acceptedBills.length === 0 && !session.returnedAmount && !session.cardInFlight &&
     !session.recoveryEvidence && !session.pendingBooking
-  const close = () => { if (!busyRef.current) { setOpen(false); setPassword(""); setConfirmed(false); setNote(""); setError("") } }
+  const close = () => { if (!busyRef.current) { setOpen(false); lock(); setConfirmed(false); setNote(""); setError("") } }
   const resolve = async () => {
     if (busyRef.current || disabled || !confirmed || !note || !password) return
     busyRef.current = true; setBusy(true); setError("")
     try {
       const result = await resolveRecovery(password, zeroCash && note === "현금 미투입 취소" ? "zero_cash" : "operator_resolved", note)
       if (!result.success) { setError(result.error || "복구를 완료하지 못했습니다."); return }
-      setPassword(""); setOpen(false); onResolved()
+      lock(); setOpen(false); onResolved()
     } catch { setError("복구 응답을 확인하지 못했습니다. 다시 결제하지 말고 복구를 다시 확인해주세요.") }
     finally { busyRef.current = false; setBusy(false) }
   }
@@ -56,12 +56,8 @@ export default function PaymentRecoveryPanel({ disabled = false, onResolved }: {
     <p>추가 현금 투입은 하지 마세요. 반환 확인이 필요한 금액은 관리자가 확인합니다.</p>
     {error && <p className="text-lg text-red-700">{error}</p>}
   </section>
-  if (!open) return <Button variant="outline" className="h-20 w-full text-2xl" disabled={disabled} onClick={() => setOpen(true)}>관리자 복구</Button>
-  if (!password) return <AdminKeypad showDevices={false} onClose={close} onConfirm={setPassword} verifyPassword={async value => {
-    const result = await window.electronAPI?.paymentRecovery?.authorize(value)
-    if (!result?.success) throw new Error(result?.error || "이 설치 버전에서는 관리자 복구를 사용할 수 없습니다.")
-    return true
-  }} />
+  if (!open || !password) return <Button variant="outline" className="h-20 w-full text-2xl" disabled={disabled}
+    onClick={async () => { if (await authenticate()) setOpen(true) }}>관리자 복구</Button>
   return <section role="dialog" aria-modal="true" aria-labelledby="payment-recovery-title"
     className="fixed inset-0 z-50 overflow-y-auto bg-white p-6 md:p-12">
     <div className="mx-auto max-w-3xl space-y-6 text-xl">

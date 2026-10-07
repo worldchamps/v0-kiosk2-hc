@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { useAdmin } from "@/contexts/admin-context"
 import { Textarea } from "@/components/ui/textarea"
 
 const labels: Record<string, string> = {
@@ -11,7 +11,7 @@ const labels: Record<string, string> = {
 }
 
 export default function CashDeviceDiagnostics() {
-  const [password, setPassword] = useState("")
+  const { password } = useAdmin()
   const [confirmed, setConfirmed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState("")
@@ -45,9 +45,6 @@ export default function CashDeviceDiagnostics() {
     <h2 className="text-2xl font-bold">현금 통신 점검</h2>
     <p>초기화와 투입 중지를 각각 한 번 실행하고 응답을 8초간 관찰합니다. 현금 수취·반환·예약 생성은 실행하지 않습니다.</p>
     <p>기존 현금 건을 처리한 뒤, 고객이 사용하지 않는 시간에 점검하세요. 초기화만 성공한 경우 투입 중지도 확인하세요.</p>
-    <label className="block max-w-sm space-y-2">관리자 비밀번호
-      <Input type="password" autoComplete="off" value={password} disabled={busy} onChange={event => setPassword(event.target.value)} />
-    </label>
     <label className="flex items-center gap-3">
       <input type="checkbox" checked={confirmed} disabled={busy} onChange={event => setConfirmed(event.target.checked)} />
       진행 중인 거래와 인식기 안에 처리 중인 지폐가 없음을 확인했습니다.

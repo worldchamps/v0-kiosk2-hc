@@ -12,7 +12,7 @@ import ReservationNotFound from "@/components/reservation-not-found"
 import ReservationList from "@/components/reservation-list"
 import { type KioskLocation, getKioskLocation } from "@/lib/location-utils"
 import { useRouter } from "next/navigation"
-import AdminKeypad from "@/components/admin-keypad"
+import { useAdmin } from "@/contexts/admin-context"
 import { stopAllAudio, pauseBGM, resumeBGM } from "@/lib/audio-utils"
 import { PrintQueueListener } from "@/components/print-queue-listener"
 import {
@@ -63,8 +63,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     password: "",
     floor: "",
   })
-  const [showAdminKeypad, setShowAdminKeypad] = useState(false)
-  const adminShortcutRef = useRef(false)
+  const { authenticating: showAdminKeypad, authenticate, lock } = useAdmin()
   const [kioskLocation, setKioskLocation] = useState<KioskLocation>(() => initialLocation || getKioskLocation())
   const [isPopupMode, setIsPopupMode] = useState(false)
   const [kioskProperty, setKioskProperty] = useState<PropertyId>("property3")
@@ -88,9 +87,10 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null)
   const INACTIVITY_TIMEOUT = 30000 // 30 seconds
 
-  const adminPassword = "KIM1334**"
-
   const { paymentSession, storageError, ready } = usePayment()
+
+  // Returning to the customer screen ends the operator session.
+  useEffect(() => { lock() }, [lock])
 
   useEffect(() => {
     setInstalledVersion(window.electronAPI?.getAppVersion?.() || "")
@@ -254,25 +254,12 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     }
   }
 
-  const handleModeChangeClick = (directWeb = false) => {
+  const handleModeChangeClick = async () => {
     if (paymentSession.isActive || checkInSubmitting.current || checkInPending) {
       alert("진행 중인 결제/체크인 확인을 먼저 완료해주세요. 관리자 문의 010-5126-4644")
       return
     }
-    adminShortcutRef.current = directWeb
-    setShowAdminKeypad(true)
-  }
-
-  const handlePasswordConfirm = (password: string) => {
-    setShowAdminKeypad(false)
-    const directWeb = adminShortcutRef.current
-    adminShortcutRef.current = false
-    onChangeMode(directWeb ? "web" : undefined)
-  }
-
-  const handleAdminKeypadClose = () => {
-    adminShortcutRef.current = false
-    setShowAdminKeypad(false)
+    if (await authenticate()) onChangeMode("web")
   }
 
   useEffect(() => {
@@ -281,11 +268,11 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       if (!shortcut) return
       event.preventDefault()
       if (shortcut === "cursor") document.body.classList.toggle("kiosk-operator-cursor")
-      else if (!showAdminKeypad) handleModeChangeClick(true)
+      else if (!showAdminKeypad) void handleModeChangeClick()
     }
     window.addEventListener("keydown", handleShortcut)
     return () => window.removeEventListener("keydown", handleShortcut)
-  }, [showAdminKeypad, paymentSession.isActive, checkInPending])
+  }, [showAdminKeypad, paymentSession.isActive, checkInPending, authenticate, onChangeMode])
 
   const handleCheckReservation = async (name: string) => {
     if (!name.trim() || lookupSubmitting.current) return
@@ -650,16 +637,6 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
           >
             관리자
           </button>
-        </div>
-      )}
-
-      {showAdminKeypad && (
-        <div className="fixed inset-0 z-50">
-          <AdminKeypad
-            onClose={handleAdminKeypadClose}
-            onConfirm={handlePasswordConfirm}
-            adminPassword={adminPassword}
-          />
         </div>
       )}
 

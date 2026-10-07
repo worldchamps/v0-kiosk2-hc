@@ -15,8 +15,21 @@ import PmsRateSettings from "@/components/pms-rate-settings"
 import CardPaymentCancel from "@/components/card-payment-cancel"
 import CashDeviceDiagnostics from "@/components/cash-device-diagnostics"
 import CardKeyAdmin from "@/components/card-key-admin"
+import { useAdmin } from "@/contexts/admin-context"
 
 export default function WebLayout({ onChangeMode }: { onChangeMode: () => void }) {
+  const { password, authenticate, lock } = useAdmin()
+  useEffect(() => { void authenticate() }, [authenticate])
+  const leave = () => { lock(); onChangeMode() }
+  // Direct URLs and a remembered web mode must pass the same entry gate.
+  if (!password) return <div className="flex min-h-screen items-center justify-center gap-4">
+    <Button onClick={() => void authenticate()}>관리자 인증</Button>
+    <Button variant="outline" onClick={leave}>모드 선택으로</Button>
+  </div>
+  return <AdminWorkspace onChangeMode={leave} />
+}
+
+function AdminWorkspace({ onChangeMode }: { onChangeMode: () => void }) {
   const [cardAvailable, setCardAvailable] = useState(false)
   const [cardBusy, setCardBusy] = useState(false)
   const [tab, setTab] = useState("roomInfo")

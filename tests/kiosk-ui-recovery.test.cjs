@@ -20,6 +20,7 @@ function load(file, extra = {}, globals = {}) {
     createContext: () => ({ Provider: 'Provider' }), useContext: () => undefined,
   };
   const deps = { react, 'react/jsx-runtime': { jsx: element, jsxs: element }, 'lucide-react': {},
+    '@/contexts/admin-context': { useAdmin: () => ({ password: '', authenticating: false, authenticate: async () => false, lock() {} }) },
     '@/components/payment-recovery-panel': { default: 'PaymentRecoveryPanel' }, ...extra };
   for (const name of ['button', 'card', 'input', 'label', 'alert']) deps['@/components/ui/' + name] ||= {
     Button: 'button', Card: 'div', CardContent: 'div', CardHeader: 'div', CardTitle: 'h2', Input: 'input', Label: 'label', Alert: 'div', AlertDescription: 'p',
@@ -438,7 +439,7 @@ test('amount mismatch preserves actual approval proof without booking, automatic
   assert.equal(requests, 1); assert.equal(cancels, 0); assert.equal(completions, 0);
 });
 async function kiosk(scenario = {}) {
-  let pending = true; const posts = [];
+  let pending = true; const posts = [], keyHandlers = [];
   const components = ['standby-screen', 'idle-screen', 'reservation-confirm', 'current-location', 'on-site-reservation',
     'reservation-details', 'check-in-complete', 'reservation-not-found', 'reservation-list', 'admin-keypad', 'property-mismatch-dialog', 'property-redirect-dialog'];
   const deps = Object.fromEntries([...components, 'kiosk-ai-assistant'].map(name => ['@/components/' + name, { default: name }]));
@@ -446,22 +447,23 @@ async function kiosk(scenario = {}) {
     'next/navigation': { useRouter: () => ({}) }, '@/lib/location-utils': { getKioskLocation: () => 'B' },
     '@/lib/audio-utils': { stopAllAudio() {}, pauseBGM() {}, resumeBGM() {} }, '@/components/print-queue-listener': { PrintQueueListener: 'PrintQueue' },
     '@/lib/property-utils': { getKioskPropertyId: () => 'property3', getPropertyDisplayName: x => x, propertyUsesElectron: () => true },
-    '@/contexts/payment-context': { usePayment: () => ({ paymentSession: { isActive: false }, ready: true, storageError: '' }) },
+    '@/contexts/payment-context': { usePayment: () => ({ paymentSession: { isActive: Boolean(scenario.paymentActive) }, ready: true, storageError: '' }) },
+    '@/contexts/admin-context': { useAdmin: () => ({ authenticating: false, authenticate: scenario.authenticate || (async () => false), lock() {} }) },
     '@/lib/reservation-qr': load('lib/reservation-qr.ts').exports, '@/components/kiosk-progress': { KioskProgressScreen: 'Progress', RESERVATION_PROGRESS_STEPS: [] },
     '@/lib/kiosk-scope': { buildingRestrictionMessage: () => 'B only' },
-    '@/lib/kiosk-operator-shortcuts': { kioskOperatorShortcut: () => null },
+    '@/lib/kiosk-operator-shortcuts': load('lib/kiosk-operator-shortcuts.ts').exports,
   });
-  const h = load('components/kiosk-layout.tsx', deps, { window: { location: { search: '' }, addEventListener() {}, removeEventListener() {}, electronAPI: { tossFront: { scanReservationQr: scenario.scan || (async () => ({success: true, value: 'AGAIN:RESERVATION:QA-ONLY'})) } } }, document: { body: { classList: { add() {}, remove() {} } } },
+  const h = load('components/kiosk-layout.tsx', deps, { alert() {}, window: { location: { search: '' }, addEventListener(type, fn) { if (type === 'keydown') keyHandlers.push(fn); }, removeEventListener() {}, electronAPI: { tossFront: { scanReservationQr: scenario.scan || (async () => ({success: true, value: 'AGAIN:RESERVATION:QA-ONLY'})) } } }, document: { body: { classList: { add() {}, remove() {} } } },
     fetch: async (url, options) => {
       if (url === '/api/kiosk-config') return { ok: true, json: async () => ({ property: 'property3', building: 'B' }) };
       if (url.startsWith('/api/reservations')) return scenario.lookup ? scenario.lookup(url, options) : { ok: true, json: async () => ({ reservations: [{ reservationId: 'QA-ONLY', roomNumber: 'B901', guestName: 'QA', roomType: 'Test', price: '30000', checkInDate: '2026-09-10', checkOutDate: '2026-09-11', password: '' }] }) };
       posts.push(options.body); return { ok: true, status: pending ? 202 : 200, json: async () => ({ success: !pending, pending, data: { roomNumber: 'B901', password: 'TEST' } }) };
     } });
-  const render = () => h.render({ onChangeMode() {} }); const settle = async () => { await new Promise(resolve => setImmediate(resolve)); render(); };
+  const render = () => h.render({ onChangeMode: scenario.onChangeMode || (() => {}) }); const settle = async () => { await new Promise(resolve => setImmediate(resolve)); render(); };
   render(); for (const effect of h.effects) effect(); await settle();
   const navigate = h.component('on-site-reservation').props.onNavigate;
   await navigate('reservationConfirm'); await settle();
-  return { ...h, settle, render, navigate, posts, confirmCheckIn: () => pending = false };
+  return { ...h, settle, render, navigate, posts, keyHandlers, confirmCheckIn: () => pending = false };
 }
 test('existing reservation check-in 202 retains its screen and keys stay hidden until confirmed success', async () => {
   const h = await kiosk();
@@ -652,4 +654,92 @@ test('actual idle hook schedules 60 seconds, resets on touch, and removes listen
   h.render({ onIdle: () => calls++ }, 'useIdleTimer'); const cleanup = h.effects[0]();
   assert.equal(timers.get(1).duration, 60000); listeners.get('touchstart')(); assert(!timers.has(1)); assert.equal(timers.get(2).duration, 60000);
   timers.get(2).fn(); assert.equal(calls, 1); cleanup(); assert.equal(listeners.size, 0); assert(!timers.has(2));
+});
+
+test('administrator session prompts once, uses native verification, and clears on exit without persistence', async () => {
+  const attempts = [];
+  const h = load('contexts/admin-context.tsx', { '@/components/admin-keypad': { default: 'AdminKeypad' } }, {
+    window: { electronAPI: { paymentRecovery: { authorize: async value => {
+      attempts.push(value); return { success: value === 'pc-local-test', error: 'native rejection' };
+    } } } },
+  });
+  const render = () => h.render({ children: null }, 'AdminProvider').props.value;
+  let session = render(); assert.equal(session.password, '');
+  const first = session.authenticate(), second = session.authenticate();
+  assert.equal(first, second); render();
+  const gate = h.component('AdminKeypad').props;
+  await assert.rejects(gate.verifyPassword('wrong'), /native rejection/);
+  assert.equal(render().password, '');
+  assert.equal(await gate.verifyPassword('pc-local-test'), true);
+  gate.onConfirm('pc-local-test'); assert.equal(await first, true);
+  session = render(); assert.equal(session.password, 'pc-local-test'); assert(!h.component('AdminKeypad'));
+  assert.equal(await session.authenticate(), true); render(); assert(!h.component('AdminKeypad'));
+  assert.deepEqual(attempts, ['wrong', 'pc-local-test']);
+  session.lock(); assert.equal(render().password, '');
+  const cancelled = session.authenticate(); render(); h.component('AdminKeypad').props.onClose();
+  assert.equal(await cancelled, false); assert.equal(render().password, '');
+});
+
+test('administrator shortcut enters web directly only after successful authentication and stays blocked during a payment', async () => {
+  for (const paymentActive of [false, true]) {
+    let authorize; const modes = [], calls = [];
+    const h = await kiosk({ paymentActive, authenticate: () => { calls.push('auth'); return new Promise(resolve => authorize = resolve); }, onChangeMode: mode => modes.push(mode) });
+    const event = { key: 'Backspace', ctrlKey: true, shiftKey: true, altKey: false, repeat: false, preventDefault() {} };
+    h.keyHandlers.forEach(fn => fn(event)); await h.settle(); assert.deepEqual(modes, []);
+    if (paymentActive) { assert.equal(calls.length, 0); continue; }
+    assert.equal(calls.length, 1); authorize(false); await h.settle(); assert.deepEqual(modes, []);
+    h.keyHandlers.forEach(fn => fn(event)); authorize(true); await h.settle(); assert.deepEqual(modes, ['web']);
+  }
+});
+
+test('direct administrator URL gates all tabs and exiting clears the shared credential', () => {
+  let password = '', requests = 0, locks = 0, exits = 0;
+  const deps = { '@/contexts/admin-context': { useAdmin: () => ({ password, authenticate: async () => { requests++; return false; }, lock() { locks++; password = ''; } }) },
+    '@/components/ui/tabs': {} };
+  for (const file of ['room-info', 'printer-test', 'bill-acceptor-test', 'bill-dispenser-test', 'room-type-settings', 'device-status', 'device-settings',
+    'pms-rate-settings', 'card-payment-cancel', 'cash-device-diagnostics', 'card-key-admin']) deps['@/components/' + file] = { default: file };
+  const h = load('components/web-layout.tsx', deps);
+  const props = { onChangeMode() { exits++; } };
+  assert.equal(h.render(props).type, 'div'); h.effects.forEach(fn => fn()); assert.equal(requests, 1);
+  password = 'verified-test'; const workspace = h.render(props); assert.equal(typeof workspace.type, 'function');
+  workspace.props.onChangeMode(); assert.equal(locks, 1); assert.equal(exits, 1); assert.equal(h.render(props).type, 'div');
+});
+
+test('password keypad supports physical typing, Enter without duplicate verification, retry, and Escape', async () => {
+  let release, attempts = 0, closes = 0; const confirmed = [], listeners = [];
+  const h = load('components/admin-keypad.tsx', {
+    '@/lib/printer-utils-unified': { isPrinterConnected: () => false }, '@/lib/bill-acceptor-utils': { isBillAcceptorConnected: () => false },
+    '@/lib/bill-dispenser-utils': { isBillDispenserConnected: () => false },
+  }, { window: { addEventListener: (_type, fn) => listeners.push(fn), removeEventListener() {} }, setInterval() {}, clearInterval() {} });
+  const props = { showDevices: false, onClose: () => closes++, onConfirm: value => confirmed.push(value),
+    verifyPassword: () => { attempts++; return new Promise(resolve => release = resolve); } };
+  h.render(props); h.effects.forEach(fn => fn());
+  assert.equal(h.component('input').props.autoFocus, true);
+  h.component('input').props.onChange({ target: { value: 'typed-test' } }); h.render(props);
+  const enter = h.component('input').props.onKeyDown;
+  enter({ key: 'Enter', nativeEvent: { isComposing: true }, preventDefault() {} }); assert.equal(attempts, 0);
+  const key = { key: 'Enter', nativeEvent: {}, preventDefault() {} };
+  enter(key); enter(key); assert.equal(attempts, 1); release(false); await new Promise(resolve => setImmediate(resolve));
+  h.render(props); assert.equal(h.component('input').props.value, ''); assert(h.visible('비밀번호가 일치하지 않습니다'));
+  h.component('input').props.onChange({ target: { value: 'typed-test' } }); h.render(props);
+  h.component('input').props.onKeyDown(key); release(true); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(confirmed, ['typed-test']); listeners.forEach(fn => fn({ key: 'Escape' })); assert.equal(closes, 1);
+});
+
+test('card tab reuses entry authentication and forwards the explicit UID-only trial', async () => {
+  const calls = [];
+  const h = load('components/card-key-admin.tsx', {
+    '@/contexts/admin-context': { useAdmin: () => ({ password: 'verified-test' }) },
+  }, { crypto: { randomUUID }, window: { electronAPI: { cardKey: { onProgress() {}, run: async (command, input) => {
+    calls.push({ command, input }); return command === 'list' ? { success: true, rooms: [{ room: 'C105', registeredAt: '2026-10-07' }] } :
+      { success: true, settled: true, issueMode: input.issueMode, dispenseMs: 1600 };
+  } } } } });
+  const props = { onBusy() {} }; h.render(props); h.effects.forEach(fn => fn()); await new Promise(resolve => setImmediate(resolve));
+  let tree = h.render(props); assert.equal(calls[0].command, 'list'); assert.equal(calls[0].input.password, 'verified-test');
+  nodes(tree).find(n => n.type === 'input' && n.props.list === 'card-key-rooms').props.onChange({ target: { value: 'C105' } });
+  nodes(tree).find(n => n.type === 'input' && n.props.type === 'checkbox').props.onChange({ target: { checked: true } }); h.render(props);
+  assert.equal(h.button('고유번호만 · 빠른 시험 발급').disabled, false);
+  await h.button('고유번호만 · 빠른 시험 발급').onClick(); h.render(props);
+  assert.equal(calls[1].input.issueMode, 'uid_only'); assert.equal(calls[1].input.password, 'verified-test');
+  assert(h.visible('1.6초')); assert(h.visible('나머지 데이터는 복사하지 않았습니다'));
 });
