@@ -258,12 +258,25 @@ test("missing Electron fails closed without accessing a browser device API", asy
   assert.equal(await load("lib/bill-dispenser-utils.ts").api.connectBillDispenser(), false)
 })
 
-function printer(ipc) {
+function printer(ipc, property = "property3") {
   return load("lib/printer-utils.ts", ipc, {
     "@/electron/sam4s-receipt": { buildSam4sReceiptHtml() { throw new Error("Unexpected property4 print") } },
-    "@/lib/property-utils": { getKioskPropertyId: () => "property3" },
+    "@/lib/property-utils": { getKioskPropertyId: () => property },
   }).api
 }
+
+test("C room receipts omit every password instruction while D and A keep their existing receipt", async () => {
+  for (const [property, roomNumber, hidden] of [['property1', 'C103', true], ['property1', ' c-105 ', true], ['property1', 'D212', false], ['property3', 'A101', false]]) {
+    const output = [], input = { hotelName: 'QA', roomNumber, password: 'test-secret-2468' }
+    const p = printer({ sendRawToBixolon: async () => true,
+      printToBixolon: async text => { output.push(text); return true }, cutBixolonPaper: async () => true }, property)
+    assert.equal(await p.printReceipt(input), true)
+    assert.equal(output.join('').includes('test-secret-2468'), !hidden)
+    assert.equal(output.join('').includes('비밀번호'), !hidden)
+    assert.equal(output.join('').includes('카드키'), hidden)
+    assert.equal(input.password, 'test-secret-2468')
+  }
+})
 
 test("printer: missing IPC or failed transport does not report a printed receipt", async () => {
   assert.equal(await printer(undefined).autoConnectPrinter(), false)

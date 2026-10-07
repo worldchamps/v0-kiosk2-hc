@@ -119,6 +119,8 @@ export interface KioskReceiptData {
 }
 
 export async function printReceipt(data: KioskReceiptData): Promise<boolean> {
+  const cardEntry = getKioskPropertyId() === "property1" && /^C\d{3}$/i.test(data.roomNumber.replace(/[\s-]+/g, ""))
+  if (cardEntry) data = { ...data, password: undefined }
   if (getKioskPropertyId() === "property4") {
     return printSam4sReceipt(data)
   }
@@ -197,7 +199,7 @@ export async function printReceipt(data: KioskReceiptData): Promise<boolean> {
     attribute: STYLE.FONT_BOLD,
     textSize: STYLE.SIZE_DOUBLE_HEIGHT,
   })
-  await printText("아래 비밀번호를 도어락에 입력하세요.\n\n", {
+  await printText(cardEntry ? "카드키를 도어락에 대어 주세요.\n\n" : "아래 비밀번호를 도어락에 입력하세요.\n\n", {
     alignment: STYLE.ALIGN_CENTER,
     attribute: STYLE.FONT_BOLD,
   })
@@ -227,6 +229,7 @@ export async function printReceipt(data: KioskReceiptData): Promise<boolean> {
     textSize: STYLE.SIZE_DOUBLE_HEIGHT,
   })
   await printText(
+    cardEntry ? "1. 카드키를 도어락의 카드 인식부에 대어 주세요.\n2. 문이 열리면 입실하세요.\n\n" :
     "1. 도어락 화면을 손으로 터치하세요.\n" +
       "2. 숫자 자판이 나타날 때까지 기다리세요.\n" +
       (password ? `3. 비밀번호 ${password}를 입력하세요.\n` : "") +
