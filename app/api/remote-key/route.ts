@@ -13,7 +13,7 @@ function queue() {
 }
 export async function GET() {
   try {
-    const snapshot = await queue().limitToLast(50).once("value")
+    const snapshot = await queue().orderByChild("request/createdAt").limitToLast(50).once("value")
     const jobs = Object.entries(snapshot.val() || {}).filter(([id, job]: [string, any]) => {
       try { return verifyRequest(job, process.env).id === id && ["pending", "processing"].includes(job.status) }
       catch { return false }

@@ -20,13 +20,17 @@ export function RemoteKeyListener({ idle, onBusy }: { idle: boolean; onBusy: (bu
   const [message, setMessage] = useState("")
   useEffect(() => {
     let stopped = false
+    let enabled: boolean | undefined
     const poll = async () => {
       const api = window.electronAPI?.cardKey
       if (stopped || running.current || !idleRef.current || !api?.issueRemote) return
       running.current = true
       let id = "", cardIssued = false, claimed = false
       try {
-        if (!await api.available()) return
+        // Checking native availability on every poll would continually reset
+        // the updater's device-idle timer. Device settings apply on app restart.
+        if (enabled === undefined) enabled = await api.available()
+        if (!enabled) return
         const response = await fetch("/api/remote-key", { cache: "no-store", signal: AbortSignal.timeout(15000) })
         const data = await response.json()
         if (!response.ok || stopped || !idleRef.current || !data.jobs?.length) return

@@ -57,15 +57,15 @@ async function paymentContext(saved, electronAPI) {
 
 test('remote card delivery waits for idle, sends card before receipt, and exposes partial failures', async () => {
   for (const scenario of ['success', 'not-idle', 'printer-offline', 'card-failed', 'print-failed']) {
-    const calls = [], busy = []; let interval
+    const calls = [], busy = []; let interval, availableCalls = 0, queries = 0
     const h = load('components/remote-key-listener.tsx', {
       '@/lib/printer-utils': { autoConnectPrinter: async () => scenario !== 'printer-offline',
         printRoomInfoReceipt: async () => { calls.push('print'); return scenario !== 'print-failed' } },
     }, {
-      window: { electronAPI: { cardKey: { available: async () => true,
+      window: { electronAPI: { cardKey: { available: async () => { availableCalls++; return true },
         issueRemote: async () => { calls.push('card'); return { success: scenario !== 'card-failed', reason: 'empty', settled: true } } } } },
       fetch: async (_url, options = {}) => {
-        if (options.method !== 'POST') return Response.json({ jobs: ['synthetic-job'] })
+        if (options.method !== 'POST') return Response.json({ jobs: queries++ ? [] : ['synthetic-job'] })
         const { action } = JSON.parse(options.body); calls.push(action)
         return Response.json(action === 'claim' ? { envelope: {}, receipt: { roomNumber: 'C103', password: '', floor: '1F' } } : { success: true })
       },
@@ -78,6 +78,9 @@ test('remote card delivery waits for idle, sends card before receipt, and expose
       scenario === 'card-failed' ? ['claim', 'card', 'fail'] : ['claim', 'card', 'printing', 'print', scenario === 'print-failed' ? 'fail' : 'complete']
     assert.deepEqual(calls, expected, scenario)
     assert.deepEqual(busy, scenario === 'not-idle' ? [] : [true, false])
+    interval()
+    for (let n = 0; n < 3; n++) await new Promise(resolve => setImmediate(resolve))
+    assert.equal(availableCalls, scenario === 'not-idle' ? 0 : 1, 'queue polling must not keep native updater busy')
     for (const cleanup of cleanups) cleanup?.()
   }
 })
