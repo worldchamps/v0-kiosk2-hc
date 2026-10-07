@@ -51,6 +51,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     archive: input => ipcRenderer.invoke("payment-recovery:archive", input),
     reportCash: input => ipcRenderer.invoke("payment-recovery:report-cash", input),
   },
+  cardKey: {
+    available: () => ipcRenderer.invoke('card-key:available'),
+    run: (command, input) => ipcRenderer.invoke('card-key:run', command, input),
+    onProgress: callback => {
+      const listener = (_event, value) => callback(value)
+      ipcRenderer.on('card-key:progress', listener)
+      return () => ipcRenderer.removeListener('card-key:progress', listener)
+    },
+  },
 
   // 토스 프론트 결제 단말기
   tossFront: {

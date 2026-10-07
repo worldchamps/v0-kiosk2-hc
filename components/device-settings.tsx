@@ -5,6 +5,7 @@ import AdminKeypad from "@/components/admin-keypad"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { KioskDeviceSettingsRead, KioskDeviceSettingsValues } from "@/types/electron"
+import { propertyUsesCardKey } from "@/lib/property-utils"
 
 export default function DeviceSettings() {
   const [unlocking, setUnlocking] = useState(false)
@@ -117,6 +118,13 @@ export default function DeviceSettings() {
         {current.building !== "B" && portInput("printerPort", "Bixolon 프린터", "Hardware Server와 Electron 인쇄 경로에 같은 COM 포트를 적용합니다.")}
         {portInput("acceptorPort", "지폐 인식기", "지폐 인식기 COM 포트입니다.")}
         {portInput("dispenserPort", "지폐 방출기", "지폐 방출기 COM 포트입니다.")}
+      </div>}
+      {propertyUsesCardKey(current.property || "", current.building) && <div className="rounded border p-4 space-y-4">
+        <h3 className="text-xl font-semibold">SNR-K750L 카드키 · 관리자 시험용</h3>
+        {portInput("cardDispenserPort", "카드키 발급기 COM 포트", "장치 관리자에서 확인한 카드 발급기 포트를 입력하세요. 제조사 데모 프로그램은 종료해야 합니다.")}
+        <label className="flex gap-3 items-center"><input type="checkbox" checked={values.cardDispenserEnabled === "true"}
+          onChange={event => set("cardDispenserEnabled", String(event.target.checked))} />관리자 카드키 시험 기능 사용</label>
+        <p className="text-sm">재시작 후 ‘카드키’ 탭이 표시됩니다. 고객 체크인 자동 발급은 아직 연결되지 않습니다.</p>
       </div>}
       <p className="text-sm text-gray-700">감지된 COM 포트: {current.serialPorts?.map(port => port.path).join(", ") || "없음"}. 목록에 없는 포트도 직접 입력할 수 있습니다. 하나의 COM 포트를 여러 장비에 지정할 수 없습니다.</p>
       <p className="text-sm text-gray-700">저장만으로 실행 중인 연결은 바뀌지 않습니다. 거래가 없는 때에 앱을 정상 종료하고 다시 실행한 뒤 ‘기기 연결 상태’와 실제 테스트 출력을 확인하세요.</p>

@@ -26,6 +26,22 @@ def card_enabled(env):
         prop == "property1" or prop == "property3" and env.get("KIOSK_BUILDING") == "A")
 
 
+def validate_profile(profile):
+    if not isinstance(profile, dict) or set(profile) != {"sectors"} or not isinstance(profile["sectors"], list):
+        raise CardError("invalid_profile")
+    sectors = profile["sectors"]
+    if not 1 <= len(sectors) <= 16:
+        raise CardError("invalid_profile")
+    seen = set()
+    for item in sectors:
+        if not isinstance(item, dict) or set(item) != {"sector", "keyA", "keyB"} or \
+                type(item["sector"]) is not int or not 0 <= item["sector"] < 16 or item["sector"] in seen or \
+                any(not isinstance(item[k], str) or not re.fullmatch(r"[a-fA-F0-9]{12}", item[k]) for k in ("keyA", "keyB")):
+            raise CardError("invalid_profile")
+        seen.add(item["sector"])
+    return sorted(sectors, key=lambda item: item["sector"])
+
+
 # ponytail: one device per PC, one operation lock; add per-device locks only if hardware expands.
 class CardDispenser(SerialDevice):
     # Manual p.4 mappings. Bench verification of sensor positions is required before enabling.
@@ -183,10 +199,10 @@ class CardDispenser(SerialDevice):
 
     def _capture(self, deadline):
         self._recover_channel(deadline)
-        status = self._status(deadline)
+        status = self._wait(lambda state: True, deadline, allow_errors=True)
         if status["captureFull"]:
             raise CardError("capture_full")
-        return self._move("capture", lambda state: state["sensors"] == 0, deadline, allow_errors=True)
+        return self._move("capture", lambda state: state["sensors"] == 0, deadline)
 
     def _run_locked(self, action):
         if not self.lock.acquire(blocking=False):
@@ -238,9 +254,201 @@ class CardDispenser(SerialDevice):
         return data.hex()
 
     def _write_block(self, block, value, deadline):
-        if type(block) is not int or not 1 <= block < 64 or block % 4 == 3:
+        if type(block) is not int or not 1 <= block < 64:
             raise CardError("protected_block")
         assert block != 0
         if not isinstance(value, str) or not re.fullmatch(r"[a-fA-F0-9]{32}", value):
             raise CardError("invalid_block")
+        # Bench release accepts only reusable transport access conditions. Never write
+        # unknown/irreversible sector permissions or zeros returned for a hidden Key A.
+        if block % 4 == 3 and value[12:18].lower() != "ff0780":
+            raise CardError("unsupported_access")
         self._command(b";4" + bytes([block]) + bytes.fromhex(value), deadline)
+
+    def _select_card(self, deadline):
+        self._command(b";0", deadline)
+        uid = self._command(b";1", deadline)
+        if len(uid) not in (4, 7):
+            raise CardError("unsupported_card")
+        return uid.hex()
+
+    def _read_position(self, deadline):
+        # Confirm RF selection instead of guessing which physical sensor is the reader.
+        while self.clock() < deadline:
+            state = self._status(deadline)
+            if state["reason"]:
+                raise CardError(state["reason"])
+            if state["sensors"] and not state["moving"]:
+                try:
+                    return self._select_card(deadline)
+                except CardError as exc:
+                    if exc.reason != "card_command_failed":
+                        raise
+        raise CardError("timeout")
+
+    def _present_and_wait(self, progress):
+        self._move("present", lambda state: bool(state["sensors"]), self.clock() + 5)
+        progress({"state": "presented"})
+        deadline = self.clock() + 60
+        while self.clock() < deadline:
+            state = self._status(deadline)
+            if state["reason"]:
+                raise CardError(state["reason"])
+            if not state["moving"] and not state["sensors"]:
+                return {"success": True, "settled": True, "state": "taken"}
+        self._capture(self.clock() + 5)
+        return {"success": False, "settled": True, "state": "captured", "reason": "not_taken"}
+
+    def _read_source(self, profile, deadline):
+        blocks, failed = {}, []
+        for item in validate_profile(profile):
+            sector = item["sector"]
+            try:
+                self._authenticate(sector, item["keyA"], "A", deadline)
+            except CardError as exc:
+                if exc.reason != "authentication_failed":
+                    raise
+                failed.append(sector)
+                self._select_card(deadline)
+                continue
+            for block in range(sector * 4, sector * 4 + 4):
+                value = self._read_block(block, deadline)
+                if block % 4 == 3:
+                    if value[12:18] != "ff0780":
+                        raise CardError("unsupported_access", [sector])
+                    # Key B is readable in transport configuration; verify it instead of
+                    # replacing an unknown secret with the configured/default value.
+                    if value[20:].lower() != item["keyB"].lower():
+                        raise CardError("profile_key_mismatch", [sector])
+                    value = item["keyA"].lower() + value[12:]
+                blocks[str(block)] = value
+        if failed:
+            raise CardError("authentication_failed", failed)
+        return blocks
+
+    def register(self, profile, progress=lambda _: None):
+        def run():
+            validate_profile(profile)
+            deadline = self.clock() + 30
+            state = self._status(deadline)
+            if state["reason"] or state["moving"] or state["sensors"]:
+                raise CardError(state["reason"] or "card_present")
+            progress({"state": "insert_original"})
+            self._command(self.MOVES["insert"], deadline, response=False)
+            try:
+                uid = self._read_position(deadline)
+                progress({"state": "reading"})
+                blocks = self._read_source(profile, deadline)
+            except CardError as exc:
+                # Original cards are never written or deliberately sent to the stock hopper.
+                try:
+                    self._recover_channel(self.clock() + 2)
+                    state = self._status(self.clock() + 3)
+                    outcome = self._present_and_wait(progress) if state["sensors"] else {"settled": not state["moving"]}
+                except CardError:
+                    outcome = {"settled": False}
+                return {"success": False, "reason": exc.reason, "failedSectors": exc.sectors,
+                        "settled": outcome["settled"]}
+            outcome = self._present_and_wait(progress)
+            if outcome["success"]:
+                return {**outcome, "uid": uid, "blocks": blocks}
+            return outcome
+        return self._run_locked(run)
+
+    def issue(self, record, progress=lambda _: None):
+        def run():
+            # This bench phase retains the approved block-0 write prohibition.
+            if not isinstance(record, dict) or not isinstance(record.get("blocks"), dict):
+                raise CardError("invalid_record")
+            sectors = validate_profile(record.get("profile"))
+            expected = {str(block) for item in sectors for block in range(item["sector"] * 4, item["sector"] * 4 + 4)}
+            blocks = record["blocks"]
+            if set(blocks) != expected or any(not isinstance(value, str) or not re.fullmatch(r"[a-fA-F0-9]{32}", value) for value in blocks.values()):
+                raise CardError("invalid_record")
+            for item in sectors:
+                trailer = blocks[str(item["sector"] * 4 + 3)].lower()
+                if trailer[:12] != item["keyA"].lower() or trailer[20:] != item["keyB"].lower() or trailer[12:18] != "ff0780":
+                    raise CardError("invalid_record")
+            deadline = self.clock() + 30
+            state = self._status(deadline)
+            if state["reason"] or state["moving"] or state["sensors"] or state["empty"]:
+                raise CardError(state["reason"] or ("empty" if state["empty"] else "card_present"))
+            if any(item["keyA"].lower() != "ffffffffffff" or item["keyB"].lower() != "ffffffffffff" for item in sectors):
+                # Returned cards must remain writable with the same known stock key.
+                raise CardError("stock_key_mismatch")
+            moved = False
+            try:
+                progress({"state": "issuing"})
+                for attempt in range(2):
+                    moved = True
+                    self._command(self.MOVES["read"], deadline - 5, response=False)
+                    uid = self._read_position(deadline - 5)
+                    try:
+                        for item in sectors:
+                            sector = item["sector"]
+                            self._authenticate(sector, "ffffffffffff", "A", deadline - 5)
+                            # Data first, permissions last; block 0 is always skipped.
+                            for block in range(max(1, sector * 4), sector * 4 + 4):
+                                self._write_block(block, blocks[str(block)], deadline - 5)
+                                got = self._read_block(block, deadline - 5)
+                                expected_value = blocks[str(block)].lower()
+                                if (got[12:] if block % 4 == 3 else got) != (expected_value[12:] if block % 4 == 3 else expected_value):
+                                    raise CardError("verify_failed")
+                        break
+                    except CardError as exc:
+                        if exc.reason not in ("card_command_failed", "verify_failed") or attempt:
+                            raise
+                        self._capture(deadline - 1)
+                        moved = False
+                        state = self._status(deadline - 1)
+                        if state["empty"]:
+                            raise CardError("empty")
+                # Presentation must start inside the total 30s issue budget.
+                self._move("present", lambda status: bool(status["sensors"]), deadline)
+            except CardError as exc:
+                settled = not moved
+                if moved:
+                    try:
+                        self._capture(deadline)
+                        settled = True
+                    except CardError:
+                        pass
+                return {"success": False, "reason": exc.reason, "failedSectors": exc.sectors, "settled": settled}
+            progress({"state": "presented"})
+            pickup_deadline = self.clock() + 60
+            try:
+                self._wait(lambda status: status["sensors"] == 0, pickup_deadline)
+                return {"success": True, "settled": True, "state": "taken", "uidChanged": False,
+                        "uidMatchesSource": uid == record.get("uid")}
+            except CardError as exc:
+                settled = False
+                try:
+                    self._capture(self.clock() + 5)
+                    settled = True
+                except CardError:
+                    pass
+                return {"success": False, "reason": "not_taken" if exc.reason == "timeout" else exc.reason,
+                        "settled": settled, "state": "captured" if settled else "unresolved"}
+        return self._run_locked(run)
+
+    def accept_return(self, progress=lambda _: None):
+        def run():
+            deadline = self.clock() + 30
+            state = self._status(deadline)
+            if state["reason"] or state["moving"] or state["sensors"] or state["hopperFull"]:
+                raise CardError(state["reason"] or ("hopper_full" if state["hopperFull"] else "card_present"))
+            progress({"state": "insert_return"})
+            self._command(self.MOVES["insert"], deadline, response=False)
+            try:
+                self._read_position(deadline - 5)
+                self._move("return", lambda status: status["sensors"] == 0, deadline)
+                return {"success": True, "settled": True, "state": "returned"}
+            except CardError as exc:
+                settled = False
+                try:
+                    self._capture(deadline)
+                    settled = True
+                except CardError:
+                    pass
+                return {"success": False, "reason": exc.reason, "settled": settled}
+        return self._run_locked(run)

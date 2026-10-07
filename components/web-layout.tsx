@@ -1,5 +1,7 @@
 "use client"
 
+import { useEffect, useState } from "react"
+
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import RoomInfo from "@/components/room-info"
@@ -12,24 +14,30 @@ import DeviceSettings from "@/components/device-settings"
 import PmsRateSettings from "@/components/pms-rate-settings"
 import CardPaymentCancel from "@/components/card-payment-cancel"
 import CashDeviceDiagnostics from "@/components/cash-device-diagnostics"
+import CardKeyAdmin from "@/components/card-key-admin"
 
 export default function WebLayout({ onChangeMode }: { onChangeMode: () => void }) {
+  const [cardAvailable, setCardAvailable] = useState(false)
+  const [cardBusy, setCardBusy] = useState(false)
+  const [tab, setTab] = useState("roomInfo")
+  useEffect(() => { void window.electronAPI?.cardKey?.available().then(setCardAvailable).catch(() => setCardAvailable(false)) }, [])
   return (
     <div className="flex flex-col h-screen">
       <header className="bg-gray-100 p-4 flex justify-between items-center">
         <h1 className="text-2xl font-bold">관리자 모드</h1>
-        <Button onClick={onChangeMode} variant="outline">
+        <Button onClick={onChangeMode} variant="outline" disabled={cardBusy}>
           모드 변경
         </Button>
       </header>
 
       <main className="flex-grow p-4 overflow-auto">
-        <Tabs defaultValue="roomInfo" className="w-full">
+        <Tabs value={tab} onValueChange={value => { if (!cardBusy) setTab(value) }} className="w-full">
           <TabsList>
             <TabsTrigger value="roomInfo">객실 정보</TabsTrigger>
             <TabsTrigger value="printer">프린터 테스트</TabsTrigger>
             <TabsTrigger value="billAcceptor">지폐 인식기</TabsTrigger>
             <TabsTrigger value="cashDiagnostics">현금 통신 점검</TabsTrigger>
+            {cardAvailable && <TabsTrigger value="cardKeys">카드키</TabsTrigger>}
             <TabsTrigger value="billDispenser">지폐 방출기</TabsTrigger>
             <TabsTrigger value="roomTypeSettings">객실 타입 설정</TabsTrigger>
             <TabsTrigger value="pmsRates">PMS 요금 관리</TabsTrigger>
@@ -47,6 +55,7 @@ export default function WebLayout({ onChangeMode }: { onChangeMode: () => void }
             <BillAcceptorTest />
           </TabsContent>
           <TabsContent value="cashDiagnostics"><CashDeviceDiagnostics /></TabsContent>
+          {cardAvailable && <TabsContent value="cardKeys"><CardKeyAdmin onBusy={setCardBusy} /></TabsContent>}
           <TabsContent value="billDispenser">
             <BillDispenserTest />
           </TabsContent>

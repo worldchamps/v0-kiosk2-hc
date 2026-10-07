@@ -18,6 +18,8 @@ const tossFrontBridge = require("./toss-front-bridge")
 const { createPaymentRecovery } = require("./payment-recovery")
 const { deviceFiles } = require("./device-setup")
 const { createDeviceSettings } = require("./device-settings")
+const { createCardKeyStore } = require("./card-key-store")
+const { createCardKeyService } = require("./card-key-service")
 const { createCashIncidentDelivery } = require("./cash-incidents")
 const { createCashTrace, createCashDiagnostics, responsePacket } = require("./cash-diagnostics")
 const { buildSam4sPrintLines, findSam4sPrinter, findWoosimPrinter } = require("./sam4s-receipt")
@@ -109,6 +111,18 @@ const deviceSettings = createDeviceSettings({
 })
 ipcMain.handle("device-settings:read", (event, password) => deviceSettings.read(event, password))
 ipcMain.handle("device-settings:save", (event, input) => deviceSettings.save(event, input))
+
+process.env.CARD_BRIDGE_TOKEN = require('node:crypto').randomBytes(32).toString('hex')
+const cardKey = createCardKeyService({
+  env: process.env, token: process.env.CARD_BRIDGE_TOKEN, bridge: hardwareBridge,
+  store: createCardKeyStore({ directory: path.join(app.getPath('userData'), 'card-keys'), safeStorage: require('electron').safeStorage }),
+  authorize: (event, password) => paymentRecovery.authorize(event, password),
+  isIdle: () => !global.kioskMaintenance && !global.kioskPaymentRecoveryActive && !global.kioskHttpActive &&
+    tossFrontBridge.pending.size === 0 && (global.kioskActiveOperations?.() || 1) === 1 && Date.now() - lastAcceptorCommand > 8000,
+  setBusy: value => { global.kioskCardBusy = value },
+})
+ipcMain.handle('card-key:available', event => cardKey.available(event))
+ipcMain.handle('card-key:run', (event, command, input) => cardKey.run(event, command, input))
 
 const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
 const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"

@@ -38,6 +38,28 @@ export interface KioskDeviceSettingsValues {
   bac2400Port: string
   sam4sPrinterName: string
   woosimPrinterName: string
+  cardDispenserPort: string
+  cardDispenserEnabled: "true" | "false"
+}
+
+export interface CardKeyResult {
+  success: boolean
+  reason?: string
+  error?: string
+  settled?: boolean
+  state?: string
+  failedSectors?: number[]
+  bits?: number
+  sensors?: number
+  moving?: boolean
+  empty?: boolean
+  low?: boolean
+  hopperFull?: boolean
+  captureFull?: boolean
+  uidChanged?: boolean
+  uidMatchesSource?: boolean
+  rooms?: { room: string; registeredAt: string }[]
+  sectors?: number[]
 }
 
 export interface KioskDeviceSettingsRead {
@@ -52,6 +74,14 @@ export interface KioskDeviceSettingsRead {
 }
 
 export interface ElectronAPI {
+  cardKey?: {
+    available: () => Promise<boolean>
+    run: (command: "status" | "list" | "register" | "issue" | "capture" | "reset" | "return" | "profile", input: {
+      password: string; room?: string; replaceRegisteredAt?: string; confirmed?: boolean; operationKey?: string;
+      profile?: { sectors: { sector: number; keyA: string; keyB: string }[] }
+    }) => Promise<CardKeyResult>
+    onProgress: (callback: (progress: { state: string }) => void) => () => void
+  }
   setUpdateSafe: (safe: boolean) => void
   getAppVersion?: () => string
   // 환경 설정

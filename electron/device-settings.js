@@ -1,7 +1,9 @@
 const PORT = /^COM[1-9]\d{0,2}$/i
+const { supportsCardKey } = require('./card-key-service')
 const FIELDS = [
   'tossTransport', 'tossSerialPath', 'tossSerialBaudRate', 'tossWsUrl', 'tossPairingKey',
   'printerPort', 'acceptorPort', 'dispenserPort', 'bac2400Port', 'sam4sPrinterName', 'woosimPrinterName',
+  'cardDispenserPort', 'cardDispenserEnabled',
 ]
 
 function view(config) {
@@ -22,6 +24,8 @@ function view(config) {
       bac2400Port: env.BAC2400_PORT || env.BOARD3400_PORT || 'COM5',
       sam4sPrinterName: env.SAM4S_PRINTER_NAME || '',
       woosimPrinterName: env.WOOSIM_PRINTER_NAME || '',
+      cardDispenserPort: env.CARD_DISPENSER_PORT || '',
+      cardDispenserEnabled: supportsCardKey(config.property, env.KIOSK_BUILDING) && env.CARD_DISPENSER_ENABLED === 'true' ? 'true' : 'false',
     },
   }
 }
@@ -33,12 +37,15 @@ function updatedConfig(config, input) {
     throw new Error('장비 설정 형식이 올바르지 않습니다.')
   }
   const values = Object.fromEntries(FIELDS.map(key => [key, input[key].trim()]))
+  const cardSupported = supportsCardKey(config.property, config.env?.KIOSK_BUILDING)
+  if (!['true', 'false'].includes(values.cardDispenserEnabled) || !cardSupported && values.cardDispenserEnabled !== 'false') throw new Error('이 PC에서는 카드키 발급기를 사용할 수 없습니다.')
   if (FIELDS.some(key => values[key].length > 256 || /[\r\n\0]/.test(values[key]))) throw new Error('장비 설정 값이 너무 길거나 올바르지 않습니다.')
   if (!['auto', 'serial', 'websocket'].includes(values.tossTransport)) throw new Error('토스 프론트 연결 방식을 확인해주세요.')
   const portKeys = config.property === 'property4' ? ['bac2400Port']
     : config.property === 'property2' ? []
     : config.property === 'property3' && config.env?.KIOSK_BUILDING === 'B' ? ['acceptorPort', 'dispenserPort']
     : ['printerPort', 'acceptorPort', 'dispenserPort']
+  if (cardSupported && (values.cardDispenserPort || values.cardDispenserEnabled === 'true')) portKeys.push('cardDispenserPort')
   for (const key of [...portKeys, ...(values.tossSerialPath ? ['tossSerialPath'] : [])]) {
     if (!PORT.test(values[key])) throw new Error('COM 포트는 COM1부터 COM999까지 입력해주세요.')
     values[key] = values[key].toUpperCase()
@@ -73,6 +80,10 @@ function updatedConfig(config, input) {
     TOSS_FRONT_WS_URL: values.tossWsUrl,
   }
   if (values.tossPairingKey) env.TOSS_FRONT_PAIRING_KEY = values.tossPairingKey
+  if (cardSupported) {
+    env.CARD_DISPENSER_PORT = values.cardDispenserPort
+    env.CARD_DISPENSER_ENABLED = values.cardDispenserEnabled
+  }
   if (config.property === 'property4') {
     env.BAC2400_PORT = values.bac2400Port
     env.SAM4S_PRINTER_NAME = values.sam4sPrinterName

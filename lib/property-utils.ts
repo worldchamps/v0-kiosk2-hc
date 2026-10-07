@@ -2,6 +2,10 @@
 
 export type PropertyId = "property1" | "property2" | "property3" | "property4"
 
+export function propertyUsesCardKey(property: string, building?: string): boolean {
+  return property === "property1" || property === "property3" && building === "A"
+}
+
 /**
  * 객실 번호로부터 Property 감지
  */

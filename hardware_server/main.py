@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ from acceptor import OnePlusAcceptor
 from bac2400 import Bac2400
 from dispenser import OnePlusDispenser
 from printer import BixolonPrinter
+from card_dispenser import CardDispenser, card_enabled
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,6 +36,7 @@ def load_local_hardware_env():
     wanted = {
         "KIOSK_PROPERTY_ID", "KIOSK_PROPERTY", "NEXT_PUBLIC_KIOSK_PROPERTY_ID",
         "BAC2400_PORT", "BOARD3400_PORT", "PRINTER_PORT", "DISPENSER_PORT", "ACCEPTOR_PORT",
+        "KIOSK_BUILDING", "CARD_DISPENSER_ENABLED", "CARD_DISPENSER_PORT", "CARD_DISPENSER_ADDRESS",
     }
     try:
         with open(env_path, encoding="utf-8-sig", errors="ignore") as env_file:
@@ -66,7 +69,51 @@ dispenser = None if USE_BAC2400 else OnePlusDispenser(DISPENSER_PORT)
 acceptor = None if USE_BAC2400 else OnePlusAcceptor(ACCEPTOR_PORT)
 printer = None if USE_BAC2400 or USE_WOOSIM else BixolonPrinter(PRINTER_PORT, baud_rate=115200)
 
+# Only Electron creates this per-launch secret. Card contents are never broadcast.
+CARD_BRIDGE_TOKEN = os.environ.get("CARD_BRIDGE_TOKEN", "")
+card_dispenser = None
+if card_enabled(os.environ) and len(CARD_BRIDGE_TOKEN) == 64:
+    import re
+    card_port = os.environ.get("CARD_DISPENSER_PORT", "").upper()
+    card_address = os.environ.get("CARD_DISPENSER_ADDRESS", "00")
+    occupied_ports = {DISPENSER_PORT.upper(), ACCEPTOR_PORT.upper(), PRINTER_PORT.upper(),
+                      os.environ.get("TOSS_FRONT_SERIAL_PATH", "").upper()}
+    if re.fullmatch(r"COM[1-9]\d{0,2}", card_port) and card_port not in occupied_ports and re.fullmatch(r"0[0-9]|1[0-5]", card_address):
+        card_dispenser = CardDispenser(card_port, card_address.encode("ascii"))
+
 connected_clients = set()
+card_tasks = set()
+
+
+async def handle_card_command(websocket, message):
+    request_id = message.get("requestId")
+    token = message.get("token")
+    if not isinstance(request_id, str) or len(request_id) > 80 or not isinstance(token, str) or \
+            len(token) != 64 or not token.isascii() or not CARD_BRIDGE_TOKEN or not hmac.compare_digest(token, CARD_BRIDGE_TOKEN):
+        return
+    result = {"success": False, "reason": "disabled", "settled": True}
+    try:
+        if card_dispenser and card_enabled(os.environ):
+            loop = asyncio.get_running_loop()
+            def progress(value):
+                future = asyncio.run_coroutine_threadsafe(websocket.send(json.dumps({
+                    "type": "card_progress", "requestId": request_id, **value})), loop)
+                # Retrieve send errors without echoing card-bearing request bodies.
+                future.add_done_callback(lambda completed: completed.exception())
+            command = message.get("type")
+            if command == "card_register":
+                result = await asyncio.to_thread(card_dispenser.register, message.get("profile"), progress)
+            elif command == "card_issue":
+                result = await asyncio.to_thread(card_dispenser.issue, message.get("record"), progress)
+            elif command == "card_return":
+                result = await asyncio.to_thread(card_dispenser.accept_return, progress)
+            elif command in ("card_status", "card_capture", "card_reset"):
+                result = await asyncio.to_thread(getattr(card_dispenser, command[5:]))
+            else:
+                result = {"success": False, "reason": "invalid_command", "settled": True}
+        await websocket.send(json.dumps({"type": "card_result", "requestId": request_id, **result}))
+    except Exception:
+        logger.warning("Card operation result unavailable; operator inspection required")
 
 
 async def broadcast(message):
@@ -150,6 +197,12 @@ async def handle_client(websocket, *args):
                     raise ValueError("Command must be an object")
                 cmd_type = msg.get("type")
 
+                if isinstance(cmd_type, str) and cmd_type.startswith("card_"):
+                    task = asyncio.create_task(handle_card_command(websocket, msg))
+                    card_tasks.add(task)
+                    task.add_done_callback(card_tasks.discard)
+                    continue
+
                 if bac2400:
                     responses = handle_bac2400_message(msg)
                     if responses is not None:
@@ -222,6 +275,9 @@ async def main():
     global main_loop
     main_loop = asyncio.get_running_loop()
 
+    if card_dispenser:
+        card_dispenser.connect()
+
     if bac2400:
         logger.info("Property4 selected: using BAC-2400 V1.3 (BV1/BD1) on %s", bac2400.port)
         bac2400.connect()
@@ -249,6 +305,8 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Server stopping...")
+        if card_dispenser:
+            card_dispenser.stop()
         if bac2400:
             bac2400.stop()
         else:

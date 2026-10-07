@@ -22,6 +22,14 @@ class FakeK750:
         self.bits = 0
         self.fault = None
         self.blocks = {i: bytes([i]) * 16 for i in range(64)}
+        for i in range(3, 64, 4):
+            self.blocks[i] = bytes.fromhex("ffffffffffffff078069ffffffffffff")
+        self.take_card = True
+        self.present_queries = 0
+        self.mismatch_count = 0
+        self.wrote = set()
+        self.denied_sector = None
+        self.write_delay = 0
     @property
     def in_waiting(self):
         return min(len(self.input), 1)  # fragment every ACK/frame into individual bytes
@@ -39,15 +47,33 @@ class FakeK750:
         elif data[0] == 5:
             command, self.pending = self.pending, None
             if command == b"AP":
+                if self.bits == 1 and self.take_card:
+                    self.present_queries += 1
+                    if self.present_queries > 1:
+                        self.bits = 0
                 reply = b"SF" + f"{self.bits:04X}".encode()
             elif command in self.device.MOVES.values():
                 self.bits = 0 if command in (b"CP", b"DB", b"RS") else 2 if command in (b"FC7", b"FC8") else 1
+                if command == b"FC4":
+                    self.present_queries = 0
                 return len(data)
+            elif command == b";1":
+                reply = b"P;1" + bytes.fromhex("01020304")
+            elif command[:2] == b";2" and command[2] // 4 == self.denied_sector:
+                reply = b"N;2\x01"
             elif command[:2] == b";3":
-                reply = b"P;3" + self.blocks[command[2]]
+                value = self.blocks[command[2]]
+                if command[2] % 4 == 3:
+                    value = b"\x00" * 6 + value[6:]
+                if self.mismatch_count and command[2] in self.wrote:
+                    self.mismatch_count -= 1
+                    value = bytes([value[0] ^ 1]) + value[1:]
+                reply = b"P;3" + value
             else:
                 if command[:2] == b";4":
+                    self.device.sleep(self.write_delay)
                     self.blocks[command[2]] = command[3:]
+                    self.wrote.add(command[2])
                 reply = b"P" + command[:2]
             frame = bytearray(self.device.frame(reply))
             if self.fault == "bcc":
@@ -59,6 +85,7 @@ class FakeK750:
 
 
 class CardDispenserContracts(unittest.TestCase):
+    profile = {"sectors": [{"sector": 0, "keyA": "FFFFFFFFFFFF", "keyB": "FFFFFFFFFFFF"}]}
     def device(self):
         clock = FakeClock()
         device = CardDispenser("QA-FAKE", clock=clock, sleep=clock.sleep)
@@ -138,3 +165,88 @@ class CardDispenserContracts(unittest.TestCase):
         device.ser.fault = None
         self.assertEqual(device.status()["reason"], "protocol_unsynchronized")
         self.assertEqual(len(device.ser.commands), 1)
+
+    def record(self, device):
+        return {"profile": self.profile, "uid": "ffffffff", "blocks": {str(i): device.ser.blocks[i].hex() for i in range(4)}}
+
+    def test_register_is_read_only_and_returns_original_before_saving(self):
+        device = self.device()
+        progress = []
+        result = device.register(self.profile, progress.append)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["uid"], "01020304")
+        self.assertEqual(result["blocks"]["3"][:12], "ffffffffffff")
+        self.assertIn({"state": "presented"}, progress)
+        self.assertFalse(any(cmd[:2] == b";4" for cmd in device.ser.commands))
+        self.assertNotIn(b"DB", device.ser.commands)
+
+    def test_registration_refuses_failed_sector_and_returns_original(self):
+        device = self.device()
+        device.ser.denied_sector = 0
+        result = device.register(self.profile)
+        self.assertFalse(result["success"])
+        self.assertTrue(result["settled"])
+        self.assertEqual(result["failedSectors"], [0])
+        self.assertIn(b"FC4", device.ser.commands)
+        self.assertNotIn("blocks", result)
+
+    def test_issue_verifies_one_card_never_writes_uid_and_waits_for_pickup(self):
+        device = self.device()
+        result = device.issue(self.record(device))
+        self.assertTrue(result["success"])
+        self.assertFalse(result["uidChanged"])
+        self.assertFalse(result["uidMatchesSource"])
+        self.assertEqual(device.ser.commands.count(b"FC7"), 1)
+        self.assertFalse(any(cmd[:3] == b";4\x00" for cmd in device.ser.commands))
+
+    def test_verify_failure_captures_bad_card_and_retries_only_once(self):
+        for count, success, captures in [(1, True, 1), (2, False, 2)]:
+            device = self.device()
+            device.ser.mismatch_count = count
+            result = device.issue(self.record(device))
+            self.assertEqual(result["success"], success)
+            self.assertEqual(device.ser.commands.count(b"FC7"), 2)
+            self.assertEqual(device.ser.commands.count(b"CP"), captures)
+
+    def test_empty_jam_and_bad_permissions_do_not_issue(self):
+        for bits, reason in [(8, "empty"), (0x20, "jam")]:
+            device = self.device()
+            device.ser.bits = bits
+            self.assertEqual(device.issue(self.record(device))["reason"], reason)
+            self.assertNotIn(b"FC7", device.ser.commands)
+        device = self.device()
+        with self.assertRaises(CardError):
+            device._write_block(3, "00" * 16, 5)
+        self.assertEqual(device.ser.commands, [])
+
+    def test_unclaimed_card_captured_after_sixty_seconds(self):
+        device = self.device()
+        device.ser.take_card = False
+        result = device.issue(self.record(device))
+        self.assertEqual(result["reason"], "not_taken")
+        self.assertTrue(result["settled"])
+        self.assertGreaterEqual(device.clock(), 60)
+        self.assertIn(b"CP", device.ser.commands)
+
+    def test_return_goes_to_stock_without_pms_or_writes(self):
+        device = self.device()
+        self.assertTrue(device.accept_return()["success"])
+        self.assertIn(b"DB", device.ser.commands)
+        self.assertFalse(any(cmd[:2] == b";4" for cmd in device.ser.commands))
+
+    def test_whole_issue_time_budget_is_bounded(self):
+        device = self.device()
+        device.ser.fault = "silent"
+        self.assertFalse(device.issue(self.record(device))["success"])
+        self.assertLessEqual(device.clock(), 30.1)
+        device = self.device()
+        device.ser.write_delay = 0.4
+        record = {"profile": {"sectors": [{**self.profile["sectors"][0], "sector": i} for i in range(16)]},
+                  "blocks": {str(i): value.hex() for i, value in device.ser.blocks.items()}}
+        result = device.issue(record)
+        self.assertFalse(result["success"])
+        self.assertEqual(result["reason"], "timeout")
+        self.assertTrue(result["settled"])
+        self.assertLessEqual(device.clock(), 30.1)
+        self.assertEqual(device.ser.commands.count(b"FC7"), 1)
+        self.assertIn(b"CP", device.ser.commands)

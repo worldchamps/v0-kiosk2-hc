@@ -71,6 +71,7 @@ if (!app.isPackaged) {
       if (!safeToInstall(heartbeat)) return "마지막 화면 조작 후 60초 유휴 확인 대기"
       if (activeOperations || Date.now() - lastOperation < 10000) return "장비 요청 완료 후 10초 대기"
       if (global.kioskHttpActive > 0) return "예약·화면 요청 처리 완료 대기"
+      if (global.kioskCardBusy) return "카드키 수령 또는 회수 확인 대기"
       if (!global.kioskHardwareReady?.()) return "장비 제어 프로그램 연결 또는 진행 중 장비 요청 완료 대기"
       return ""
     }

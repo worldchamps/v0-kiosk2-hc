@@ -52,6 +52,41 @@ class FakeClient:
 
 
 class HardwareContracts(unittest.IsolatedAsyncioTestCase):
+    def test_card_startup_gates_and_invalid_configuration_leave_other_hardware_available(self):
+        base = {"CARD_BRIDGE_TOKEN": "a" * 64, "CARD_DISPENSER_PORT": "COM9", "CARD_DISPENSER_ENABLED": "true"}
+        for overrides, allowed in [({"KIOSK_PROPERTY_ID": "property1"}, True),
+                                   ({"KIOSK_PROPERTY_ID": "property3", "KIOSK_BUILDING": "A"}, True),
+                                   ({"KIOSK_PROPERTY_ID": "property3", "KIOSK_BUILDING": "B"}, False),
+                                   ({"KIOSK_PROPERTY_ID": "property4"}, False),
+                                   ({"KIOSK_PROPERTY_ID": "property2"}, False),
+                                   ({"KIOSK_PROPERTY_ID": "property1", "CARD_DISPENSER_ENABLED": "false"}, False),
+                                   ({"KIOSK_PROPERTY_ID": "property1", "CARD_DISPENSER_PORT": "COM2"}, False),
+                                   ({"KIOSK_PROPERTY_ID": "property1", "CARD_DISPENSER_ADDRESS": "잘못됨"}, False),
+                                   ({"KIOSK_PROPERTY_ID": "property1", "CARD_DISPENSER_ADDRESS": "99"}, False)]:
+            isolated = importlib.util.module_from_spec(spec)
+            with patch("builtins.open", side_effect=FileNotFoundError), patch.dict("os.environ", {**base, **overrides}, clear=True):
+                spec.loader.exec_module(isolated)
+            self.assertEqual(isolated.card_dispenser is not None, allowed)
+        serial.Serial.assert_not_called()
+
+    async def test_card_messages_require_private_token_and_never_broadcast_source_card(self):
+        client, other = FakeClient(), FakeClient()
+        device = Mock()
+        device.register.return_value = {"success": True, "uid": "01020304", "blocks": {"1": "ab" * 16}, "settled": True}
+        server.connected_clients.add(other)
+        try:
+            with patch.object(server, "card_dispenser", device), patch.object(server, "CARD_BRIDGE_TOKEN", "a" * 64), \
+                 patch.dict("os.environ", {"KIOSK_PROPERTY_ID": "property1", "CARD_DISPENSER_ENABLED": "true"}):
+                await server.handle_card_command(client, {"type": "card_register", "requestId": "test-1", "token": "bad"})
+                await server.handle_card_command(client, {"type": "card_register", "requestId": "test-1", "token": "가" * 64})
+                device.register.assert_not_called()
+                await server.handle_card_command(client, {"type": "card_register", "requestId": "test-2", "token": "a" * 64, "profile": {}})
+                device.register.assert_called_once()
+                self.assertEqual(client.sent[0]["requestId"], "test-2")
+                self.assertEqual(other.sent, [])
+        finally:
+            server.connected_clients.clear()
+
     def test_imports_never_open_hardware(self):
         serial.Serial.assert_not_called()
         self.assertFalse(server.printer.is_connected)
