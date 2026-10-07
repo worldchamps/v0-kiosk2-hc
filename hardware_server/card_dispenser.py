@@ -408,7 +408,6 @@ class CardDispenser(SerialDevice):
 
     def issue(self, record, progress=lambda _: None):
         def run():
-            # This bench phase retains the approved block-0 write prohibition.
             if not isinstance(record, dict) or not isinstance(record.get("blocks"), dict):
                 raise CardError("invalid_record")
             sectors = validate_profile(record.get("profile"))
@@ -416,6 +415,14 @@ class CardDispenser(SerialDevice):
             blocks = record["blocks"]
             if set(blocks) != expected or any(not isinstance(value, str) or not re.fullmatch(r"[a-fA-F0-9]{32}", value) for value in blocks.values()):
                 raise CardError("invalid_record")
+            # Operator-approved CUID bench issuance only. Validate before moving a card.
+            source_uid = record.get("uid")
+            if not isinstance(source_uid, str) or not re.fullmatch(r"[a-fA-F0-9]{8}", source_uid) or "0" not in blocks:
+                raise CardError("uid_copy_unsupported")
+            source_uid = source_uid.lower()
+            identity = bytes.fromhex(blocks["0"])
+            if identity[:4].hex() != source_uid or identity[4] != reduce(int.__xor__, identity[:4], 0):
+                raise CardError("invalid_source_identity")
             for item in sectors:
                 trailer = blocks[str(item["sector"] * 4 + 3)].lower()
                 if trailer[:12] != item["keyA"].lower() or trailer[20:] != item["keyB"].lower() or trailer[12:18] != "ff0780":
@@ -434,11 +441,13 @@ class CardDispenser(SerialDevice):
                     moved = True
                     self._command(self.MOVES["read"], deadline - 5, response=False)
                     uid = self._read_position(deadline - 5)
+                    if len(uid) != 8:
+                        raise CardError("stock_uid_unsupported")
                     try:
                         for item in sectors:
                             sector = item["sector"]
                             self._authenticate(sector, "ffffffffffff", "A", deadline - 5)
-                            # Data first, permissions last; block 0 is always skipped.
+                            # Data first, permissions last; identity is written separately below.
                             for block in range(max(1, sector * 4), sector * 4 + 4):
                                 self._write_block(block, blocks[str(block)], deadline - 5)
                                 got = self._read_block(block, deadline - 5)
@@ -454,6 +463,23 @@ class CardDispenser(SerialDevice):
                         state = self._status(deadline - 1)
                         if state["empty"]:
                             raise CardError("empty")
+                # Only the card loaded from the stock hopper reaches this write.
+                # Keep the general block writer and original registration read-only for block 0.
+                self._authenticate(0, "ffffffffffff", "A", deadline - 5)
+                try:
+                    self._command(b";4\x00" + identity, deadline - 5)
+                except CardError as exc:
+                    if exc.reason == "card_command_failed":
+                        raise CardError("uid_write_failed", **exc.details) from None
+                    raise
+                # Changing block 0 can invalidate RF selection/authentication. Select anew;
+                # a successful write ACK or block read alone does not prove the RF UID changed.
+                verified_uid = self._select_card(deadline - 5)
+                if verified_uid != source_uid:
+                    raise CardError("uid_verify_failed", failedCommand="3B31")
+                self._authenticate(0, "ffffffffffff", "A", deadline - 5)
+                if self._read_block(0, deadline - 5) != identity.hex():
+                    raise CardError("uid_verify_failed", failedCommand="3B33", failedBlock=0)
                 # Presentation must start inside the total 30s issue budget.
                 self._move("present", lambda status: bool(status["sensors"]), deadline)
             except CardError as exc:
@@ -469,8 +495,8 @@ class CardDispenser(SerialDevice):
             pickup_deadline = self.clock() + 60
             try:
                 self._wait(lambda status: status["sensors"] == 0, pickup_deadline)
-                return {"success": True, "settled": True, "state": "taken", "uidChanged": False,
-                        "uidMatchesSource": uid == record.get("uid")}
+                return {"success": True, "settled": True, "state": "taken", "uidChanged": uid != source_uid,
+                        "uidMatchesSource": True}
             except CardError as exc:
                 settled = False
                 try:

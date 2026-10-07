@@ -24,7 +24,8 @@ class FakeK750:
         self.fault = None
         self.blocks = {i: bytes([i]) * 16 for i in range(64)}
         self.uid_response = bytes.fromhex("01020304")
-        self.blocks[0] = self.uid_response + bytes(12)
+        self.blocks[0] = self.uid_response + b"\x04" + bytes(11)
+        self.uid_write_behavior = "accept"
         for i in range(3, 64, 4):
             self.blocks[i] = bytes.fromhex("ffffffffffffff078069ffffffffffff")
         self.take_card = True
@@ -84,6 +85,8 @@ class FakeK750:
                 reply = b"N;3\x45"
             elif command[:2] == b";4" and command[2] // 4 != self.authenticated_sector:
                 reply = b"N;4\x46"
+            elif command[:3] == b";4\x00" and self.uid_write_behavior == "reject":
+                reply = b"N;4\x46"
             elif command[:2] == b";3":
                 value = self.blocks[command[2]]
                 if command[2] % 4 == 3:
@@ -97,6 +100,12 @@ class FakeK750:
                     self.device.sleep(self.write_delay)
                     self.blocks[command[2]] = command[3:]
                     self.wrote.add(command[2])
+                    if command[2] == 0:
+                        if self.uid_write_behavior != "stale_uid":
+                            self.uid_response = command[3:7] + self.uid_response[4:]
+                        if self.uid_write_behavior == "corrupt_block":
+                            self.blocks[0] = self.blocks[0][:15] + b"\x01"
+                        self.authenticated_sector = None
                 reply = b"P" + command[:2]
             frame = bytearray(self.device.frame(reply))
             if self.fault == "bcc":
@@ -239,7 +248,9 @@ class CardDispenserContracts(unittest.TestCase):
         self.assertEqual(replacement.commands, [b"AP"])
 
     def record(self, device):
-        return {"profile": self.profile, "uid": "ffffffff", "blocks": {str(i): device.ser.blocks[i].hex() for i in range(4)}}
+        blocks = {str(i): device.ser.blocks[i].hex() for i in range(4)}
+        blocks["0"] = "ffffffff00" + blocks["0"][10:]
+        return {"profile": self.profile, "uid": "ffffffff", "blocks": blocks}
 
     def test_register_is_read_only_and_returns_original_before_saving(self):
         device = self.device()
@@ -274,13 +285,18 @@ class CardDispenserContracts(unittest.TestCase):
         self.assertEqual([cmd[2] for cmd in auth_commands], list(range(16)))
         self.assertEqual(auth_commands[1], bytes.fromhex("3b320130ffffffffffff"))
         device.ser.commands.clear()
+        device.ser.uid_response = bytes.fromhex("aabbccdd")
+        device.ser.blocks[0] = device.ser.uid_response + bytes(12)
         for block in range(1, 64):
             if block % 4 != 3:
                 device.ser.blocks[block] = bytes(16)
         issued = device.issue({"profile": profile, "uid": registered["uid"], "blocks": registered["blocks"]})
         self.assertTrue(issued["success"], issued)
-        self.assertEqual(device.ser.wrote, set(range(1, 64)))
-        self.assertEqual([cmd[2] for cmd in device.ser.commands if cmd[:2] == b";2"], list(range(16)))
+        self.assertEqual(device.ser.wrote, set(range(64)))
+        self.assertEqual([cmd[2] for cmd in device.ser.commands if cmd[:2] == b";2"], list(range(16)) + [0, 0])
+        self.assertEqual(device.ser.uid_response.hex(), registered["uid"])
+        self.assertTrue(issued["uidChanged"] and issued["uidMatchesSource"])
+        self.assertEqual([cmd[2] for cmd in device.ser.commands if cmd[:2] == b";4"], list(range(1, 64)) + [0])
         self.assertEqual(device.ser.blocks[0].hex(), source_blocks["0"])
         self.assertEqual({str(i): value.hex() for i, value in device.ser.blocks.items()}, source_blocks)
 
@@ -307,8 +323,9 @@ class CardDispenserContracts(unittest.TestCase):
         self.assertEqual(result["uid"], "01020304")
         self.assertEqual(device.ser.wrote, set())
         self.assertTrue(device.issue(self.record(device))["success"])
-        self.assertNotIn(0, device.ser.wrote)
-        self.assertEqual(device.ser.blocks[0][:4], bytes.fromhex("01020304"))
+        self.assertIn(0, device.ser.wrote)
+        self.assertEqual(device.ser.uid_response.hex(), "ffffffffab")
+        self.assertEqual(device.ser.blocks[0][:4], bytes.fromhex("ffffffff"))
 
     def test_uid_mismatch_returns_original_without_registering_or_writing_it(self):
         device = self.device()
@@ -362,14 +379,68 @@ class CardDispenserContracts(unittest.TestCase):
         self.assertNotIn("sensitive", str(result))
         self.assertNotIn(b"sensitive".hex(), str(result))
 
-    def test_issue_verifies_one_card_never_writes_uid_and_waits_for_pickup(self):
+    def test_issue_verifies_data_and_rf_uid_before_presenting_one_cuid_card(self):
         device = self.device()
         result = device.issue(self.record(device))
         self.assertTrue(result["success"])
-        self.assertFalse(result["uidChanged"])
-        self.assertFalse(result["uidMatchesSource"])
+        self.assertTrue(result["uidChanged"])
+        self.assertTrue(result["uidMatchesSource"])
         self.assertEqual(device.ser.commands.count(b"FC7"), 1)
-        self.assertFalse(any(cmd[:3] == b";4\x00" for cmd in device.ser.commands))
+        identity_write = next(i for i, cmd in enumerate(device.ser.commands) if cmd[:3] == b";4\x00")
+        self.assertEqual(device.ser.commands[identity_write + 1:identity_write + 3], [b";0", b";1"])
+        self.assertLess(identity_write, device.ser.commands.index(b"FC4"))
+        self.assertNotIn("uid", result)
+        self.assertNotIn("blocks", result)
+
+    def test_identity_failure_captures_one_card_without_presenting_or_retrying(self):
+        for behavior, reason in [("reject", "uid_write_failed"), ("stale_uid", "uid_verify_failed"),
+                                 ("corrupt_block", "uid_verify_failed")]:
+            with self.subTest(behavior=behavior):
+                device = self.device()
+                device.ser.uid_write_behavior = behavior
+                result = device.issue(self.record(device))
+                self.assertFalse(result["success"])
+                self.assertEqual(result["reason"], reason)
+                self.assertTrue(result["settled"])
+                self.assertEqual(device.ser.commands.count(b"FC7"), 1)
+                self.assertEqual(device.ser.commands.count(b"CP"), 1)
+                self.assertNotIn(b"FC4", device.ser.commands)
+                self.assertNotIn("uid", result)
+                self.assertNotIn("blocks", result)
+                if behavior == "reject":
+                    self.assertEqual(result["failedBlock"], 0)
+                    self.assertEqual(result["deviceCode"], 0x46)
+
+    def test_invalid_source_identity_is_rejected_before_any_card_moves(self):
+        for fault in ("missing_uid", "long_uid", "different_uid", "bad_bcc", "missing_sector_zero"):
+            with self.subTest(fault=fault):
+                device = self.device()
+                record = self.record(device)
+                if fault == "missing_uid":
+                    del record["uid"]
+                elif fault == "long_uid":
+                    record["uid"] = "ff" * 7
+                elif fault == "different_uid":
+                    record["uid"] = "01020304"
+                elif fault == "bad_bcc":
+                    record["blocks"]["0"] = "ffffffff01" + record["blocks"]["0"][10:]
+                else:
+                    record["profile"] = {"sectors": [{**self.profile["sectors"][0], "sector": 1}]}
+                    record["blocks"] = {str(i): device.ser.blocks[i].hex() for i in range(4, 8)}
+                result = device.issue(record)
+                self.assertFalse(result["success"])
+                self.assertIn(result["reason"], ("uid_copy_unsupported", "invalid_source_identity"))
+                self.assertEqual(device.ser.commands, [])
+
+    def test_seven_byte_stock_uid_is_captured_without_writing_any_block(self):
+        device = self.device()
+        device.ser.uid_response = bytes.fromhex("01020304050607")
+        result = device.issue(self.record(device))
+        self.assertEqual(result["reason"], "stock_uid_unsupported")
+        self.assertTrue(result["settled"])
+        self.assertEqual(device.ser.wrote, set())
+        self.assertIn(b"CP", device.ser.commands)
+        self.assertNotIn(b"FC4", device.ser.commands)
 
     def test_verify_failure_captures_bad_card_and_retries_only_once(self):
         for count, success, captures in [(1, True, 1), (2, False, 2)]:
@@ -414,6 +485,7 @@ class CardDispenserContracts(unittest.TestCase):
         device = self.device()
         device.ser.write_delay = 0.4
         record = {"profile": {"sectors": [{**self.profile["sectors"][0], "sector": i} for i in range(16)]},
+                  "uid": "01020304",
                   "blocks": {str(i): value.hex() for i, value in device.ser.blocks.items()}}
         result = device.issue(record)
         self.assertFalse(result["success"])

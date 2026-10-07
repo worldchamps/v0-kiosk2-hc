@@ -30,6 +30,11 @@ const reasons: Record<string, string> = {
   invalid_block: "카드 데이터 응답 길이가 예상한 16바이트와 다릅니다.",
   invalid_uid_response: "카드 고유번호 응답을 해석하지 못했습니다. 카드 호환성 여부가 확인된 것은 아닙니다.",
   uid_mismatch: "읽은 고유번호와 원본 카드 데이터가 일치하지 않아 등록을 중단했습니다.",
+  uid_copy_unsupported: "고유번호 포함 시험 발급에는 4바이트 고유번호와 원본 첫 블록이 필요합니다. 해당 원본의 등록 정보를 확인하세요.",
+  stock_uid_unsupported: "투입된 공카드의 고유번호 형식이 이번 CUID 시험 발급과 다릅니다. 공카드 종류를 확인하세요.",
+  invalid_source_identity: "저장된 원본 고유번호 정보가 서로 맞지 않아 발급을 중단했습니다. 원본 카드를 다시 등록하세요.",
+  uid_write_failed: "공카드에 고유번호를 기록하지 못해 발급을 중단했습니다. 제공된 CUID 카드와 발급기의 고유번호 쓰기 호환성을 확인해야 합니다.",
+  uid_verify_failed: "발급 카드의 고유번호 또는 첫 블록이 원본과 일치하지 않아 발급을 중단했습니다.",
   device_error: "장비 통신 처리 중 내부 오류가 발생했습니다.",
   command_rejected: "현재 장비 상태에서는 명령을 실행할 수 없습니다.",
   issue_error: "장비가 카드 이송 오류를 보고했습니다.",
@@ -113,7 +118,7 @@ export default function CardKeyAdmin({ onBusy }: { onBusy: (busy: boolean) => vo
           ((result.recoveryRequired ?? (result.settled === false)) ? " 카드 위치가 미확정이므로 현장에서 확인하세요." : ""))
       } else {
         setMessage(command === "register" ? "원본 카드를 읽어 이 PC에 암호화 저장했습니다." :
-          command === "issue" ? "시험 카드 기록·검증 및 수령을 확인했습니다. 고유번호는 변경하지 않았습니다. 실제 객실 문에서 열리는지 확인하세요." :
+          command === "issue" ? "시험 카드 데이터와 고유번호가 원본과 일치함을 확인했고, 카드 수령을 확인했습니다. 실제 객실 문에서 열리는지 확인하세요." :
           command === "return" ? "카드함으로 회수했습니다. 객실 체크아웃은 처리하지 않습니다." :
           command === "capture" ? "회수함으로 회수했습니다." : command === "reset" ? "초기화 응답을 확인했습니다." : "장치 상태를 확인했습니다.")
       }
@@ -125,13 +130,13 @@ export default function CardKeyAdmin({ onBusy }: { onBusy: (busy: boolean) => vo
   return <section className="max-w-4xl space-y-5 p-4">
     <h2 className="text-2xl font-bold">카드키 · 현장 시험</h2>
     <p>원본 객실 카드를 등록하고 공카드에 시험 기록합니다. 고객 체크인의 자동 발급은 아직 연결되지 않습니다.</p>
-    <p className="rounded border border-amber-400 bg-amber-50 p-3">이번 시험은 카드 고유번호를 복사하지 않습니다. 기록 성공과 실제 도어락 개폐 성공은 별도로 확인해야 합니다.</p>
+    <p className="rounded border border-amber-400 bg-amber-50 p-3">CUID 공카드에 원본의 데이터와 고유번호까지 기록하는 시험입니다. 원본 카드는 읽기만 합니다. 발급 후 실제 객실 문에서 열리는지 확인해야 합니다.</p>
     {!password && <Button onClick={() => setUnlocking(true)}>관리자 인증 후 열기</Button>}
     {unlocking && <AdminKeypad showDevices={false} verifyPassword={readList} onClose={() => setUnlocking(false)}
       onConfirm={candidate => { setPassword(candidate); setUnlocking(false) }} />}
     {password && <>
       <label className="flex gap-3 items-start"><input type="checkbox" checked={confirmed} disabled={busy}
-        onChange={event => setConfirmed(event.target.checked)} />고객 거래가 없고, 제조사 데모를 종료했으며, 직원이 장비 앞에서 카드를 확인하고 있습니다.</label>
+        onChange={event => setConfirmed(event.target.checked)} />고객 거래가 없고, 제조사 데모를 종료했으며, 직원이 장비 앞에 있습니다. 발급용 카드함에는 CUID 공카드만 넣었습니다.</label>
       <div className="flex flex-wrap gap-3">
         <Button disabled={busy} variant="outline" onClick={() => run("status")}>장치 상태</Button>
         <Button disabled={busy || !confirmed} variant="outline" onClick={() => run("capture")}>회수함으로 회수</Button>
@@ -146,7 +151,7 @@ export default function CardKeyAdmin({ onBusy }: { onBusy: (busy: boolean) => vo
         onChange={event => setReplacement(event.target.checked)} />기존 등록({new Date(existing.registeredAt).toLocaleString("ko-KR")})을 원본 카드로 교체합니다.</label>}
       <div className="flex flex-wrap gap-3">
         <Button disabled={busy || unresolved || !confirmed || !roomKey || Boolean(existing && !replacement)} onClick={() => run("register")}>원본 카드 등록</Button>
-        <Button disabled={busy || unresolved || !confirmed || !existing} onClick={() => run("issue")}>공카드 1장 시험 발급</Button>
+        <Button disabled={busy || unresolved || !confirmed || !existing} onClick={() => run("issue")}>고유번호 포함 · 공카드 1장 시험 발급</Button>
         <Button disabled={busy || unresolved || !confirmed} variant="outline" onClick={() => run("return")}>시험 카드 반납</Button>
       </div>
       <p className="text-sm text-gray-600">공장 기본 인증키와 다시 기록할 수 있는 접근권한을 사용하는 카드로 시험합니다. 원본 카드는 읽기만 합니다. 인증에 실패하면 실패 섹터를 확인하고 등록을 중단합니다.</p>
