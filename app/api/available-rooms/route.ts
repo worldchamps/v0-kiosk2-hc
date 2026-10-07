@@ -18,12 +18,14 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
     const scope = getKioskScope()
-    const location = scope.building || searchParams.get("location")?.toUpperCase()
+    // C/D share one kiosk. Its saved map location must not hide either building.
+    const location = scope.property === "property1" ? undefined : scope.building || searchParams.get("location")?.toUpperCase()
 
     console.log("[v0] Filtering by location:", location || "ALL")
 
     const availableRooms = (await getAvailableRooms(location || undefined))
-      .filter((room) => isRoomInBuilding(room.matchingRoomNumber, scope.building))
+      .filter((room) => getPropertyFromRoomNumber(room.matchingRoomNumber) === scope.property &&
+        isRoomInBuilding(room.matchingRoomNumber, scope.building))
 
     console.log("[v0] Available rooms from Firebase:", availableRooms.length)
 

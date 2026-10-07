@@ -172,7 +172,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
   }, [step, loading, submitting, paymentSession.isActive, roomsError, onUpdateSafeChange, ready, storageError])
   const selectedRates = selectedRoom && selectedStay ? selectedRoom.rates?.[selectedStay.type] : undefined
 
-  const locationName = location === "CAMP" ? "캠프" : location ? `${location}동` : ""
+  const locationName = location === "C" || location === "D" ? "C·D동" : location === "CAMP" ? "캠프" : location ? `${location}동` : ""
 
   const fetchAvailableRooms = useCallback(
     async (showLoading = true) => {

@@ -108,6 +108,31 @@ test("available rooms does not sell a room using a different building's fallback
   assert.equal((await response.json()).total, 0)
 })
 
+test("C/D kiosk sells both buildings despite saved location and preserves room sales and rate exclusions", async () => {
+  const candidates = ['C101', 'C102', 'C103', 'D101', 'A101', 'B101', 'Camp101'].map(beachRoom)
+  const config = { property: 'property1', policy: { ...salesConfig.defaultKioskSalesPolicy('property1'), shortStayTimeRestricted: false },
+    rooms: ['C101', 'C102', 'C103', 'D101'].map(roomCode => ({ roomCode, enabled: roomCode !== 'C102',
+      overnightEnabled: true, shortStayEnabled: true, rates: { overnight: { card: roomCode === 'C103' ? 0 : 50000, cash: 0 }, shortStay: { card: 0, cash: 0 } } })) }
+  const requestedLocations = [], requestedProperties = []
+  const handler = load('app/api/available-rooms/route.ts', { 'next/server': next,
+    '@/lib/property-utils': properties,
+    '@/lib/kiosk-scope': { ...scope, getKioskScope: () => ({ property: 'property1', building: null }) },
+    '@/lib/firebase-beach-rooms': { getAvailableRooms: async location => { requestedLocations.push(location); return location ? candidates.filter(room => room.matchingRoomNumber[0] === location) : candidates } },
+    '@/lib/pms-rates': { ...ratesHarness().rates, getPmsRateProperties: async ids => { requestedProperties.push([...ids]); return [] } },
+    '@/lib/kiosk-sales-config': { ...salesConfig, getKioskSalesConfig: async () => config },
+  })
+  for (const query of ['', '?location=C', '?location=D', '?location=A', '?location=ALL']) {
+    const response = await handler.GET(new Request('http://offline.invalid/api/available-rooms' + query))
+    assert.equal(response.status, 200)
+    const result = await response.json()
+    assert.deepEqual(result.availableRooms.map(room => room.roomCode), ['C101', 'D101'])
+    assert.equal(result.availableRooms[0].rates.overnight.card, 50000)
+    assert.equal(JSON.stringify(result).includes('DO-NOT-EXPOSE'), false)
+  }
+  assert(requestedLocations.every(location => location === undefined))
+  assert(requestedProperties.every(ids => ids.length === 1 && ids[0] === 'property1'))
+})
+
 const reservation = (id, status = "", inDate = "26.09.10/15:00", outDate = "26.09.11/11:00") =>
   ["비치", "Test Guest", id, "test", "디럭스", "60,000", "01000000000", inDate, outDate, "B101", "DO-NOT-EXPOSE", status, "", "1"]
 function sheetRoute(file, rows, env) {
