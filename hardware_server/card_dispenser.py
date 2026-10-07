@@ -309,8 +309,13 @@ class CardDispenser(SerialDevice):
     def _select_card(self, deadline):
         self._command(b";0", deadline)
         uid = self._command(b";1", deadline)
+        # Vendor C# demo button8_Click uses CardId[0..3]. Some K750 firmware
+        # returns one trailing byte; it is not part of that four-byte UID.
+        # The transport frame's address, length and BCC are already checked.
+        if len(uid) == 5:
+            uid = uid[:4]
         if len(uid) not in (4, 7):
-            raise CardError("unsupported_card", failedCommand="3B31", responseBytes=len(uid))
+            raise CardError("invalid_uid_response", failedCommand="3B31", responseBytes=len(uid))
         return uid.hex()
 
     def _read_position(self, deadline):
@@ -380,6 +385,10 @@ class CardDispenser(SerialDevice):
                 uid = self._read_position(deadline)
                 progress({"state": "reading"})
                 blocks = self._read_source(profile, deadline)
+                # Four-byte S50 UID must agree with the read-only manufacturer
+                # block when sector 0 is in this profile. Never write block 0.
+                if len(uid) == 8 and "0" in blocks and blocks["0"][:8] != uid:
+                    raise CardError("uid_mismatch", failedCommand="3B31", failedBlock=0)
             except CardError as exc:
                 # Original cards are never written or deliberately sent to the stock hopper.
                 try:

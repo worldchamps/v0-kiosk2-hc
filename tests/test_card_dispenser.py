@@ -23,6 +23,8 @@ class FakeK750:
         self.bits = 0
         self.fault = None
         self.blocks = {i: bytes([i]) * 16 for i in range(64)}
+        self.uid_response = bytes.fromhex("01020304")
+        self.blocks[0] = self.uid_response + bytes(12)
         for i in range(3, 64, 4):
             self.blocks[i] = bytes.fromhex("ffffffffffffff078069ffffffffffff")
         self.take_card = True
@@ -63,7 +65,7 @@ class FakeK750:
                     self.present_queries = 0
                 return len(data)
             elif command == b";1":
-                reply = b"P;1" + bytes.fromhex("01020304")
+                reply = b"P;1" + self.uid_response
             elif command[:2] == b";2" and command[2] // 4 == self.denied_sector:
                 reply = b"N;2\x01"
             elif command[:2] == b";3" and command[2] == self.denied_block:
@@ -244,6 +246,43 @@ class CardDispenserContracts(unittest.TestCase):
         self.assertEqual(result["failedSectors"], [0])
         self.assertIn(b"FC4", device.ser.commands)
         self.assertNotIn("blocks", result)
+
+    def test_five_byte_vendor_id_registers_and_issues_using_the_first_four_bytes(self):
+        device = self.device(b"08")
+        # Do not guess whether the undocumented fifth byte is BCC/status/etc.
+        # The vendor demo displays the first four; block 0 independently agrees.
+        device.ser.uid_response = bytes.fromhex("01020304ab")
+        result = device.register(self.profile)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["uid"], "01020304")
+        self.assertEqual(device.ser.wrote, set())
+        self.assertTrue(device.issue(self.record(device))["success"])
+        self.assertNotIn(0, device.ser.wrote)
+        self.assertEqual(device.ser.blocks[0][:4], bytes.fromhex("01020304"))
+
+    def test_uid_mismatch_returns_original_without_registering_or_writing_it(self):
+        device = self.device()
+        device.ser.uid_response = bytes.fromhex("05060708ab")
+        result = device.register(self.profile)
+        self.assertFalse(result["success"])
+        self.assertEqual(result["reason"], "uid_mismatch")
+        self.assertTrue(result["settled"])
+        self.assertIn(b"FC4", device.ser.commands)
+        self.assertNotIn("uid", result)
+        self.assertNotIn("blocks", result)
+        self.assertEqual(device.ser.wrote, set())
+
+    def test_other_uid_lengths_are_not_silently_truncated(self):
+        device = self.device()
+        device.ser.uid_response = bytes.fromhex("01020304050607")
+        self.assertEqual(device._select_card(5), "01020304050607")
+        for size in (0, 3, 6, 8, 10):
+            device = self.device()
+            device.ser.uid_response = bytes(range(size))
+            result = device.register(self.profile)
+            self.assertEqual(result["reason"], "invalid_uid_response")
+            self.assertEqual(result["responseBytes"], size)
+            self.assertNotIn("uid", result)
 
     def test_registration_preserves_read_failure_details_after_returning_original(self):
         device = self.device()
