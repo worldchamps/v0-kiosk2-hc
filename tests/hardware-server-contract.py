@@ -22,6 +22,7 @@ from acceptor import OnePlusAcceptor
 from bac2400 import Bac2400
 from printer import BixolonPrinter
 from test_bac2400 import Bac2400Test, multi_frame
+from test_card_dispenser import CardDispenserContracts
 
 spec = importlib.util.spec_from_file_location("qa_hardware_main", root / "hardware_server/main.py")
 server = importlib.util.module_from_spec(spec)
