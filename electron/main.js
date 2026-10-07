@@ -126,6 +126,7 @@ ipcMain.handle('card-key:run', (event, command, input) => cardKey.run(event, com
 ipcMain.handle('card-key:checkin-required', event => cardKey.checkInRequired(event))
 ipcMain.handle('card-key:ready', (event, room, reservationId) => cardKey.run(event, 'ready', { room, reservationId }))
 ipcMain.handle('card-key:issue-checkin', (event, ticket) => cardKey.run(event, 'checkin_issue', { ticket }))
+ipcMain.handle('card-key:issue-remote', (event, envelope) => cardKey.run(event, 'remote_issue', { envelope }))
 
 const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
 const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"

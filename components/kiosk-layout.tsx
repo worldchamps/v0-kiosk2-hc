@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation"
 import { useAdmin } from "@/contexts/admin-context"
 import { stopAllAudio, pauseBGM, resumeBGM } from "@/lib/audio-utils"
 import { PrintQueueListener } from "@/components/print-queue-listener"
+import { RemoteKeyListener } from "@/components/remote-key-listener"
 import {
   getKioskPropertyId,
   type PropertyId,
@@ -58,6 +59,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   const [error, setError] = useState("")
   const [lookupError, setLookupError] = useState(false)
   const [checkInPending, setCheckInPending] = useState(false)
+  const [remoteKeyBusy, setRemoteKeyBusy] = useState(false)
   const [deliveringCard, setDeliveringCard] = useState(false)
   const checkInSubmitting = useRef(false)
   const lookupSubmitting = useRef(false)
@@ -101,11 +103,11 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
 
   useEffect(() => {
     window.electronAPI?.setUpdateSafe?.(
-      ready && !storageError && !checkInPending && !!kioskScope && currentScreen === "onSiteReservation" && onSiteUpdateSafe && !loading &&
+      ready && !storageError && !checkInPending && !remoteKeyBusy && !!kioskScope && currentScreen === "onSiteReservation" && onSiteUpdateSafe && !loading &&
       !paymentSession.isActive && !showAdminKeypad && !showPropertyMismatch && !showPropertyRedirect,
     )
     return () => window.electronAPI?.setUpdateSafe?.(false)
-  }, [kioskScope, currentScreen, onSiteUpdateSafe, loading, paymentSession.isActive, showAdminKeypad, showPropertyMismatch, showPropertyRedirect, ready, storageError, checkInPending])
+  }, [kioskScope, currentScreen, onSiteUpdateSafe, loading, paymentSession.isActive, showAdminKeypad, showPropertyMismatch, showPropertyRedirect, ready, storageError, checkInPending, remoteKeyBusy])
 
   useEffect(() => {
     let cancelled = false
@@ -223,7 +225,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
 
   const handleNavigate = async (screen: string) => {
     // A navigation is never proof that cash was returned or an approval was cancelled.
-    if (paymentSession.isActive || checkInSubmitting.current || checkInPending || lookupSubmitting.current || reservationData?.cardDelivery?.settled === false) return
+    if (remoteKeyBusy || paymentSession.isActive || checkInSubmitting.current || checkInPending || lookupSubmitting.current || reservationData?.cardDelivery?.settled === false) return
 
     stopAllAudio(false)
 
@@ -258,7 +260,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   }
 
   const handleModeChangeClick = async () => {
-    if (paymentSession.isActive || checkInSubmitting.current || checkInPending) {
+    if (remoteKeyBusy || paymentSession.isActive || checkInSubmitting.current || checkInPending) {
       alert("진행 중인 결제/체크인 확인을 먼저 완료해주세요. 관리자 문의 010-5126-4644")
       return
     }
@@ -275,7 +277,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     }
     window.addEventListener("keydown", handleShortcut)
     return () => window.removeEventListener("keydown", handleShortcut)
-  }, [showAdminKeypad, paymentSession.isActive, checkInPending, authenticate, onChangeMode])
+  }, [showAdminKeypad, paymentSession.isActive, checkInPending, remoteKeyBusy, authenticate, onChangeMode])
 
   const handleCheckReservation = async (name: string) => {
     if (!name.trim() || lookupSubmitting.current) return
@@ -680,6 +682,9 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       )}
 
       <PrintQueueListener scope={kioskScope} />
+      <RemoteKeyListener onBusy={setRemoteKeyBusy} idle={ready && !storageError && !isPopupMode && !checkInPending &&
+        currentScreen === "onSiteReservation" && onSiteUpdateSafe && !loading && !paymentSession.isActive &&
+        !showAdminKeypad && !showPropertyMismatch && !showPropertyRedirect} />
     </div>
   )
 }

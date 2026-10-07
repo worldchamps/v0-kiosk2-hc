@@ -1,5 +1,6 @@
 const { randomUUID, createHash } = require('node:crypto')
 const { verifyTicket, operationId, supported } = require('./card-issue-proof')
+const { verifyRequest } = require('./pms-card-request')
 
 const supportsCardKey = (property, building) => property === 'property1' || property === 'property3' && building === 'A'
 const enabled = env => supportsCardKey(env.KIOSK_PROPERTY_ID || 'property3', env.KIOSK_BUILDING) && env.CARD_DISPENSER_ENABLED === 'true'
@@ -61,7 +62,7 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, setBusy, 
     async run(event, command, input = {}) {
       let acquired = false
       try {
-        const auth = check(event, input, ['ready', 'checkin_issue'].includes(command))
+        const auth = check(event, input, ['ready', 'checkin_issue', 'remote_issue'].includes(command))
         if (auth) return auth
         const active = store.read('active-check-in')
         if (active?.id) {
@@ -72,11 +73,13 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, setBusy, 
         // Return durable results before idle/preflight checks: a retry must never
         // take another card, even after restart or a newly signed server response.
         let claim
-        if (command === 'checkin_issue') {
-          claim = verifyTicket(input.ticket, env)
+        const delivery = command === 'checkin_issue' || command === 'remote_issue'
+        const kind = command === 'remote_issue' ? 'remote' : 'checkin'
+        if (delivery) {
+          claim = command === 'remote_issue' ? verifyRequest(input.envelope, env) : verifyTicket(input.ticket, env)
           const previous = store.read('operation-' + claim.operationId)
           if (previous) {
-            if (previous.room !== claim.room || previous.kind !== 'checkin') throw new Error('invalid_checkin_ticket')
+            if (previous.room !== claim.room || previous.kind !== kind) throw new Error('invalid_checkin_ticket')
             return previous.result || { success: false, reason: 'inspection_required', settled: false }
           }
         }
@@ -100,15 +103,15 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, setBusy, 
           result = await hardware('status', {}, event)
           if (result.success && (result.reason || result.empty || result.sensors || result.moving))
             result = { ...result, success: false, reason: result.reason || (result.empty ? 'empty' : 'card_present') }
-        } else if (command === 'checkin_issue') {
+        } else if (delivery) {
           const room = scopedRoom(claim.room, env), id = 'operation-' + claim.operationId
           const record = store.read('room-' + room)
           if (!record) return { success: false, reason: 'room_not_registered', settled: true }
           unresolved = true
           store.write('active-check-in', { id })
-          store.write(id, { room, kind: 'checkin', state: 'started', occurredAt: new Date().toISOString() })
+          store.write(id, { room, kind, state: 'started', occurredAt: new Date().toISOString() })
           result = await hardware('issue', { record, issueMode: 'uid_only' }, event)
-          store.write(id, { room, kind: 'checkin', state: 'complete', result: publicResult(result) })
+          store.write(id, { room, kind, state: 'complete', result: publicResult(result) })
           if (result.settled === true) store.write('active-check-in', null)
         } else if (command === 'register') {
           if (input.confirmed !== true) return { success: false, reason: 'confirmation_required' }

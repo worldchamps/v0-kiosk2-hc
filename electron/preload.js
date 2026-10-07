@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     checkInRequired: () => ipcRenderer.invoke('card-key:checkin-required'),
     ready: (room, reservationId) => ipcRenderer.invoke('card-key:ready', room, reservationId),
     issueCheckIn: ticket => ipcRenderer.invoke('card-key:issue-checkin', ticket),
+    issueRemote: envelope => ipcRenderer.invoke('card-key:issue-remote', envelope),
     available: () => ipcRenderer.invoke('card-key:available'),
     run: (command, input) => ipcRenderer.invoke('card-key:run', command, input),
     onProgress: callback => {

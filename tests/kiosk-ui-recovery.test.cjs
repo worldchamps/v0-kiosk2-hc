@@ -20,6 +20,7 @@ function load(file, extra = {}, globals = {}) {
     createContext: () => ({ Provider: 'Provider' }), useContext: () => undefined,
   };
   const deps = { react, 'react/jsx-runtime': { jsx: element, jsxs: element }, 'lucide-react': {},
+    '@/components/remote-key-listener': { RemoteKeyListener: 'RemoteKeyListener' },
     '@/components/check-in-card-progress': { default: 'CardProgress' },
     '@/lib/check-in-card': { checkCardBeforePayment: async () => {}, issueCheckInCard: async () => undefined, cardFailure: () => '카드 발급 실패' },
     '@/contexts/admin-context': { useAdmin: () => ({ password: '', authenticating: false, authenticate: async () => false, lock() {} }) },
@@ -53,6 +54,33 @@ async function paymentContext(saved, electronAPI) {
   render(); for (const effect of h.effects) await effect();
   return { localStorage, render, get value() { return render(); } };
 }
+
+test('remote card delivery waits for idle, sends card before receipt, and exposes partial failures', async () => {
+  for (const scenario of ['success', 'not-idle', 'printer-offline', 'card-failed', 'print-failed']) {
+    const calls = [], busy = []; let interval
+    const h = load('components/remote-key-listener.tsx', {
+      '@/lib/printer-utils': { autoConnectPrinter: async () => scenario !== 'printer-offline',
+        printRoomInfoReceipt: async () => { calls.push('print'); return scenario !== 'print-failed' } },
+    }, {
+      window: { electronAPI: { cardKey: { available: async () => true,
+        issueRemote: async () => { calls.push('card'); return { success: scenario !== 'card-failed', reason: 'empty', settled: true } } } } },
+      fetch: async (_url, options = {}) => {
+        if (options.method !== 'POST') return Response.json({ jobs: ['synthetic-job'] })
+        const { action } = JSON.parse(options.body); calls.push(action)
+        return Response.json(action === 'claim' ? { envelope: {}, receipt: { roomNumber: 'C103', password: '', floor: '1F' } } : { success: true })
+      },
+      setInterval: callback => { interval = callback; return 1 }, clearInterval() {}, setTimeout,
+    })
+    h.render({ idle: scenario !== 'not-idle', onBusy: value => busy.push(value) }, 'RemoteKeyListener')
+    const cleanups = h.effects.map(effect => effect())
+    for (let n = 0; n < 4; n++) await new Promise(resolve => setImmediate(resolve))
+    const expected = scenario === 'not-idle' ? [] : scenario === 'printer-offline' ? ['claim', 'fail'] :
+      scenario === 'card-failed' ? ['claim', 'card', 'fail'] : ['claim', 'card', 'printing', 'print', scenario === 'print-failed' ? 'fail' : 'complete']
+    assert.deepEqual(calls, expected, scenario)
+    assert.deepEqual(busy, scenario === 'not-idle' ? [] : [true, false])
+    for (const cleanup of cleanups) cleanup?.()
+  }
+})
 test('cash auto recovery clears only the archived session without asking for an administrator code', async () => {
   let request;
   const saved = JSON.stringify({ isActive: true, method: 'cash', acceptedAmount: 50000, requiredAmount: 30000,

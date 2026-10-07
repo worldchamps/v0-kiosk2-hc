@@ -306,6 +306,7 @@ test("kiosk UI waits for PC config, overrides a conflicting URL/location, and bl
       "@/contexts/payment-context": { usePayment: () => ({ paymentSession: { isActive: false } }) },
       "@/contexts/admin-context": { useAdmin: () => ({ authenticating: false, authenticate: async () => false, lock() {} }) },
       "@/components/print-queue-listener": { PrintQueueListener: "PrintQueueListener" },
+      "@/components/remote-key-listener": { RemoteKeyListener: "RemoteKeyListener" },
       "@/components/kiosk-progress": {},
     }
     for (const name of ["standby-screen", "idle-screen", "reservation-confirm", "current-location", "on-site-reservation",

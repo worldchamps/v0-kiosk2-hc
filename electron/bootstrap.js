@@ -19,7 +19,7 @@ if (!app.isPackaged) {
       throw new Error("카리브 장비 설정에 OVERLAY_MODE=true가 필요합니다.")
     const overlayMode = config.property === "property2" && config.env?.OVERLAY_MODE === "true"
     Object.assign(process.env, config.env, {
-      NODE_ENV: "production", KIOSK_PROPERTY_ID: config.property,
+      NODE_ENV: "production", KIOSK_PROPERTY_ID: config.property, KIOSK_DEVICE_ID: config.deviceId,
       NEXT_PUBLIC_KIOSK_PROPERTY_ID: config.property, OVERLAY_MODE: String(overlayMode),
     })
     app.setLoginItemSettings({ openAtLogin: true, path: app.getPath("exe") })
