@@ -13,10 +13,11 @@ from serial_manager import SerialDevice
 
 
 class CardError(Exception):
-    def __init__(self, reason, sectors=None):
+    def __init__(self, reason, sectors=None, **details):
         super().__init__(reason)
         self.reason = reason
         self.sectors = sectors or []
+        self.details = details
 
 
 def card_enabled(env):
@@ -157,11 +158,15 @@ class CardDispenser(SerialDevice):
             if len(payload) < 3 or payload[1:3] != command[:2]:
                 raise CardError("unexpected_response")
             if payload[0] == ord("N") and len(payload) == 4:
-                raise CardError("card_command_failed")
+                raise CardError("card_command_failed", deviceCode=payload[3])
             if payload[0] != ord("P"):
                 raise CardError("invalid_frame")
             return payload[3:]
         except CardError as exc:
+            # Command code and block index only; never expose key/card payloads.
+            exc.details["failedCommand"] = command[:2].hex().upper()
+            if command[:2] in (b";2", b";3", b";4") and len(command) > 2:
+                exc.details["failedBlock"] = command[2]
             self.last_failure = exc.reason
             # No wire request ID exists. Never let a late response satisfy a subsequent command.
             if exc.reason not in ("nak", "card_command_failed"):
@@ -224,7 +229,7 @@ class CardDispenser(SerialDevice):
         try:
             return action()
         except CardError as exc:
-            return {"success": False, "reason": exc.reason, "failedSectors": exc.sectors, "settled": False}
+            return {"success": False, "reason": exc.reason, "failedSectors": exc.sectors, "settled": False, **exc.details}
         except Exception:
             return {"success": False, "reason": "device_error", "settled": False}
         finally:
@@ -249,7 +254,7 @@ class CardDispenser(SerialDevice):
             except CardError as exc:
                 self.last_failure = exc.reason
                 result = {"success": False, "reason": exc.reason, "settled": False,
-                          "errorStage": self.error_stage, "receivedBytes": self.received_bytes}
+                          "errorStage": self.error_stage, "receivedBytes": self.received_bytes, **exc.details}
             # Only transport metadata, never raw serial bytes/card data, is exposed.
             return {**result, "port": self.port, "baudRate": self.baudrate,
                     "address": self.address.decode("ascii")}
@@ -278,7 +283,7 @@ class CardDispenser(SerialDevice):
             self._command(b";2" + bytes([sector * 4, 0x30 if key_type == "A" else 0x31]) + bytes.fromhex(key), deadline)
         except CardError as exc:
             if exc.reason == "card_command_failed":
-                raise CardError("authentication_failed", [sector]) from None
+                raise CardError("authentication_failed", [sector], **exc.details) from None
             raise
 
     def _read_block(self, block, deadline):
@@ -286,7 +291,7 @@ class CardDispenser(SerialDevice):
             raise CardError("invalid_block")
         data = self._command(b";3" + bytes([block]), deadline)
         if len(data) != 16:
-            raise CardError("invalid_block")
+            raise CardError("invalid_block", failedCommand="3B33", failedBlock=block, responseBytes=len(data))
         return data.hex()
 
     def _write_block(self, block, value, deadline):
@@ -305,7 +310,7 @@ class CardDispenser(SerialDevice):
         self._command(b";0", deadline)
         uid = self._command(b";1", deadline)
         if len(uid) not in (4, 7):
-            raise CardError("unsupported_card")
+            raise CardError("unsupported_card", failedCommand="3B31", responseBytes=len(uid))
         return uid.hex()
 
     def _read_position(self, deadline):
@@ -384,7 +389,7 @@ class CardDispenser(SerialDevice):
                 except CardError:
                     outcome = {"settled": False}
                 return {"success": False, "reason": exc.reason, "failedSectors": exc.sectors,
-                        "settled": outcome["settled"]}
+                        "settled": outcome["settled"], **exc.details}
             outcome = self._present_and_wait(progress)
             if outcome["success"]:
                 return {**outcome, "uid": uid, "blocks": blocks}
@@ -449,7 +454,7 @@ class CardDispenser(SerialDevice):
                         settled = True
                     except CardError:
                         pass
-                return {"success": False, "reason": exc.reason, "failedSectors": exc.sectors, "settled": settled}
+                return {"success": False, "reason": exc.reason, "failedSectors": exc.sectors, "settled": settled, **exc.details}
             progress({"state": "presented"})
             pickup_deadline = self.clock() + 60
             try:
@@ -464,7 +469,7 @@ class CardDispenser(SerialDevice):
                 except CardError:
                     pass
                 return {"success": False, "reason": "not_taken" if exc.reason == "timeout" else exc.reason,
-                        "settled": settled, "state": "captured" if settled else "unresolved"}
+                        "settled": settled, "state": "captured" if settled else "unresolved", **exc.details}
         return self._run_locked(run)
 
     def accept_return(self, progress=lambda _: None):
@@ -486,5 +491,5 @@ class CardDispenser(SerialDevice):
                     settled = True
                 except CardError:
                     pass
-                return {"success": False, "reason": exc.reason, "settled": settled}
+                return {"success": False, "reason": exc.reason, "settled": settled, **exc.details}
         return self._run_locked(run)

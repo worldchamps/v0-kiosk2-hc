@@ -26,6 +26,25 @@ const reasons: Record<string, string> = {
   room_not_registered: "먼저 해당 객실의 원본 카드를 등록하세요.",
   replacement_confirmation_required: "기존 등록일시를 확인한 뒤 교체를 승인하세요.",
   card_operation_failed: "카드 작업을 완료하지 못했습니다. 장치 상태와 등록 목록을 확인하세요.",
+  card_command_failed: "장비가 카드 읽기·쓰기 명령의 실패를 보고했습니다.",
+  invalid_block: "카드 데이터 응답 길이가 예상한 16바이트와 다릅니다.",
+  unsupported_card: "카드 고유번호 응답 형식이 현재 지원 범위와 다릅니다.",
+  device_error: "장비 통신 처리 중 내부 오류가 발생했습니다.",
+  command_rejected: "현재 장비 상태에서는 명령을 실행할 수 없습니다.",
+  issue_error: "장비가 카드 이송 오류를 보고했습니다.",
+  capture_error: "장비가 카드 회수 오류를 보고했습니다.",
+  invalid_record: "저장된 원본 카드 데이터 형식이 올바르지 않습니다.",
+  invalid_profile: "카드 인증 설정 형식이 올바르지 않습니다.",
+}
+const cardCommands: Record<string, string> = {
+  "4150": "장치 상태", "3B30": "카드 인식", "3B31": "고유번호 읽기",
+  "3B32": "섹터 인증", "3B33": "데이터 읽기", "3B34": "데이터 기록", "4643": "카드 이동",
+}
+const deviceErrors: Record<number, string> = {
+  0x00: "지원하지 않는 명령", 0x01: "명령 인수 오류", 0x02: "명령 데이터 오류",
+  0x03: "명령 실행 불가", 0x04: "명령 실행 실패", 0x41: "카드 탐색 실패",
+  0x42: "고유번호 읽기 실패", 0x43: "인증키 확인 실패", 0x44: "카드 선택 실패",
+  0x45: "데이터 읽기 실패", 0x46: "데이터 쓰기 실패",
 }
 const progressText: Record<string, string> = {
   insert_original: "원본 객실 카드를 앞 투입구에 넣어주세요.", reading: "원본 카드를 읽고 있습니다.",
@@ -76,12 +95,19 @@ export default function CardKeyAdmin({ onBusy }: { onBusy: (busy: boolean) => vo
       if (command === "status" && result.success) { setStatus(result); setUnresolved(Boolean(result.sensors || result.moving)) }
       if (!result.success) {
         const detail = result.errorStage ? ` [${result.port}, ${result.baudRate}bps, 장비 주소 ${result.address}: ${communicationStages[result.errorStage] || "통신 확인"}, 수신 ${result.receivedBytes || 0}바이트]` : ""
+        const diagnosis = [
+          result.reason ? `오류: ${result.reason}` : "오류: unknown",
+          result.failedCommand && `실패 단계: ${cardCommands[result.failedCommand] || result.failedCommand}`,
+          result.failedBlock !== undefined && `블록 ${result.failedBlock}`,
+          result.deviceCode !== undefined && `장비 코드 0x${result.deviceCode.toString(16).toUpperCase().padStart(2, "0")} (${deviceErrors[result.deviceCode] || "미분류 오류"})`,
+          result.responseBytes !== undefined && `응답 길이 ${result.responseBytes}바이트`,
+        ].filter(Boolean).join(" · ")
         const failure = result.reason === "timeout" && result.errorStage === "ack" && result.receivedBytes === 0
           ? "COM 포트는 열렸지만 발급기에서 응답이 없습니다. 발급기 전원·RS232 케이블·장비 주소를 확인하세요."
           : result.reason === "disconnected" && result.errorStage === "port"
           ? "COM 포트를 열지 못했습니다. 제조사 데모를 종료하고 USB 연결을 확인한 뒤 ‘장치 상태’를 다시 누르세요."
           : result.error || reasons[result.reason || ""] || "카드 작업에 실패했습니다."
-        setMessage(failure + detail +
+        setMessage(failure + detail + ` [${diagnosis}]` +
           (result.failedSectors?.length ? ` 실패 섹터: ${result.failedSectors.join(", ")}` : "") +
           ((result.recoveryRequired ?? (result.settled === false)) ? " 카드 위치가 미확정이므로 현장에서 확인하세요." : ""))
       } else {

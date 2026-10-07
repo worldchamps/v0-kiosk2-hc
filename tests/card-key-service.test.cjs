@@ -121,3 +121,14 @@ test('failed status polls allow settings recovery but cannot clear an unresolved
     assert.equal(f.busy, expected)
   }
 })
+
+test('failed registration returns device diagnostics without saving or exposing card data', async () => {
+  const f = fixture()
+  const failure = { success: false, reason: 'card_command_failed', settled: true,
+    failedCommand: '3B33', deviceCode: 0x45, failedBlock: 1 }
+  f.respond({ ...failure, uid: '01020304', blocks: { 1: 'ab'.repeat(16) }, rawResponse: 'private' })
+  assert.deepEqual(await f.service.run(f.event, 'register', { password: 'correct', confirmed: true, room: 'C101' }),
+    { ...failure, recoveryRequired: false })
+  assert.equal(f.records.size, 0)
+  assert.equal(f.busy, false)
+})

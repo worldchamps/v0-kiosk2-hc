@@ -32,6 +32,7 @@ class FakeK750:
         self.denied_sector = None
         self.write_delay = 0
         self.controls = []
+        self.denied_block = None
     @property
     def in_waiting(self):
         return min(len(self.input), 1)  # fragment every ACK/frame into individual bytes
@@ -65,6 +66,8 @@ class FakeK750:
                 reply = b"P;1" + bytes.fromhex("01020304")
             elif command[:2] == b";2" and command[2] // 4 == self.denied_sector:
                 reply = b"N;2\x01"
+            elif command[:2] == b";3" and command[2] == self.denied_block:
+                reply = b"N;3\x45"
             elif command[:2] == b";3":
                 value = self.blocks[command[2]]
                 if command[2] % 4 == 3:
@@ -241,6 +244,34 @@ class CardDispenserContracts(unittest.TestCase):
         self.assertEqual(result["failedSectors"], [0])
         self.assertIn(b"FC4", device.ser.commands)
         self.assertNotIn("blocks", result)
+
+    def test_registration_preserves_read_failure_details_after_returning_original(self):
+        device = self.device()
+        device.ser.denied_block = 1
+        progress = []
+        result = device.register(self.profile, progress.append)
+        self.assertFalse(result["success"])
+        self.assertTrue(result["settled"])
+        self.assertEqual(result["reason"], "card_command_failed")
+        self.assertEqual(result["failedCommand"], "3B33")
+        self.assertEqual(result["deviceCode"], 0x45)
+        self.assertEqual(result["failedBlock"], 1)
+        self.assertIn({"state": "presented"}, progress)
+        self.assertIn(b"FC4", device.ser.commands)
+        self.assertEqual(device.ser.wrote, set())
+        self.assertNotIn("uid", result)
+        self.assertNotIn("blocks", result)
+
+    def test_registration_reports_short_block_length_without_exposing_its_contents(self):
+        device = self.device()
+        device.ser.blocks[1] = b"sensitive"
+        result = device.register(self.profile)
+        self.assertEqual(result["reason"], "invalid_block")
+        self.assertEqual(result["responseBytes"], 9)
+        self.assertEqual(result["failedBlock"], 1)
+        self.assertTrue(result["settled"])
+        self.assertNotIn("sensitive", str(result))
+        self.assertNotIn(b"sensitive".hex(), str(result))
 
     def test_issue_verifies_one_card_never_writes_uid_and_waits_for_pickup(self):
         device = self.device()

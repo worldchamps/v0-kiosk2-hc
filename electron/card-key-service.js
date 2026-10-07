@@ -19,7 +19,7 @@ function validateProfile(value) {
   }
   return value
 }
-const publicResult = result => Object.fromEntries(['success', 'reason', 'settled', 'state', 'failedSectors', 'bits', 'sensors', 'moving', 'empty', 'low', 'hopperFull', 'captureFull', 'uidChanged', 'uidMatchesSource', 'port', 'baudRate', 'address', 'errorStage', 'receivedBytes']
+const publicResult = result => Object.fromEntries(['success', 'reason', 'settled', 'state', 'failedSectors', 'bits', 'sensors', 'moving', 'empty', 'low', 'hopperFull', 'captureFull', 'uidChanged', 'uidMatchesSource', 'port', 'baudRate', 'address', 'errorStage', 'receivedBytes', 'failedCommand', 'deviceCode', 'failedBlock', 'responseBytes']
   .filter(key => Object.hasOwn(result, key)).map(key => [key, result[key]]))
 
 function createCardKeyService({ env, store, bridge, authorize, isIdle, setBusy, token, timeoutMs = 105000 }) {

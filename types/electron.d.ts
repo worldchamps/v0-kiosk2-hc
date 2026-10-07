@@ -65,6 +65,10 @@ export interface CardKeyResult {
   address?: string
   errorStage?: string
   receivedBytes?: number
+  failedCommand?: string
+  deviceCode?: number
+  failedBlock?: number
+  responseBytes?: number
   rooms?: { room: string; registeredAt: string }[]
   sectors?: number[]
 }
