@@ -3,7 +3,6 @@ import { randomUUID } from "crypto"
 import { issueTicket } from "@/electron/card-issue-proof"
 import { createSheetsClient } from "@/lib/google-sheets"
 import { claimPayment, releasePaymentClaim, getPaymentClaim } from "@/lib/firebase-admin"
-import { transactionWithReadCache } from "@/lib/firebase-transaction"
 import { getRoomInfoByMatchingNumber } from "@/lib/firebase-beach-rooms"
 import { getPropertyFromRoomNumber } from "@/lib/property-utils"
 import { isShortStayAvailable, isShortStayRestrictedProperty } from "@/lib/short-stay-policy"
@@ -15,7 +14,7 @@ import { getKioskScope, isRoomInBuilding, buildingRestrictionMessage } from "@/l
 import { findKioskRoomSalesConfig, getKioskSalesConfig, isKioskSalesWindowOpen } from "@/lib/kiosk-sales-config"
 import {
   bookingHash, bookingRoomKey, bookingRecordRef, readOnSiteBooking, beginOnSiteBooking,
-  claimOnSiteRoom, rejectOnSiteBooking, finalizeOnSiteBooking, resumeOnSiteBooking,
+  claimOnSiteRoom, rejectOnSiteBooking, resumeOnSiteBooking,
   reservationTimestamp, roomScheduleConflicts, type OnSiteBookingRecord,
 } from "@/lib/on-site-bookings"
 
@@ -186,15 +185,11 @@ export async function POST(request: NextRequest) {
     await bookingRecordRef(key).set(record)
     appendAttempted = true
     safeToCancel = false
-    await sheets.spreadsheets.values.append({ spreadsheetId, range: "Reservations!A:N", valueInputOption: "RAW",
-      requestBody: { values: [record.sheetRow] } }, { timeout: 15000, retry: false })
-    // A retry may have reconciled the visible row while this append response
-    // was delayed. Never rewind complete/committing or recreate a consumed job.
-    const saved = await transactionWithReadCache(bookingRecordRef(key), current => current?.state === "saving"
-      ? { ...current, state: "saved" } : undefined)
-    record = saved.snapshot.val() || record
-    if (!record) return pending()
-    return resultOf(record.state === "saved" ? await finalizeOnSiteBooking(record) : record)
+    // Detect the table only in A: disconnected floor values in N must not shift the new row.
+    await sheets.spreadsheets.values.append({ spreadsheetId, range: "Reservations!A:A", valueInputOption: "RAW",
+      insertDataOption: "INSERT_ROWS", requestBody: { values: [record.sheetRow] } }, { timeout: 15000, retry: false })
+    // Verify the actual A:N row even after success; reuse recovery's no-replay transition.
+    return resultOf(await resumeOnSiteBooking(record, readRows))
   } catch (error) {
     console.error("[Kiosk booking] Processing requires verification:", error instanceof Error ? error.message : "Unknown error")
     if (record && ownsRecord && !appendAttempted) {

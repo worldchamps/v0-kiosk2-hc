@@ -95,7 +95,7 @@ function harness(building: string | undefined = "A", property = "property3") {
       }),
       reservationTimestamp: () => Date.now() + 86400000,
       roomScheduleConflicts: () => false,
-      finalizeOnSiteBooking: async (record: any) => {
+      resumeOnSiteBooking: async (record: any) => {
         effects.push("room-status", "queue")
         return { ...record, state: "complete" }
       },

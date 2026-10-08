@@ -62,6 +62,7 @@ function harness(options = {}) {
     '@/lib/google-sheets': { createSheetsClient: () => ({ spreadsheets: { values: {
       get: async request => {
         assert.equal(request.dateTimeRenderOption, 'FORMATTED_STRING');
+        if (options.readFailure && appendCount) throw new Error('QA readback unavailable');
         const values = copy(rows);
         if (options.formattedCurrency && request.valueRenderOption !== 'UNFORMATTED_VALUE') {
           for (const row of values) if (typeof row[5] === 'number') row[5] = row[5].toLocaleString('en-US');
@@ -71,8 +72,14 @@ function harness(options = {}) {
       append: async request => {
         appendCount++; effects.push('append');
         assert.equal(request.valueInputOption, 'RAW');
+        assert.equal(request.insertDataOption, 'INSERT_ROWS');
         if (options.beforeAppend) await options.beforeAppend();
-        if (options.appendFailure !== 'before') rows.push(copy(request.requestBody.values[0]));
+        if (options.appendFailure !== 'before') {
+          const row = copy(request.requestBody.values[0]);
+          // Reproduce a detached N-column table selected by the old A:N append.
+          const shifted = options.shiftedWrite || (options.detachedFloor && request.range === 'Reservations!A:N');
+          rows.push(shifted ? [...Array(13).fill(''), ...row] : row);
+        }
         if (options.afterAppend) await options.afterAppend();
         if (options.appendFailure) throw new Error('QA sheet outcome unknown');
       },
@@ -138,6 +145,40 @@ test('normal sale atomically reflects room/queue and replays without writing aga
   assert.deepEqual((await h.post()).body, first.body);
   assert.deepEqual(h.counts(), { append: 1, queue: 1 });
 });
+test('on-site write stays in A:N when the preceding floor column is detached', async () => {
+  const previous = ['QA', 'Previous guest', 'existing', 'OTA', 'QA', 50000, '', '26.11.07/15:00', '26.11.08/11:00', 'D901', '', '', '', '3'];
+  const h = harness({ rows: [previous], detachedFloor: true });
+  const result = await h.post();
+  assert.equal(result.status, 200);
+  assert.deepEqual(h.rows[0], previous);
+  assert.equal(h.rows[1][2], result.body.data.reservationId);
+  assert.equal(h.rows[1][9], 'B901');
+  assert.equal(h.rows[1].length, 14);
+});
+
+for (const failure of ['shifted', 'missing', 'changed', 'duplicate', 'unreadable']) {
+  test('acknowledged ' + failure + ' sheet row stays pending without room commands or another append', async () => {
+    const h = harness({ shiftedWrite: failure === 'shifted', readFailure: failure === 'unreadable', afterAppend: () => {
+      if (failure === 'missing') h.rows.pop();
+      if (failure === 'changed') h.rows[0][5] = 1;
+      if (failure === 'duplicate') h.rows.push(copy(h.rows[0]));
+    } });
+    const payment = card('qa-payment-readback-' + failure);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await h.post({ payment });
+      assert.equal(result.status, 202);
+      assert.equal(result.body.canCancelPayment, false);
+      assert.equal(result.body.data, undefined);
+      assert.equal(result.body.cardIssue, undefined);
+    }
+    assert.equal(h.get('beach_room_status/rooms/room901/status'), '공실');
+    assert.equal(h.get('kiosk_room_claims/property3/B901/state'), 'pending');
+    assert.equal(Object.values(h.get('kiosk_bookings'))[0].state, 'saving');
+    assert.equal(Object.values(h.get('payment_claims/toss_pay'))[0].status, 'claimed');
+    assert.deepEqual(h.counts(), { append: 1, queue: 0 });
+  });
+}
+
 test('room lock wins even while first append is delayed; second payment is not consumed', async () => {
   let resume, entered; const atAppend = new Promise(resolve => { entered = resolve; });
   const hold = new Promise(resolve => { resume = resolve; });
