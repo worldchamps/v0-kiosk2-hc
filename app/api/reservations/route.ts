@@ -5,10 +5,17 @@ import { getCurrentDateKST, normalizeDate, resolveReservationSheetDateTime } fro
 import { getPropertyFromReservation } from "@/lib/property-utils"
 import { getKioskScope, isRoomInBuilding } from "@/lib/kiosk-scope"
 
+const normalizeGuestName = (value: unknown) => {
+  const name = String(value ?? "").normalize("NFC").replace(/[\u200B-\u200D\uFEFF]/g, "").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US")
+  return /^[가-힣\s]+$/.test(name) ? name.replace(/\s/g, "") : name
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const guestName = searchParams.get("name")
+    const normalizedGuestName = guestName === null ? null : normalizeGuestName(guestName)
+    if (normalizedGuestName === "") return NextResponse.json({ reservations: [] })
     const reservationId = searchParams.get("reservationId")
     const todayOnly = searchParams.get("todayOnly") === "true"
     const scope = getKioskScope()
@@ -54,7 +61,7 @@ export async function GET(request: NextRequest) {
       }
 
       // Filter 2: if searching by name, only include matching names (no date normalization needed)
-      if (guestName && rowGuestName !== guestName) {
+      if (normalizedGuestName !== null && normalizeGuestName(rowGuestName) !== normalizedGuestName) {
         continue
       }
 

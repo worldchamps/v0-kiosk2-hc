@@ -145,6 +145,22 @@ test("device scope is runtime-only, mandatory for property3, and leaves other pr
   for (const value of ["B131", "131", "A동", "A131,B131", "A131-extra", "", null, 131]) assert.equal(scope.isRoomInBuilding(value, "A"), false)
 })
 
+test("Kariv name lookup tolerates spacing and Unicode composition but not partial or already checked-in names", async () => {
+  const api = harness(undefined, "property2")
+  api.rows.splice(0, api.rows.length, ["경주 카리브", "권다은", "synthetic-607", "test", "Standard", "50000", "",
+    "26.10.09/15:00", "26.10.10/11:00", "Kariv 607", "", "", "", "6"])
+  for (const name of ["권다은", " 권다은 ", "권 다은", "권다은".normalize("NFD"), "권다은\u200B"]) {
+    const data = await (await api.get("reservations", `kioskProperty=property2&name=${encodeURIComponent(name)}`)).json()
+    assert.equal(data.reservations.length, 1, name)
+    assert.equal(data.reservations[0].password, "")
+  }
+  for (const name of ["권다", "권다인", " ", "\u200B"]) {
+    assert.equal((await (await api.get("reservations", `name=${encodeURIComponent(name)}`)).json()).reservations.length, 0)
+  }
+  api.rows[0][11] = "Checked In"
+  assert.equal((await (await api.get("reservations", "name=" + encodeURIComponent("권다은"))).json()).reservations.length, 0)
+})
+
 test("public config contains only property/building; missing scope fails closed before any effects", async () => {
   assert.deepEqual(await (await harness("B").get("kiosk-config")).json(), { property: "property3", building: "B" })
   const api = harness("")
