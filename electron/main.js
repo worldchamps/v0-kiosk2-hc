@@ -1263,6 +1263,21 @@ global.shutdownKiosk = async () => {
 }
 
 app.whenReady().then(async () => {
+  const { desktopCapturer, screen } = require("electron")
+  const screenReporter = require("./kiosk-screen").createKioskScreenReporter({
+    identity: { deviceId: process.env.KIOSK_DEVICE_ID, property: process.env.KIOSK_PROPERTY_ID,
+      building: process.env.KIOSK_PROPERTY_ID === "property3" ? process.env.KIOSK_BUILDING || "" : "", version: app.getVersion() },
+    key: process.env.FIREBASE_PRIVATE_KEY,
+    capture: async () => {
+      if (!mainWindow || mainWindow.isDestroyed()) throw Error("Kiosk window unavailable")
+      const display = screen.getDisplayMatching(mainWindow.getBounds())
+      const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 1280, height: 1280 } })
+      const source = sources.find(item => item.display_id === String(display.id))
+      if (!source || source.thumbnail.isEmpty()) throw Error("Kiosk screen unavailable")
+      return source.thumbnail.toJPEG(60).toString("base64")
+    },
+  })
+  setInterval(() => void screenReporter.tick(), 5000).unref()
   await startNextServer()
   createWindow()
 }).catch((error) => {
