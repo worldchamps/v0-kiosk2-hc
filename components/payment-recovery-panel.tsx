@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { useAdmin } from "@/contexts/admin-context"
 import { usePayment } from "@/contexts/payment-context"
 
-export default function PaymentRecoveryPanel({ disabled = false, onResolved }: { disabled?: boolean; onResolved: () => void }) {
+export default function PaymentRecoveryPanel({ disabled = false, customerMode = false, onResolved }: { disabled?: boolean; customerMode?: boolean; onResolved: () => void }) {
   const { paymentSession: session, storageError, resolveRecovery, reportCashRecovery } = usePayment()
   const [open, setOpen] = useState(false)
   const { password, authenticate, lock } = useAdmin()
@@ -56,6 +56,7 @@ export default function PaymentRecoveryPanel({ disabled = false, onResolved }: {
     <p>추가 현금 투입은 하지 마세요. 반환 확인이 필요한 금액은 관리자가 확인합니다.</p>
     {error && <p className="text-lg text-red-700">{error}</p>}
   </section>
+  if (customerMode) return <p role="status" className="text-xl">결제 기록은 보관됩니다. 결제·반환 확인 전에는 다시 결제하지 마세요.</p>
   if (!open || !password) return <Button variant="outline" className="h-20 w-full text-2xl" disabled={disabled}
     onClick={async () => { if (await authenticate()) setOpen(true) }}>관리자 복구</Button>
   return <section role="dialog" aria-modal="true" aria-labelledby="payment-recovery-title"

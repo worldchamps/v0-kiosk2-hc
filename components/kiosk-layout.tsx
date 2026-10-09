@@ -225,7 +225,8 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
 
   const handleNavigate = async (screen: string) => {
     // A navigation is never proof that cash was returned or an approval was cancelled.
-    if (remoteKeyBusy || paymentSession.isActive || checkInSubmitting.current || checkInPending || lookupSubmitting.current || reservationData?.cardDelivery?.settled === false) return
+    const paymentInterrupted = Boolean(paymentSession.recoveryRequired || paymentSession.pendingBooking || storageError)
+    if (remoteKeyBusy || (paymentSession.isActive && !paymentInterrupted) || checkInSubmitting.current || checkInPending || lookupSubmitting.current || reservationData?.cardDelivery?.settled === false) return
 
     stopAllAudio(false)
 

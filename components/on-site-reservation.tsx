@@ -166,6 +166,19 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
   const submittingRef = useRef(false)
   const requestIdRef = useRef("")
   const [bookingError, setBookingError] = useState("")
+  const [paymentNotice, setPaymentNotice] = useState("")
+  const [recoveryAtHome, setRecoveryAtHome] = useState(false)
+  const hasPaymentProblem = Boolean(paymentSession.pendingBooking || paymentSession.recoveryRequired || storageError)
+  useEffect(() => {
+    if (!hasPaymentProblem) { setRecoveryAtHome(false); return }
+    if (submitting || deliveringCard) return
+    const timer = setTimeout(() => {
+      setGuestName(""); setPhoneNumber(""); setSelectedRoom(null); setSelectedStay(null)
+      setSelectedRoomType(""); setReservationData(null); setStep("stayType")
+      setRecoveryAtHome(true)
+    }, 5000)
+    return () => clearTimeout(timer)
+  }, [hasPaymentProblem, submitting, deliveringCard])
   useEffect(() => {
     onUpdateSafeChange?.(ready !== false && !storageError && step === "stayType" && !loading && !submitting && !paymentSession.isActive && !roomsError)
     return () => onUpdateSafeChange?.(false)
@@ -443,7 +456,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
 
   if (deliveringCard) return <CheckInCardProgress />
   if (ready === false) return <div role="status" className="p-12 text-2xl">이전 결제 기록을 확인하고 있습니다.</div>
-  if (paymentSession.pendingBooking || paymentSession.recoveryRequired || storageError) {
+  if (hasPaymentProblem && !recoveryAtHome) {
     return <div className="kiosk-content-container space-y-8 p-8" role="alert">
       <h1 className="text-4xl font-bold">결제 처리 확인이 필요합니다</h1>
       <p className="text-2xl">{storageError || bookingError || paymentSession.recoveryRequired || "예약을 처리하고 있습니다. 다시 결제하지 마세요."}</p>
@@ -454,7 +467,8 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
           {submitting ? "처리 결과 확인 중..." : "기존 결제 처리 결과 다시 확인"}
         </Button>}
       <p className="text-2xl">새 결제나 추가 현금 투입을 하지 마세요. 관리자 문의 010-5126-4644</p>
-      <PaymentRecoveryPanel disabled={submitting} onResolved={() => {
+      <p className="text-xl">5초 후 처음 화면으로 돌아갑니다.</p>
+      <PaymentRecoveryPanel customerMode disabled={submitting} onResolved={() => {
         requestIdRef.current = ""
         setBookingError(""); setGuestName(""); setPhoneNumber("")
         setSelectedStay(null); setSelectedRoomType(""); setSelectedRoom(null); setReservationData(null)
@@ -542,6 +556,20 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
         </nav>
 
         <div className="kiosk-stay-type-content">
+          {paymentNotice && <div className="kiosk-stay-status" role="alert"><p>{paymentNotice}</p></div>}
+          {hasPaymentProblem && <div className="kiosk-stay-status" role="alert">
+            <div>
+              <p>이전 결제 확인 중으로 새 결제는 잠시 중단됩니다. 예약 조회는 이용하실 수 있습니다. 문의 010-5126-4644</p>
+              {paymentSession.pendingBooking && !paymentSession.pendingBooking.cancellationStarted && !storageError &&
+                <Button disabled={submitting} onClick={() => submitPendingBooking(paymentSession.pendingBooking!)}>
+                  {submitting ? "처리 결과 확인 중..." : "기존 결제 처리 결과 다시 확인"}
+                </Button>}
+              <PaymentRecoveryPanel disabled={submitting} onResolved={() => {
+                requestIdRef.current = ""; setBookingError(""); setPaymentNotice("")
+                void fetchAvailableRooms(false)
+              }} />
+            </div>
+          </div>}
           {roomsError && (
             <div className="kiosk-stay-status" role="alert">
               <AlertTriangle aria-hidden="true" />
@@ -563,7 +591,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
                 <button
                   type="button"
                   className={`kiosk-stay-type-option is-overnight${loading || roomsError ? " is-unverified" : ""}`}
-                  disabled={loading || !!roomsError || !showOvernight}
+                  disabled={loading || !!roomsError || hasPaymentProblem || !showOvernight}
                   onClick={() => handleStayTypeSelect({ type: "overnight", label: "숙박" })}
                 >
                   <span className="kiosk-stay-icon"><BedDouble aria-hidden="true" /></span>
@@ -577,7 +605,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
               <button
                 type="button"
                 className={`kiosk-stay-type-option is-short-stay${loading || roomsError ? " is-unverified" : ""}`}
-                disabled={loading || !!roomsError || !showShortStay}
+                disabled={loading || !!roomsError || hasPaymentProblem || !showShortStay}
                 onClick={() => handleStayTypeSelect({ type: "shortStay", label: "대실" })}
               >
                 <span className="kiosk-stay-icon"><Clock aria-hidden="true" /></span>
@@ -953,6 +981,12 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
           cashAmount={cashAmount}
           onPaymentComplete={handlePaymentComplete}
           onCancel={handlePaymentCancel}
+          onUnavailable={(message) => {
+            setPaymentNotice(message); setGuestName(""); setPhoneNumber("")
+            setSelectedStay(null); setSelectedRoomType(""); setSelectedRoom(null)
+            setReservationData(null); setStep("stayType")
+            void fetchAvailableRooms(false)
+          }}
           title="결제 방법을 선택해주세요"
           description={`${selectedRoomType} · ${selectedStay?.label ?? ""} · ${selectedRoom.roomCode}호`}
         />

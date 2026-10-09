@@ -17,7 +17,7 @@ import {
   setEventCallback,
   initializeDevice,
 } from "@/lib/bill-acceptor-utils"
-import { dispenseBills, connectBillDispenser, isBillDispenserConnected } from "@/lib/bill-dispenser-utils"
+import { dispenseBills, connectBillDispenser, isBillDispenserConnected, getDispenserStatus } from "@/lib/bill-dispenser-utils"
 import { printReceipt } from "@/lib/printer-utils"
 
 interface PaymentScreenProps {
@@ -25,6 +25,7 @@ interface PaymentScreenProps {
   cashAmount: number
   onPaymentComplete: (payment: CompletedPayment) => void
   onCancel: () => void
+  onUnavailable: (message: string) => void
   title?: string
   description?: string
 }
@@ -34,6 +35,7 @@ export default function PaymentScreen({
   cashAmount,
   onPaymentComplete,
   onCancel,
+  onUnavailable,
   title = "결제",
   description = "결제수단을 선택해주세요",
 }: PaymentScreenProps) {
@@ -52,6 +54,8 @@ export default function PaymentScreen({
   latestSession.current = paymentSession
   const completionCallback = useRef(onPaymentComplete)
   completionCallback.current = onPaymentComplete
+  const unavailableCallback = useRef(onUnavailable)
+  unavailableCallback.current = onUnavailable
   const [paymentMethod, setPaymentMethod] = useState<"select" | "cash" | "card">("select")
   const requiredAmount = paymentMethod === "card" ? cardAmount : cashAmount
 
@@ -153,6 +157,11 @@ export default function PaymentScreen({
       try {
         const status = await getStatus()
 
+        if (status === null || status === 0x0c) {
+          requireRecovery("지폐인식기 응답이나 정상 상태를 확인하지 못했습니다. 추가 현금을 넣지 마세요.")
+          return
+        }
+
         // STACK_END (0x0B)
         if (status === 0x0b) {
           console.log("[v0] Polling: Detected STACK_END (0x0B)")
@@ -196,12 +205,6 @@ export default function PaymentScreen({
           if (!await enableAcceptance()) throw new Error("Acceptor enable not confirmed")
           setStatusMessage(largeBillsOnly ? "1만원권 또는 5만원권을 추가로 투입해주세요..." : "추가 지폐를 투입해주세요...")
 
-        } else if (status === 0x0c) {
-          setIsProcessing(false)
-          setError(largeBillsOnly
-            ? "1천원권·5천원권이 감지되었거나 인식기 오류가 발생했습니다. 관리자에게 문의해주세요."
-            : "지폐인식기 오류가 발생했습니다. 관리자에게 문의해주세요.")
-
         }
       } catch (e) {
         console.error("[v0] Polling error:", e)
@@ -228,16 +231,21 @@ export default function PaymentScreen({
           const connected = await connectBillAcceptor()
           if (!isMounted || cancellingRef.current) return
 
-          if (!connected) {
-            setError("현금 결제를 준비하지 못했습니다. 문의전화로 연락해주세요.")
-            setIsConnecting(false)
-            return
-          }
+          if (!connected) throw new Error("Acceptor disconnected")
         }
 
         if (!isMounted || cancellingRef.current) return
         console.log("[v0] Bill acceptor connected")
         setStatusMessage("지폐 투입구를 준비하고 있습니다...")
+        // Check both devices before opening the inlet; a cached connection is not readiness.
+        const initialStatus = await getStatus()
+        if (!isMounted || cancellingRef.current) return
+        if (initialStatus !== 0x01 && initialStatus !== 0x02) throw new Error("Acceptor not idle")
+        if (!await initializeDevice() || !await setConfig(0x1c)) throw new Error("Acceptor stop not confirmed")
+        if (!isMounted || cancellingRef.current) return
+        if (!isBillDispenserConnected() && !await connectBillDispenser()) throw new Error("Dispenser disconnected")
+        if (await getDispenserStatus() !== 0x62) throw new Error("Dispenser not ready")
+        if (!isMounted || cancellingRef.current) return
         acceptanceAttemptedRef.current = true
         if (!await enableAcceptance()) throw new Error("Acceptor enable not confirmed")
         // Cancellation drains this promise before stopping the acceptor. A late
@@ -257,10 +265,14 @@ export default function PaymentScreen({
         }
 
       } catch (error) {
-        if (isMounted) {
+        if (isMounted && !cancellingRef.current) {
           console.error("[v0] Payment initialization error:", error)
-          setError("현금 결제를 준비하지 못했습니다. 문의전화로 연락해주세요.")
           setIsConnecting(false)
+          if (acceptanceAttemptedRef.current || latestSession.current.acceptedAmount > 0) {
+            requireRecovery("현금 투입구 상태를 확인하지 못했습니다. 추가 현금을 넣지 마세요.")
+          } else if (await cancelPayment()) {
+            unavailableCallback.current("현금 장비가 준비되지 않아 결제를 시작하지 않았습니다. 잠시 후 다시 이용해주세요.")
+          }
         }
       }
     }
@@ -433,6 +445,7 @@ export default function PaymentScreen({
               onComplete={onPaymentComplete}
               onBack={() => setPaymentMethod("select")}
               onCancel={onCancel}
+              onUnavailable={onUnavailable}
             />
           </div>
         </div>

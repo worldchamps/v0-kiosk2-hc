@@ -20,6 +20,7 @@ function load(file, extra = {}, globals = {}) {
     createContext: () => ({ Provider: 'Provider' }), useContext: () => undefined,
   };
   const deps = { react, 'react/jsx-runtime': { jsx: element, jsxs: element }, 'lucide-react': {},
+    '@/lib/hardware-timeout': { hardwareCallWithin: async call => call() },
     '@/components/remote-key-listener': { RemoteKeyListener: 'RemoteKeyListener' },
     '@/components/check-in-card-progress': { default: 'CardProgress' },
     '@/lib/check-in-card': { checkCardBeforePayment: async () => {}, issueCheckInCard: async () => undefined, cardFailure: () => '카드 발급 실패' },
@@ -189,7 +190,7 @@ test('mismatched approval evidence survives restart and cannot be cleared by nav
   assert.equal(JSON.stringify(restored.value.paymentSession.recoveryEvidence), JSON.stringify(evidence));
   assert.equal(await restored.value.cancelPayment(), false); assert.equal(restored.value.startPayment(30000), false);
 });
-function cashScreen(amount, dispenseResult, acceptor = {}) {
+function cashScreen(amount, dispenseResult, acceptor = {}, dispenser = {}) {
   const calls = { dispense: [], cancelled: 0, complete: 0, recovery: '', returned: 0, polling: 0 };
   const paymentSession = { isActive: true, acceptedAmount: amount, acceptedBills: amount ? [amount] : [], requiredAmount: 30000, overpaymentAmount: Math.max(0, amount - 30000) };
   const payment = { paymentSession, startPayment: () => true, addBill() {}, isPaymentComplete: () => amount >= 30000,
@@ -198,11 +199,11 @@ function cashScreen(amount, dispenseResult, acceptor = {}) {
   const h = load('components/payment-screen.tsx', {
     '@/contexts/payment-context': { usePayment: () => payment }, '@/components/toss-front-card-payment': { default: 'Front' },
     '@/lib/bill-acceptor-utils': { initializeDevice: async () => true, setEventCallback() {}, setConfig: async () => true, isBillAcceptorConnected: () => true,
-      connectBillAcceptor: async () => true, enableAcceptance: async () => true, getBillData: async () => 0x32, getStatus: async () => 0x0b, ...acceptor },
-    '@/lib/bill-dispenser-utils': { dispenseBills: async n => { calls.dispense.push(n); return dispenseResult; }, connectBillDispenser: async () => true, isBillDispenserConnected: () => true },
+      connectBillAcceptor: async () => true, enableAcceptance: async () => true, getBillData: async () => 0x32, getStatus: async () => 0x01, ...acceptor },
+    '@/lib/bill-dispenser-utils': { dispenseBills: async n => { calls.dispense.push(n); return dispenseResult; }, connectBillDispenser: async () => true, isBillDispenserConnected: () => true, getDispenserStatus: async () => 0x62, ...dispenser },
     '@/lib/printer-utils': { printReceipt() {} },
   }, { window: {}, setTimeout: fn => { fn(); return 1; }, clearInterval() {}, setInterval() { calls.polling++; return 1; } });
-  const props = { cardAmount: 30000, cashAmount: 30000, onCancel: () => calls.cancelled++, onPaymentComplete: () => calls.complete++ };
+  const props = { cardAmount: 30000, cashAmount: 30000, onCancel: () => calls.cancelled++, onPaymentComplete: () => calls.complete++, onUnavailable: message => calls.unavailable = message };
   const render = () => h.render(props);
   render(); h.button('현금 결제 30,000원').onClick(); render();
   return { ...h, calls, paymentSession, render };
@@ -234,7 +235,9 @@ for (const action of ['취소', '결제수단 변경']) {
       setConfig: async () => { stops++; return !enabling; },
     });
     h.renderEffects.at(-1)(); // Start the actual cash initialization effect.
+    await new Promise(resolve => setImmediate(resolve));
     assert.equal(enabling, true);
+    stops = 0; // Ignore the preflight reset/stop completed before opening the inlet.
     const cancelling = h.button(action).onClick();
     await Promise.resolve();
     assert.equal(stops, 0, 'must drain enable before sending another OK-returning command');
@@ -275,12 +278,29 @@ test('confirmed zero-cash cancellation does not send a duplicate stop on unmount
 });
 
 test('zero-cash cancellation still blocks when acceptor shutdown is not confirmed', async () => {
-  const h = cashScreen(0, false, { initializeDevice: async () => false });
-  h.renderEffects.at(-1)(); await Promise.resolve();
+  let resets = 0;
+  const h = cashScreen(0, false, { initializeDevice: async () => ++resets === 1 });
+  h.renderEffects.at(-1)(); await new Promise(resolve => setImmediate(resolve));
   await h.button('취소').onClick();
   assert(h.calls.recovery); assert.equal(h.calls.cancelled, 0);
   assert.deepEqual(h.calls.dispense, []);
 });
+
+for (const stage of ['acceptor', 'reset', 'stop', 'dispenser']) {
+  test(`cash ${stage} preflight failure returns home before accepting money`, async () => {
+    let enables = 0;
+    const h = cashScreen(0, false, {
+      getStatus: async () => stage === 'acceptor' ? null : 1,
+      initializeDevice: async () => stage !== 'reset',
+      setConfig: async () => stage !== 'stop',
+      enableAcceptance: async () => { enables++; return true; },
+    }, { getDispenserStatus: async () => stage === 'dispenser' ? -1 : 0x62 });
+    h.renderEffects.at(-1)(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(enables, 0); assert.equal(h.calls.polling, 0);
+    assert.equal(h.calls.cancelled, 1); assert(h.calls.unavailable);
+    assert.equal(h.calls.recovery, ''); assert.deepEqual(h.calls.dispense, []);
+  });
+}
 for (const [amount, result] of [[35000, true], [50000, false]]) {
   test(`cash completion ${amount}/${result} cannot complete with unreturned change`, async () => {
     const h = cashScreen(amount, result); await h.callbacks[0](amount);
@@ -329,7 +349,7 @@ for (const action of ['completion', 'cancellation']) {
 }
 
 async function onsite(stay = 'shortStay', scenario = {}) {
-  let idle, responseMode = 'success', release, roomLookupFails = false, roomPayload; const posts = [], intervals = [];
+  let idle, responseMode = 'success', release, roomLookupFails = false, roomPayload; const posts = [], intervals = [], timers = [];
   const session = { isActive: false, acceptedAmount: 0 };
   const observed = { cancelledApprovals: 0, completed: 0 };
   const payment = { paymentSession: session, ready: true, storageError: '',
@@ -346,7 +366,7 @@ async function onsite(stay = 'shortStay', scenario = {}) {
     '@/lib/room-utils': { getRoomImagePath: () => '/test.png' }, '@/lib/room-type-order': { sortRoomTypes: types => types.sort() },
     '@/components/payment-screen': { default: 'PaymentScreen' }, '@/components/check-in-complete': { default: 'CheckInComplete' },
     '@/components/kiosk-progress': { KioskProgressScreen: 'Progress', ON_SITE_PROGRESS_STEPS: [] },
-  }, { window: { crypto: { randomUUID }, setInterval: fn => { intervals.push(fn); return intervals.length; }, clearInterval() {},
+  }, { setTimeout: (fn, delay) => { timers.push({ fn, delay }); return timers.length }, clearTimeout() {}, window: { crypto: { randomUUID }, setInterval: fn => { intervals.push(fn); return intervals.length; }, clearInterval() {},
       electronAPI: { tossFront: { cancelPayment: async () => { observed.cancelledApprovals++; return { success: true }; } } } }, alert() {},
     fetch: async (_url, options) => {
       if (!options?.method) return { ok: !roomLookupFails, status: roomLookupFails ? 503 : 200, json: async () => roomPayload === undefined ? ({ roomsByType: rooms.length ? { Standard: rooms } : {} }) : roomPayload };
@@ -362,12 +382,39 @@ async function onsite(stay = 'shortStay', scenario = {}) {
   render(); for (const effect of h.effects) effect(); await settle();
   const click = async label => { await h.button(label).onClick(); await settle(); };
   return { ...h, render, settle, click, posts, session, observed, mode: x => responseMode = x, release: () => release(),
+    async recoverHome() { for (const effect of h.renderEffects) effect(); assert.equal(timers.at(-1).delay, 5000); timers.at(-1).fn(); await settle(); },
     async roomList() { await click(stay === 'shortStay' ? '대실 잠시 이용' : '숙박 오늘 입실 · 내일 퇴실'); await click('Standard 선택'); },
     async pay() { await this.roomList(); await click('B901호 선택'); await click('확인하고 결제하기'); },
     async idle() { await idle(); await settle(); }, async emptyRooms() { rooms = []; intervals[0](); await settle(); },
     async endShortStay() { rooms = rooms.map(room => ({ ...room, stayEnabled: { ...room.stayEnabled, shortStay: false } })); intervals[0](); await settle(); },
     async roomLookupFailure(value = true) { roomLookupFails = value; intervals[0](); await settle(); },
     async malformedRooms(value) { roomPayload = value; intervals[0](); await settle(); } };
+}
+
+test('unresolved payment returns home after five seconds, preserves evidence and permits lookup but not another sale', async () => {
+  const h = await onsite(); await h.pay(); h.mode('lost');
+  await h.component('PaymentScreen').props.onPaymentComplete({ method: 'CARD', provider: 'TOSS_FRONT', front: { test: true } }); await h.settle();
+  const original = h.session.pendingBooking;
+  await h.recoverHome();
+  assert.equal(h.button('예약 체크인').disabled, undefined);
+  assert.equal(h.button('숙박 오늘 입실 · 내일 퇴실').disabled, true);
+  assert.equal(h.session.pendingBooking, original); assert(h.session.isActive);
+  assert.equal(h.component('PaymentRecoveryPanel').props.customerMode, undefined, 'optional staff reconciliation remains reachable from home');
+  h.mode('success'); await h.click('기존 결제 처리 결과 다시 확인');
+  assert.equal(h.posts[0], h.posts[1]); assert.equal(h.observed.completed, 1);
+});
+
+for (const status of [null, { configured: true, connected: false, authenticated: false }]) {
+  test('unavailable card terminal returns home without an approval request: ' + JSON.stringify(status), async () => {
+    let requests = 0, cancellations = 0, home = 0;
+    const h = load('components/toss-front-card-payment.tsx', {
+      '@/contexts/payment-context': { usePayment: () => ({ cancelPayment: async () => { cancellations++; return true }, setCardInFlight() { assert.fail() }, requireRecovery() { assert.fail() } }) },
+    }, { window: { electronAPI: { tossFront: { getStatus: async () => status, onStatus() {}, requestPayment: async () => { requests++ } } } } });
+    h.render({ requiredAmount: 30000, onUnavailable: () => home++ });
+    for (const effect of h.effects) effect();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requests, 0); assert.equal(cancellations, 1); assert.equal(home, 1);
+  });
 }
 test('missing room original blocks payment before any payment session or booking is created', async () => {
   const h = await onsite('overnight', { cardHelpers: { checkCardBeforePayment: async () => { throw Error('missing original') } } });

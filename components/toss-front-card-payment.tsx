@@ -6,12 +6,14 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import type { CompletedPayment, TossFrontPaymentProof } from "@/lib/payment-types"
 import { usePayment } from "@/contexts/payment-context"
+import { hardwareCallWithin } from "@/lib/hardware-timeout"
 
 interface TossFrontCardPaymentProps {
   requiredAmount: number
   onComplete: (payment: CompletedPayment) => void
   onBack: () => void
   onCancel: () => void
+  onUnavailable: (message: string) => void
 }
 
 type PaymentState = "idle" | "waiting" | "complete" | "error"
@@ -29,6 +31,7 @@ export default function TossFrontCardPayment({
   onComplete,
   onBack,
   onCancel,
+  onUnavailable,
 }: TossFrontCardPaymentProps) {
   const [state, setState] = useState<PaymentState>("idle")
   const [status, setStatus] = useState<FrontStatus>({
@@ -39,23 +42,32 @@ export default function TossFrontCardPayment({
   const [error, setError] = useState("")
   const autoStartedRef = useRef(false)
   const requestInFlight = useRef(false)
-  const { setCardInFlight, requireRecovery } = usePayment()
+  const { setCardInFlight, requireRecovery, cancelPayment } = usePayment()
+  const unavailableCallback = useRef(onUnavailable)
+  unavailableCallback.current = onUnavailable
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
 
   const refreshStatus = useCallback(async () => {
     if (!window.electronAPI?.tossFront) {
       setStatus({ configured: false, connected: false, authenticated: false })
-      setError("토스 프론트 결제는 키오스크 앱(Electron)에서만 사용할 수 있습니다.")
+      if (await cancelPayment() && mounted.current) unavailableCallback.current("카드 단말기에 연결할 수 없어 결제를 시작하지 않았습니다.")
       return
     }
     try {
-      const nextStatus = await window.electronAPI.tossFront.getStatus()
+      const nextStatus = await hardwareCallWithin(() => window.electronAPI!.tossFront!.getStatus(), 5000)
+      if (!mounted.current) return
+      if (!nextStatus?.configured || !nextStatus.connected || !nextStatus.authenticated) throw new Error("Terminal not ready")
       setStatus(nextStatus)
       if (nextStatus.error) setError(nextStatus.error)
     } catch {
       setStatus({ configured: false, connected: false, authenticated: false })
-      setError("카드 단말기 상태를 확인하지 못했습니다. 관리자에게 문의해주세요.")
+      setError("카드 단말기 상태를 확인하지 못했습니다.")
+      if (!requestInFlight.current && !autoStartedRef.current && await cancelPayment() && mounted.current) {
+        unavailableCallback.current("카드 단말기가 준비되지 않아 결제를 시작하지 않았습니다. 잠시 후 다시 이용해주세요.")
+      }
     }
-  }, [])
+  }, [cancelPayment])
 
   useEffect(() => {
     void refreshStatus()
