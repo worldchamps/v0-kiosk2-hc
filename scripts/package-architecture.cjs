@@ -32,7 +32,7 @@ function installerArchitecture(file) {
     return arch
   } finally {
     check(path.dirname(dir) === path.resolve(os.tmpdir()), "Unsafe inspection cleanup path")
-    fs.rmSync(dir, { recursive: true, force: true })
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   }
 }
 module.exports = { peArchitecture, installerArchitecture }
