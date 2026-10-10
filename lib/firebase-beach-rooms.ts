@@ -39,7 +39,11 @@ export async function getBeachRoomStatusFromFirebase(): Promise<BeachRoomData[]>
     }
 
     // Convert Firebase object to array
-    const rooms: BeachRoomData[] = Object.values(data)
+    const rooms = (Object.values(data) as BeachRoomData[]).map(room =>
+      getPropertyFromRoomNumber(room.matchingRoomNumber) === "property2" && room.status?.trim() === "청소완료"
+        ? { ...room, status: "공실" }
+        : room,
+    )
 
     console.log(`[Firebase] Successfully fetched ${rooms.length} rooms from Firebase`)
 

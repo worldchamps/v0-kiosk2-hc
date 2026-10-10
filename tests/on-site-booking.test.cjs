@@ -124,6 +124,46 @@ function harness(options = {}) {
 }
 const card = id => ({ method: 'CARD', provider: 'TOSS_PAY', payToken: id, orderNo: 'QA-' + id });
 
+test('Kariv cleaned rooms pass listing, pre-payment and booking checks without rewriting status on read', async () => {
+  const h = harness({ roomCode: 'Kariv 206', env: { KIOSK_PROPERTY_ID: 'property2', KIOSK_BUILDING: '' } });
+  h.set('beach_room_status/rooms/room901/category', 'Kariv ');
+  h.set('beach_room_status/rooms/room901/status', '청소완료');
+  const rooms = await h.modules['@/lib/firebase-beach-rooms'].getAvailableRooms('KARIV');
+  assert.equal(rooms.length, 1);
+  assert.equal(rooms[0].status, '공실');
+  assert.equal(h.get('beach_room_status/rooms/room901/status'), '청소완료');
+  assert.equal((await h.preflight()).status, 200);
+  assert.deepEqual(h.effects, []);
+  assert.equal((await h.post()).status, 200);
+  assert.deepEqual(h.counts(), { append: 1, queue: 1 });
+  h.set('beach_room_status/rooms/room901/status', '청소완료');
+  assert.equal((await h.modules['@/lib/firebase-beach-rooms'].getAvailableRooms('KARIV')).length, 0);
+});
+
+test('Kariv cleaned status does not clear sale blocks or override occupied/unknown rooms and other properties', async () => {
+  for (const fields of [{ unavailable: 'X' }, { vendingAvailable: false }, { vendingAvailable: 'X' },
+    { status: '사용중' }, { status: '외출중' }, { status: '청소대기중' }, { status: '알수없음' }]) {
+    const h = harness({ roomCode: 'Kariv 301', env: { KIOSK_PROPERTY_ID: 'property2', KIOSK_BUILDING: '' } });
+    h.set('beach_room_status/rooms/room901/category', 'Kariv ');
+    h.set('beach_room_status/rooms/room901/status', '청소완료');
+    for (const [key, value] of Object.entries(fields)) h.set('beach_room_status/rooms/room901/' + key, value);
+    const before = copy(h.get('beach_room_status'));
+    assert.equal((await h.modules['@/lib/firebase-beach-rooms'].getAvailableRooms('KARIV')).length, 0);
+    assert.equal((await h.preflight()).status, 409);
+    assert.equal((await h.post()).status, 409);
+    assert.deepEqual(h.get('beach_room_status'), before);
+    assert.deepEqual(h.counts(), { append: 0, queue: 0 });
+  }
+  for (const [property, building, roomCode] of [['property1', '', 'C901'], ['property3', 'B', 'B901'], ['property4', '', 'Camp901']]) {
+    const h = harness({ roomCode, env: { KIOSK_PROPERTY_ID: property, KIOSK_BUILDING: building } });
+    h.set('beach_room_status/rooms/room901/status', '청소완료');
+    assert.equal((await h.modules['@/lib/firebase-beach-rooms'].getAvailableRooms()).length, 0);
+    assert.equal((await h.preflight()).status, 409);
+    assert.equal((await h.post()).status, 409);
+    assert.deepEqual(h.counts(), { append: 0, queue: 0 });
+  }
+});
+
 test('pre-payment check rejects overlap, cleaning buffer, wrong building and unreadable schedules without any write', async () => {
   for (const start of ['2026-09-10/16:00', '2026-09-11/12:00']) {
     const row = Array(14).fill(''); row[7] = start; row[8] = '2026-09-12/11:00'; row[9] = 'B901';
