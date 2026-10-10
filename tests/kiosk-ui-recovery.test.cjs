@@ -54,8 +54,32 @@ async function paymentContext(saved, electronAPI) {
   const h = load('contexts/payment-context.tsx', {}, { window: { localStorage, electronAPI } });
   const render = () => h.render({ children: null }, 'PaymentProvider').props.value;
   render(); for (const effect of h.effects) await effect();
-  return { localStorage, render, get value() { return render(); } };
+  return { localStorage, render, activateOperations: () => { render(); return h.renderEffects.at(-1)(); }, get value() { return render(); } };
 }
+
+test('remote settlement archives current memory and clears only unchanged evidence after native confirmation', async () => {
+  for (const outcome of ['success', 'failed', 'changed']) {
+    let receive, archived;
+    const saved = JSON.stringify({ isActive: true, method: 'cash', acceptedAmount: 70000, requiredAmount: 70000, acceptedBills: [50000, 10000, 10000], sessionStartTime: 1000, recoveryRequired: '예약 충돌' });
+    const h = await paymentContext(saved, { paymentRecovery: {
+      onOperationsRequest: callback => { receive = callback; return () => {}; },
+      archiveRemote: async input => { archived = input;
+        if (outcome === 'changed') h.localStorage.map.set('kiosk-payment-recovery-v1', saved + ' ');
+        return { success: outcome !== 'failed', archiveId: 'QA-encrypted-archive' };
+      },
+    } });
+    h.localStorage.map.set('device-setting', 'keep'); h.activateOperations();
+    const state = await receive({ kind: 'snapshot' });
+    assert.equal(state.raw, saved); assert.equal(JSON.parse(state.memory).acceptedAmount, 70000);
+    const command = { request: { id: 'QA-signed-command' } };
+    const result = await receive({ kind: 'recover', command });
+    assert.equal(archived.command, command); assert.equal(archived.memorySnapshot, state.memory);
+    assert.equal(result.success, outcome === 'success');
+    assert.equal(h.value.paymentSession.isActive, outcome !== 'success');
+    assert.equal(h.localStorage.getItem('device-setting'), 'keep');
+    assert.equal(h.localStorage.getItem('kiosk-payment-recovery-v1') === null, outcome === 'success');
+  }
+});
 
 test('remote card delivery waits for idle, sends card before receipt, and exposes partial failures', async () => {
   for (const scenario of ['success', 'not-idle', 'printer-offline', 'card-failed', 'print-failed']) {

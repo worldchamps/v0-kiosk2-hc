@@ -27,7 +27,7 @@ function isAutomaticCash(session) {
     typeof session.recoveryRequired === 'string' && !!session.recoveryRequired
 }
 
-function createPaymentRecovery({ app, safeStorage, isIdle, stopCash, setBusy, now = Date.now }) {
+function createPaymentRecovery({ app, safeStorage, isIdle, stopCash, setBusy, authorizeRemote = () => false, now = Date.now }) {
   let failures = 0, blockedUntil = 0, busy = false
   function localFrame(event) {
     check(event.senderFrame === event.sender.mainFrame &&
@@ -56,8 +56,13 @@ function createPaymentRecovery({ app, safeStorage, isIdle, stopCash, setBusy, no
     async archive(event, input, automatic = false) {
       let acquired = false
       try {
+        const remote = automatic === 'remote'
         if (automatic) localFrame(event)
         else authenticate(event, input?.password)
+        if (remote) {
+          check(authorizeRemote(input?.command, input?.expectedRaw, input?.memorySnapshot), 'PMS 복구 요청의 장비·거래·유효시간을 확인하지 못했습니다.')
+          input = { ...input, confirmed: true, resolution: 'operator_resolved', note: '관리자 정산 완료' }
+        }
         check(!busy && isIdle(), '진행 중인 결제·예약·장비 요청이 있습니다. 완료 후 다시 확인해주세요.')
         check(input.expectedRaw === null || (typeof input.expectedRaw === 'string' && input.expectedRaw.length > 0 && input.expectedRaw.length <= 262144),
           '보관할 결제 기록을 읽지 못했습니다. 전체 데이터를 삭제하지 말고 관리자에게 문의해주세요.')
@@ -66,7 +71,7 @@ function createPaymentRecovery({ app, safeStorage, isIdle, stopCash, setBusy, no
         const memorySession = JSON.parse(input.memorySnapshot)
         check(memorySession && typeof memorySession === 'object' &&
           (input.expectedRaw !== null || memorySession.isActive === true), '보관할 거래 정보가 없습니다.')
-        if (automatic) {
+        if (automatic && !remote) {
           check(isAutomaticCash(memorySession), '자동 복귀할 수 있는 현금 오류 기록이 아닙니다.')
           input = { ...input, resolution: 'cash_incident', note: '현금 오류 기록 후 입실 중단' }
         } else {
@@ -80,7 +85,7 @@ function createPaymentRecovery({ app, safeStorage, isIdle, stopCash, setBusy, no
         check(await readCurrent(event) === input.expectedRaw, '결제 기록이 변경되었습니다. 화면을 다시 확인해주세요.')
         let session
         try { session = JSON.parse(input.expectedRaw) } catch { /* Preserve malformed evidence verbatim for an operator review. */ }
-        if (automatic) check(isAutomaticCash(session) && session.acceptedAmount === memorySession.acceptedAmount &&
+        if (automatic && !remote) check(isAutomaticCash(session) && session.acceptedAmount === memorySession.acceptedAmount &&
           session.requiredAmount === memorySession.requiredAmount && session.sessionStartTime === memorySession.sessionStartTime,
           '저장된 현금 오류 기록을 확인하지 못했습니다.')
         if (input.resolution === 'zero_cash' || input.note === '현금 미투입 취소') check(input.resolution === 'zero_cash' &&
@@ -104,7 +109,8 @@ function createPaymentRecovery({ app, safeStorage, isIdle, stopCash, setBusy, no
         const file = path.join(directory, archiveId + '.bin')
         const record = { ...identity, archiveId, reviewedAt: new Date(now()).toISOString(), version: app.getVersion(),
           property: process.env.KIOSK_PROPERTY_ID || null, building: process.env.KIOSK_BUILDING || process.env.KIOSK_START_LOCATION || null,
-          kind: automatic ? 'cash-incident-awaiting-review' : 'operator-reviewed-local-unlock', financialCommandsSent: 0 }
+          kind: remote ? 'operator-reviewed-remote-unlock' : automatic ? 'cash-incident-awaiting-review' : 'operator-reviewed-local-unlock',
+          ...(remote ? { commandId: input.command.request.id } : {}), financialCommandsSent: 0 }
         try {
           const encrypted = safeStorage.encryptString(JSON.stringify(record))
           const fd = fs.openSync(file, 'wx', 0o600)

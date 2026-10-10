@@ -140,7 +140,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
   }, [save])
   const isPaymentComplete = useCallback(() => paymentSession.isActive && paymentSession.acceptedAmount >= paymentSession.requiredAmount, [paymentSession])
 
-  const finishRecovery = useCallback(async (password?: string, resolution?: "zero_cash" | "operator_resolved", note?: string) => {
+  const finishRecovery = useCallback(async (password?: string, resolution?: "zero_cash" | "operator_resolved", note?: string, command?: unknown) => {
     if (recoveryBusy.current) return { success: false, error: "복구 기록을 보관하고 있습니다." }
     recoveryBusy.current = true
     try {
@@ -148,7 +148,9 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
       if (!api) return { success: false, error: "관리자 복구를 지원하는 설치형 키오스크에서 실행해주세요." }
       const expectedRaw = window.localStorage.getItem(STORAGE_KEY)
       const expectedSession = JSON.stringify(current.current)
-      const result = password === undefined
+      const result = command
+        ? await api.archiveRemote!({ command, expectedRaw, memorySnapshot: expectedSession })
+        : password === undefined
         ? await api.reportCash({ expectedRaw, memorySnapshot: expectedSession })
         : await api.archive({ password, expectedRaw, memorySnapshot: expectedSession, resolution: resolution!, note: note!, confirmed: true })
       if (!result.success || !result.archiveId) return { success: false, error: result.error || "복구 기록 보관을 확인하지 못했습니다." }
@@ -170,6 +172,15 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
   const resolveRecovery = useCallback((password: string, resolution: "zero_cash" | "operator_resolved", note: string) =>
     finishRecovery(password, resolution, note), [finishRecovery])
   const reportCashRecovery = useCallback(() => finishRecovery(), [finishRecovery])
+
+  useEffect(() => {
+    if (!ready) return
+    return window.electronAPI?.paymentRecovery?.onOperationsRequest?.(async request => {
+      if (request.kind === 'snapshot') return { raw: window.localStorage.getItem(STORAGE_KEY), memory: JSON.stringify(current.current), storageError }
+      if (request.kind === 'recover') return finishRecovery(undefined, undefined, undefined, request.command)
+      return { success: false, error: '지원하지 않는 복구 요청입니다.' }
+    })
+  }, [ready, finishRecovery, storageError])
 
   return <PaymentContext.Provider value={{ paymentSession, ready, storageError, startPayment, addBill, recordCashReturned,
     completePayment, cancelPayment, isPaymentComplete, setCardInFlight, requireRecovery, savePendingBooking, resolveRecovery, reportCashRecovery }}>

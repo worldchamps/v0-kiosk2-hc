@@ -106,6 +106,8 @@ export interface ElectronAPI {
   getPropertyId: () => Promise<string>
   getOverlayMode: () => Promise<boolean>
   paymentRecovery: {
+    onOperationsRequest?: (callback: (request: { kind: string; command?: unknown }) => Promise<unknown>) => () => void
+    archiveRemote?: (input: { command: unknown; expectedRaw: string | null; memorySnapshot: string }) => Promise<{ success: boolean; archiveId?: string; error?: string }>
     reportCash: (input: { expectedRaw: string | null; memorySnapshot: string }) => Promise<{ success: boolean; archiveId?: string; error?: string }>
     authorize: (password: string) => Promise<{ success: boolean; error?: string }>
     archive: (input: { password: string; expectedRaw: string | null; memorySnapshot: string; confirmed: boolean; resolution: "zero_cash" | "operator_resolved"; note: string }) =>
@@ -154,7 +156,8 @@ export interface ElectronAPI {
   cutBixolonPaper: () => Promise<boolean>
   sendRawToBixolon: (data: number[]) => Promise<boolean>
   printToSam4s: (receipt: unknown) => Promise<{ success: boolean; printer?: string; error?: string }>
-  getReceiptPrinterStatus: () => Promise<{ backend: "bixolon" | "sam4s" | "woosim"; connected?: boolean }>
+  getReceiptPrinterStatus: () => Promise<{ backend: "bixolon" | "sam4s" | "woosim"; connected?: boolean; error?: string }>
+  reportPrinterResult?: (result: { status: 'sent' | 'failed'; roomNumber: string; error: string }) => Promise<void>
   printToWoosim: (receipt: unknown) => Promise<{ success: boolean; printer?: string; error?: string }>
 
   // 유틸리티

@@ -47,6 +47,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getPropertyId: () => ipcRenderer.invoke("get-property-id"),
   getOverlayMode: () => ipcRenderer.invoke("get-overlay-mode"),
   paymentRecovery: {
+    onOperationsRequest: callback => {
+      const listener = async (_event, request) => {
+        let result
+        try { result = await callback(request) } catch { result = { success: false, error: '화면의 결제 기록을 확인하지 못했습니다.' } }
+        ipcRenderer.send('operations:response', { id: request.id, result })
+      }
+      ipcRenderer.on('operations:request', listener)
+      return () => ipcRenderer.removeListener('operations:request', listener)
+    },
+    archiveRemote: input => ipcRenderer.invoke('payment-recovery:archive-remote', input),
     authorize: password => ipcRenderer.invoke("payment-recovery:authorize", password),
     archive: input => ipcRenderer.invoke("payment-recovery:archive", input),
     reportCash: input => ipcRenderer.invoke("payment-recovery:report-cash", input),
@@ -99,6 +109,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   sendRawToBixolon: (data) => ipcRenderer.invoke("send-raw-to-bixolon", data),
   printToSam4s: (receipt) => ipcRenderer.invoke("print-to-sam4s", receipt),
   getReceiptPrinterStatus: () => ipcRenderer.invoke("receipt-printer-status"),
+  reportPrinterResult: (result) => ipcRenderer.invoke("printer:report-result", result),
   printToWoosim: (receipt) => ipcRenderer.invoke("print-to-woosim", receipt),
 
   onBillAcceptorData: (callback) => {

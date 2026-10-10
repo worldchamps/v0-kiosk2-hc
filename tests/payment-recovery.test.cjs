@@ -50,6 +50,25 @@ test('operator recovery requires existing password, same-origin main frame and r
   assert.deepEqual(h.calls.busy, []); assert.equal(h.calls.stop, 0)
 })
 
+test('PMS recovery uses an authenticated exact transaction, archives evidence and still requires inlet stop', async () => {
+  const session = { ...base, acceptedAmount: 70000, acceptedBills: [50000, 10000, 10000], pendingBooking: { requestId: 'pending' } }
+  let allowed = false
+  const h = fixture(session, { authorizeRemote: (command, raw) => allowed && command?.request?.id === 'qa' && raw === JSON.stringify(session) })
+  const input = { expectedRaw: h.original, memorySnapshot: h.original, command: { request: { id: 'qa' } } }
+  assert.equal((await h.service.archive(h.event, input, 'remote')).success, false)
+  assert.equal(h.calls.stop, 0)
+  allowed = true; h.setStop(false)
+  assert.equal((await h.service.archive(h.event, input, 'remote')).success, false)
+  assert.equal(h.raw(), h.original)
+  h.setStop(true)
+  const result = await h.service.archive(h.event, input, 'remote')
+  assert.equal(result.success, true)
+  const record = JSON.parse(h.safeStorage.decryptString(fs.readFileSync(path.join(h.directory, 'payment-recovery-archive', result.archiveId + '.bin'))))
+  assert.equal(record.kind, 'operator-reviewed-remote-unlock'); assert.equal(record.original, h.original)
+  assert.equal(record.commandId, 'qa'); assert.equal(record.financialCommandsSent, 0)
+  assert.equal(h.raw(), h.original)
+})
+
 test('zero cash is encrypted, fsynced and round-trip verified before unlock permission; retry reuses archive', async () => {
   const h = fixture()
   const result = await h.archive()

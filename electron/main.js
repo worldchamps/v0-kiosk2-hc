@@ -16,6 +16,7 @@ const bixolonPrinter = require("./bixolon-printer")
 const hardwareBridge = require("./hardware-server-bridge")
 const tossFrontBridge = require("./toss-front-bridge")
 const { createPaymentRecovery } = require("./payment-recovery")
+const { createOperationsReporter, verifyRecoveryCommand } = require("./kiosk-operations")
 const { deviceFiles } = require("./device-setup")
 const { createDeviceSettings } = require("./device-settings")
 const { createCardKeyStore } = require("./card-key-store")
@@ -36,9 +37,33 @@ let hardwareServerProcess = null
 let nextServer = null
 let lastAcceptorCommand = 0
 const cashTrace = createCashTrace(path.join(app.getPath('userData'), 'logs'))
+const operationsIdentity = () => ({ deviceId: process.env.KIOSK_DEVICE_ID, property: process.env.KIOSK_PROPERTY_ID,
+  building: process.env.KIOSK_PROPERTY_ID === 'property3' ? process.env.KIOSK_BUILDING || '' : '', version: app.getVersion() })
+let lastPrinterResult = null
+const pendingOperations = new Map()
+function askOperationsRenderer(kind, command) {
+  return new Promise((resolve, reject) => {
+    if (!mainWindow || mainWindow.isDestroyed()) { reject(Error('키오스크 화면이 응답하지 않습니다.')); return }
+    const sender = mainWindow.webContents, id = require('node:crypto').randomUUID()
+    const timer = setTimeout(() => { pendingOperations.delete(id); reject(Error('키오스크 화면 응답을 확인하지 못했습니다.')); }, 10000)
+    pendingOperations.set(id, { sender, resolve: value => { clearTimeout(timer); resolve(value) } })
+    sender.send('operations:request', { id, kind, command })
+  })
+}
+ipcMain.on('operations:response', (event, input) => {
+  const pending = pendingOperations.get(input?.id)
+  if (!pending || event.sender !== pending.sender || event.senderFrame !== event.sender.mainFrame || new URL(event.senderFrame.url).origin !== 'http://localhost:3000') return
+  pendingOperations.delete(input.id); pending.resolve(input.result)
+})
+ipcMain.handle('printer:report-result', (event, input) => {
+  if (event.senderFrame !== event.sender.mainFrame || new URL(event.senderFrame.url).origin !== 'http://localhost:3000' ||
+    !['sent', 'failed'].includes(input?.status) || typeof input?.error !== 'string' || typeof input?.roomNumber !== 'string') return
+  lastPrinterResult = { status: input.status, error: input.error.slice(0, 500), roomNumber: input.roomNumber.slice(0, 40), at: Date.now() }
+})
 
 const paymentRecovery = createPaymentRecovery({
   app, safeStorage: require("electron").safeStorage,
+  authorizeRemote: (command, raw, memory) => verifyRecoveryCommand(command, raw, operationsIdentity(), Date.now(), undefined, memory),
   isIdle: () => tossFrontBridge.pending.size === 0 && !global.kioskHttpActive &&
     (global.kioskActiveOperations?.() || 1) === 1 && Date.now() - lastAcceptorCommand > 3500,
   setBusy: value => { global.kioskPaymentRecoveryActive = value },
@@ -65,6 +90,7 @@ const paymentRecovery = createPaymentRecovery({
 })
 ipcMain.handle("payment-recovery:authorize", (event, password) => paymentRecovery.authorize(event, password))
 ipcMain.handle("payment-recovery:archive", (event, input) => paymentRecovery.archive(event, input))
+ipcMain.handle('payment-recovery:archive-remote', (event, input) => paymentRecovery.archive(event, input, 'remote'))
 const deliverCashIncidents = createCashIncidentDelivery({ app, safeStorage: require("electron").safeStorage })
 ipcMain.handle("payment-recovery:report-cash", async (event, input) => {
   const result = await paymentRecovery.archive(event, input, true)
@@ -833,7 +859,8 @@ ipcMain.handle("receipt-printer-status", async (event) => {
   const printer = usesWoosim()
     ? findWoosimPrinter(printers, process.env.WOOSIM_PRINTER_NAME || "")
     : findSam4sPrinter(printers, process.env.SAM4S_PRINTER_NAME || "")
-  return { backend: usesWoosim() ? "woosim" : "sam4s", connected: !!printer }
+  return { backend: usesWoosim() ? "woosim" : "sam4s", connected: !!printer,
+    error: printer ? '' : `${usesWoosim() ? 'WOOSIM WSP-CP383' : 'SAM4S GCUBE'} Windows 프린터를 찾지 못했습니다. 설치된 프린터: ${printers.map(p => p.name).join(', ') || '없음'}` }
 })
 
 ipcMain.handle("print-to-woosim", async (event, receipt) => {
@@ -1263,6 +1290,23 @@ global.shutdownKiosk = async () => {
 }
 
 app.whenReady().then(async () => {
+  const operations = createOperationsReporter({ identity: operationsIdentity(), key: process.env.FIREBASE_PRIVATE_KEY,
+    read: async () => {
+      if (!mainWindow || mainWindow.isDestroyed() || global.kioskMaintenance) throw Error('화면 연결 대기')
+      const snapshot = await askOperationsRenderer('snapshot')
+      if (!snapshot || !(snapshot.raw === null || typeof snapshot.raw === 'string') || typeof snapshot.memory !== 'string') throw Error('결제 상태를 확인하지 못했습니다.')
+      return { ...snapshot, printer: lastPrinterResult }
+    },
+    recover: async command => {
+      if (!mainWindow || mainWindow.isDestroyed() || global.kioskMaintenance || global.kioskCardBusy || (global.kioskActiveOperations?.() || 0) > 0)
+        throw Error('진행 중인 장비 작업이 있습니다. 완료 후 다시 요청해 주세요.')
+      const sender = mainWindow.webContents
+      const result = await askOperationsRenderer('recover', command)
+      if (!result.success) throw Error(result.error)
+      sender.reload()
+    },
+  })
+  setInterval(() => void operations.tick(), 15000).unref()
   const { desktopCapturer, screen } = require("electron")
   const screenReporter = require("./kiosk-screen").createKioskScreenReporter({
     identity: { deviceId: process.env.KIOSK_DEVICE_ID, property: process.env.KIOSK_PROPERTY_ID,
