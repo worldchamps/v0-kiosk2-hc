@@ -7,6 +7,8 @@ import { getKioskPropertyId } from "@/lib/property-utils"
 import { hardwareCallWithin } from "@/lib/hardware-timeout"
 
 let printTransportConnected = false
+let lastPrinterError = ''
+export const getLastPrinterError = () => lastPrinterError
 let windowsPrinterBackend: "sam4s" | "woosim" | null = null
 export const getWindowsPrinterBackend = () => windowsPrinterBackend
 
@@ -119,6 +121,19 @@ export interface KioskReceiptData {
 }
 
 export async function printReceipt(data: KioskReceiptData): Promise<boolean> {
+  lastPrinterError = ''
+  let success = false
+  try {
+    if (!await autoConnectPrinter()) throw Error(lastPrinterError || '프린터 연결을 확인하지 못했습니다.')
+    success = await printReceiptConnected(data)
+    if (!success && !lastPrinterError) lastPrinterError = '프린터가 인쇄 요청을 완료하지 못했습니다.'
+  } catch (error) { lastPrinterError = error instanceof Error ? error.message : '인쇄 요청을 완료하지 못했습니다.' }
+  const api = typeof window !== 'undefined' ? window.electronAPI : undefined
+  try { await api?.reportPrinterResult?.({ status: success ? 'sent' : 'failed', roomNumber: data.roomNumber, error: lastPrinterError }) } catch { /* Printing result is independent of diagnostics delivery. */ }
+  return success
+}
+
+async function printReceiptConnected(data: KioskReceiptData): Promise<boolean> {
   const cardEntry = getKioskPropertyId() === "property1" && /^C\d{3}$/i.test(data.roomNumber.replace(/[\s-]+/g, ""))
   if (cardEntry) data = { ...data, password: undefined }
   if (getKioskPropertyId() === "property4") {
@@ -129,7 +144,7 @@ export async function printReceipt(data: KioskReceiptData): Promise<boolean> {
     if (!status) return false
     if (status.backend === "woosim") {
       const result = await window.electronAPI.printToWoosim(data)
-      if (!result.success) console.error("[WOOSIM] Windows print failed:", result.error)
+      if (!result.success) throw Error(result.error || 'WOOSIM 인쇄 요청에 실패했습니다.')
       return result.success
     }
   }
@@ -262,7 +277,7 @@ async function printSam4sReceipt(data: KioskReceiptData): Promise<boolean> {
 
   if (electronPrint) {
     const result = await electronPrint(data)
-    if (!result.success) console.error("[SAM4S] Windows print failed:", result.error)
+    if (!result.success) lastPrinterError = result.error || 'SAM4S 인쇄 요청에 실패했습니다.'
     return result.success
   }
 
@@ -343,10 +358,10 @@ export async function autoConnectPrinter(): Promise<boolean> {
   if ((property === "property4" || property === "property3") && api?.getReceiptPrinterStatus) {
     try {
       const status = await hardwareCallWithin(() => api.getReceiptPrinterStatus())
-      if (!status) return printTransportConnected = false
+      if (!status) { lastPrinterError = '프린터 목록 조회 응답이 없습니다.'; return printTransportConnected = false }
       windowsPrinterBackend = status.backend === "sam4s" || status.backend === "woosim" ? status.backend : null
-      if (windowsPrinterBackend) return printTransportConnected = !!status.connected
-    } catch { return printTransportConnected = false }
+      if (windowsPrinterBackend) { lastPrinterError = status.connected ? '' : status.error || 'Windows 프린터를 찾지 못했습니다.'; return printTransportConnected = !!status.connected }
+    } catch (error) { lastPrinterError = error instanceof Error ? error.message : '프린터 목록을 조회하지 못했습니다.'; return printTransportConnected = false }
   }
   if (property === "property4") {
     return printTransportConnected = typeof window !== "undefined" && !api && typeof window.print === "function"

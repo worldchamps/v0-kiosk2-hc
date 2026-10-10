@@ -5,6 +5,7 @@
 
 import { getKioskPropertyId, propertyUsesPrinter } from "./property-utils"
 import * as HardwarePrinter from "@/lib/printer-utils"
+export { getLastPrinterError } from '@/lib/printer-utils'
 
 const commandLog: Array<{ command: string; bytes: number[]; timestamp: string }> = []
 

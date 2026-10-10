@@ -268,7 +268,7 @@ function printer(ipc, property = "property3") {
 test("C room receipts omit every password instruction while D and A keep their existing receipt", async () => {
   for (const [property, roomNumber, hidden] of [['property1', 'C103', true], ['property1', ' c-105 ', true], ['property1', 'D212', false], ['property3', 'A101', false]]) {
     const output = [], input = { hotelName: 'QA', roomNumber, password: 'test-secret-2468' }
-    const p = printer({ sendRawToBixolon: async () => true,
+    const p = printer({ getHardwareStatus: async () => ({ connected: true }), sendRawToBixolon: async () => true,
       printToBixolon: async text => { output.push(text); return true }, cutBixolonPaper: async () => true }, property)
     assert.equal(await p.printReceipt(input), true)
     assert.equal(output.join('').includes('test-secret-2468'), !hidden)
@@ -291,7 +291,8 @@ test("printer: missing IPC or failed transport does not report a printed receipt
   assert.equal(await p.autoConnectPrinter(), false)
   assert.equal(p.isPrinterConnected(), false)
   await assert.rejects(p.printText("QA"), /전송하지 못했습니다/)
-  await assert.rejects(p.printReceipt({ hotelName: "QA", roomNumber: "B901" }), /전달하지 못했습니다/)
+  assert.equal(await p.printReceipt({ hotelName: "QA", roomNumber: "B901" }), false)
+  assert.match(p.getLastPrinterError(), /연결/)
   assert.equal(cutCalls, 0)
 })
 
@@ -310,6 +311,24 @@ test("property3 B uses the installed Woosim driver and does not send Bixolon com
     sendRawToBixolon: async () => { throw new Error("Unknown backend must fail closed") },
   })
   assert.equal(await unavailable.printReceipt({ hotelName: "THE BEACH STAY", roomNumber: "B101" }), false)
+})
+
+test('Woosim print failures keep the exact error and a later retry refreshes the Windows printer connection', async () => {
+  let ready = false, fail = false, jobs = 0; const reports = []
+  const p = printer({
+    getReceiptPrinterStatus: async () => ({ backend: 'woosim', connected: ready, error: ready ? '' : 'WSP-CP383 드라이버 없음' }),
+    printToWoosim: async () => { jobs++; return fail ? { success: false, error: 'Windows spooler failure' } : { success: true } },
+    reportPrinterResult: async value => reports.push(value),
+  })
+  const receipt = { hotelName: 'QA', roomNumber: 'B101' }
+  assert.equal(await p.printReceipt(receipt), false); assert.equal(jobs, 0)
+  assert.match(p.getLastPrinterError(), /드라이버/)
+  ready = true; fail = true
+  assert.equal(await p.printReceipt(receipt), false); assert.equal(jobs, 1)
+  assert.equal(reports.at(-1).error, 'Windows spooler failure')
+  fail = false
+  assert.equal(await p.printReceipt(receipt), true); assert.equal(jobs, 2)
+  assert.equal(p.getLastPrinterError(), ''); assert.equal(reports.at(-1).status, 'sent')
 })
 
 test("Woosim IPC rejects another building before reaching the Windows printer", async () => {
