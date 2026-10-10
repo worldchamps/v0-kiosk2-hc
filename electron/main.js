@@ -1313,8 +1313,9 @@ app.whenReady().then(async () => {
       building: process.env.KIOSK_PROPERTY_ID === "property3" ? process.env.KIOSK_BUILDING || "" : "", version: app.getVersion() },
     key: process.env.FIREBASE_PRIVATE_KEY,
     capture: async () => {
-      if (!mainWindow || mainWindow.isDestroyed()) throw Error("Kiosk window unavailable")
-      const display = screen.getDisplayMatching(mainWindow.getBounds())
+      const display = OVERLAY_MODE ? screen.getPrimaryDisplay()
+        : mainWindow && !mainWindow.isDestroyed() ? screen.getDisplayMatching(mainWindow.getBounds()) : null
+      if (!display) throw Error("Kiosk window unavailable")
       const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 1280, height: 1280 } })
       const source = sources.find(item => item.display_id === String(display.id))
       if (!source || source.thumbnail.isEmpty()) throw Error("Kiosk screen unavailable")

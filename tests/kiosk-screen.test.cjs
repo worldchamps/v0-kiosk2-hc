@@ -100,3 +100,22 @@ test('local screen API rejects unsigned reports and only stores frames for activ
   await call(body, signature)
   assert.equal(updates.at(-1)[`kiosk_screens/frames/${identity.deviceId}`], null)
 })
+
+test('native screen capture selects Kariv primary display without a fullscreen kiosk window', async () => {
+  const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm')
+  const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8')
+  const start = source.indexOf('    capture: async () => {', source.indexOf('const screenReporter'))
+  const end = source.indexOf('\n    },', start)
+  assert(start > 0 && end > start)
+  const body = source.slice(start + '    capture: async () => {'.length, end)
+  const capture = (overlay, mainWindow, empty = false) => vm.runInNewContext(`(async () => {${body}})()`, {
+    OVERLAY_MODE: overlay, mainWindow,
+    screen: { getPrimaryDisplay: () => ({ id: 7 }), getDisplayMatching: bounds => ({ id: bounds.id }) },
+    desktopCapturer: { getSources: async () => [7, 8].map(id => ({ display_id: String(id),
+      thumbnail: { isEmpty: () => empty, toJPEG: () => Buffer.from(String(id)) } })) },
+  })
+  assert.equal(await capture(true, undefined), Buffer.from('7').toString('base64'))
+  assert.equal(await capture(false, { isDestroyed: () => false, getBounds: () => ({ id: 8 }) }), Buffer.from('8').toString('base64'))
+  await assert.rejects(capture(false, undefined), /window unavailable/)
+  await assert.rejects(capture(true, undefined, true), /screen unavailable/)
+})
