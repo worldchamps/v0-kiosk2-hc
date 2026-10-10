@@ -24,6 +24,7 @@ function load(file, extra = {}, globals = {}) {
     '@/components/remote-key-listener': { RemoteKeyListener: 'RemoteKeyListener' },
     '@/components/check-in-card-progress': { default: 'CardProgress' },
     '@/lib/check-in-card': { checkCardBeforePayment: async () => {}, issueCheckInCard: async () => undefined, cardFailure: () => '카드 발급 실패' },
+    '@/lib/on-site-preflight': { checkOnSiteBeforePayment: async () => {} },
     '@/contexts/admin-context': { useAdmin: () => ({ password: '', authenticating: false, authenticate: async () => false, lock() {} }) },
     '@/components/payment-recovery-panel': { default: 'PaymentRecoveryPanel' }, ...extra };
   for (const name of ['button', 'card', 'input', 'label', 'alert']) deps['@/components/ui/' + name] ||= {
@@ -361,6 +362,7 @@ async function onsite(stay = 'shortStay', scenario = {}) {
   let rooms = ['B901', 'B902'].map(roomCode => ({ roomCode, roomType: 'Standard', building: 'B', floor: 'test', password: 'TEST',
     rates: { shortStay: { card: 30000, cash: 30000 }, overnight: { card: 60000, cash: 60000 } }, stayEnabled: { shortStay: true, overnight: true } }));
   const h = load('components/on-site-reservation.tsx', {
+    ...(scenario.preflight ? { '@/lib/on-site-preflight': { checkOnSiteBeforePayment: scenario.preflight } } : {}),
     ...(scenario.cardHelpers ? { '@/lib/check-in-card': scenario.cardHelpers } : {}),
     '@/contexts/payment-context': { usePayment: () => payment }, '@/hooks/use-idle-timer': { useIdleTimer: options => idle = options.onIdle },
     '@/lib/room-utils': { getRoomImagePath: () => '/test.png' }, '@/lib/room-type-order': { sortRoomTypes: types => types.sort() },
@@ -420,6 +422,25 @@ test('missing room original blocks payment before any payment session or booking
   const h = await onsite('overnight', { cardHelpers: { checkCardBeforePayment: async () => { throw Error('missing original') } } });
   await h.pay(); assert.equal(h.session.isActive, false); assert.equal(h.posts.length, 0);
   assert.equal(h.component('PaymentScreen'), undefined);
+});
+
+test('a failed schedule preflight never opens payment or invokes a card device', async () => {
+  let checked = 0;
+  const h = await onsite('overnight', { preflight: async () => { checked++; throw Error('예약 시간 충돌'); },
+    cardHelpers: { checkCardBeforePayment: async () => assert.fail('hardware before reservation preflight') } });
+  await h.pay(); assert.equal(checked, 1); assert.equal(h.session.isActive, false);
+  assert.equal(h.posts.length, 0); assert.equal(h.component('PaymentScreen'), undefined);
+});
+
+test('reservation preflight fails closed on stale prices, unavailable response and network failure', async () => {
+  for (const mode of ['ok', 'price', 'denied', 'offline']) {
+    const h = load('lib/on-site-preflight.ts', {}, { fetch: async () => {
+      if (mode === 'offline') throw Error('offline');
+      return Response.json({ ready: mode !== 'denied', rates: { cash: mode === 'price' ? 60000 : 30000, card: 30000 } }, { status: mode === 'denied' ? 503 : 200 });
+    } });
+    const check = () => h.exports.checkOnSiteBeforePayment('B901', 'shortStay', { cash: 30000, card: 30000 });
+    if (mode === 'ok') await check(); else await assert.rejects(check);
+  }
 });
 
 for (const outcome of [{ success: true, settled: true }, { success: false, reason: 'timeout', settled: false }]) {

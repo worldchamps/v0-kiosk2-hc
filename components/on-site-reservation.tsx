@@ -34,6 +34,7 @@ import type { CompletedPayment } from "@/lib/payment-types"
 import CheckInComplete from "@/components/check-in-complete"
 import CheckInCardProgress from "@/components/check-in-card-progress"
 import { checkCardBeforePayment, issueCheckInCard } from "@/lib/check-in-card"
+import { checkOnSiteBeforePayment } from '@/lib/on-site-preflight'
 import { KioskProgressScreen, ON_SITE_PROGRESS_STEPS } from "@/components/kiosk-progress"
 import type { PmsPaymentRates, PmsRoomRates } from "@/lib/pms-rates"
 
@@ -297,7 +298,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
   const startRoomPayment = async (room: AvailableRoom) => {
     if (!selectedStay || checkingCardRef.current) return
     checkingCardRef.current = true; setCheckingCard(true)
-    try { await checkCardBeforePayment(room.roomCode) }
+    try { await checkOnSiteBeforePayment(room.roomCode, selectedStay.type, room.rates?.[selectedStay.type]); await checkCardBeforePayment(room.roomCode) }
     catch (error) { alert(error instanceof Error ? error.message : "카드 발급기를 확인해주세요."); return }
     finally { checkingCardRef.current = false; setCheckingCard(false) }
     if (!mountedRef.current) return
@@ -350,7 +351,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
 
     if (checkingCardRef.current) return
     checkingCardRef.current = true; setCheckingCard(true)
-    try { await checkCardBeforePayment(selectedRoom.roomCode) }
+    try { await checkOnSiteBeforePayment(selectedRoom.roomCode, selectedStay.type, selectedRoom.rates?.[selectedStay.type]); await checkCardBeforePayment(selectedRoom.roomCode) }
     catch (error) { alert(error instanceof Error ? error.message : "카드 발급기를 확인해주세요."); return }
     finally { checkingCardRef.current = false; setCheckingCard(false) }
     if (!mountedRef.current) return

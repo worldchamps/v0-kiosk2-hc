@@ -62,7 +62,7 @@ function harness(options = {}) {
     '@/lib/google-sheets': { createSheetsClient: () => ({ spreadsheets: { values: {
       get: async request => {
         assert.equal(request.dateTimeRenderOption, 'FORMATTED_STRING');
-        if (options.readFailure && appendCount) throw new Error('QA readback unavailable');
+        if (options.preflightReadFailure || options.readFailure && appendCount) throw new Error('QA readback unavailable');
         const values = copy(rows);
         if (options.formattedCurrency && request.valueRenderOption !== 'UNFORMATTED_VALUE') {
           for (const row of values) if (typeof row[5] === 'number') row[5] = row[5].toLocaleString('en-US');
@@ -106,10 +106,15 @@ function harness(options = {}) {
     dependencies['@/lib/' + name] = load('lib/' + name + '.ts');
   }
   const post = load('app/api/on-site-booking/route.ts').POST;
+  const preflight = load('app/api/on-site-preflight/route.ts').GET;
   const base = { requestId: 'qa-cash-request-00000001', roomCode, roomNumber: roomCode, roomType: 'QA',
     guestName: 'QA GUEST', phoneNumber: '00000000000', checkInDate: '2026-09-10', checkOutDate: '2026-09-11',
     stayType: 'overnight', price: 30000, payment: { method: 'CASH' } };
   return { rows, effects, get, set: (key, value) => set(state, key, value), modules: dependencies,
+    preflight: async (room = roomCode, stayType = 'overnight') => {
+      const response = await preflight(new Request(`http://qa.invalid/api/on-site-preflight?roomCode=${room}&stayType=${stayType}`));
+      return { status: response.status, body: await response.json() };
+    },
     counts: () => ({ append: appendCount, queue: queueCount }), price: value => { price = value; }, now: value => { now = value; },
     post: async (body = {}) => {
       const response = await post(new Request('http://qa.invalid/api/on-site-booking', { method: 'POST', body: JSON.stringify({ ...base, ...body }) }));
@@ -118,6 +123,23 @@ function harness(options = {}) {
   };
 }
 const card = id => ({ method: 'CARD', provider: 'TOSS_PAY', payToken: id, orderNo: 'QA-' + id });
+
+test('pre-payment check rejects overlap, cleaning buffer, wrong building and unreadable schedules without any write', async () => {
+  for (const start of ['2026-09-10/16:00', '2026-09-11/12:00']) {
+    const row = Array(14).fill(''); row[7] = start; row[8] = '2026-09-12/11:00'; row[9] = 'B901';
+    const h = harness({ rows: [row] });
+    assert.equal((await h.preflight()).status, 409);
+    assert.deepEqual(h.effects, []);
+  }
+  const h = harness();
+  assert.equal((await h.preflight('A901')).status, 403);
+  assert.equal((await h.preflight('B901', 'invalid')).status, 400);
+  assert.deepEqual((await h.preflight()).body, { ready: true, rates: { cash: 30000, card: 30000 } });
+  assert.deepEqual(h.effects, []);
+  const failed = harness({ preflightReadFailure: true });
+  assert.equal((await failed.preflight()).status, 503);
+  assert.deepEqual(failed.effects, []);
+});
 
 for (const [property, building, roomCode] of [['property1', '', 'C901'], ['property1', '', 'D901'], ['property3', 'A', 'A901']]) {
   test(`committed ${roomCode} on-site sale authorizes one room card and recovery keeps the same operation`, async () => {
