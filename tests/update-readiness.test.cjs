@@ -30,7 +30,7 @@ function harness({ overlay = false } = {}) {
   const end = bootstrap.indexOf('    require("./main")', start)
   assert(start > 0 && end > start)
   vm.runInNewContext(bootstrap.slice(start, end) + "\nglobal.probe = { prepare, resume }", context)
-  const frame = { url: overlay ? require("node:url").pathToFileURL(path.join(__dirname, "../electron/overlay-button.html")).href : "http://localhost:3000/kiosk/A" }
+  const frame = { url: overlay ? require("node:url").pathToFileURL(path.join(__dirname, "../electron/overlay-button.html")).href + "?layout=banner" : "http://localhost:3000/kiosk/A" }
   const renderer = { mainFrame: frame, isDestroyed: () => false, send(name, nonce) {
     sent.push(name)
     if (name === "kiosk:update-prepare") {

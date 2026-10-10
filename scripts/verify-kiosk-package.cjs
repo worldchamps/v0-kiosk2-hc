@@ -15,6 +15,12 @@ assert.equal(pkg.version, require("../package.json").version)
 for (const name of [".env.local", ".env", ".local", "ops", "scripts"]) assert.equal(fs.existsSync(path.join(appDir, name)), false, name)
 for (const name of ["electron/bootstrap.js", "electron/setup.html", "electron/firebase-updates.js", "electron/private-release-provider.js", "electron/update-cloud.json", ".next/BUILD_ID", "next.config.mjs"]) assert.ok(fs.existsSync(path.join(appDir, name)), name)
 assert.equal(require(path.join(appDir, "electron/update-cloud.json")).projectId, "beachstay-kiosk-updates")
+for (const file of ["electron/overlay-button.html", "electron/overlay-button.js", "electron/bootstrap.js"]) {
+  assert.equal(fs.readFileSync(path.join(appDir, file), "utf8"), fs.readFileSync(path.resolve(__dirname, "..", file), "utf8"), "Stale overlay resource: " + file)
+}
+for (const file of fs.readdirSync(path.resolve(__dirname, "../public/booking-channels"))) {
+  assert.ok(fs.existsSync(path.join(appDir, "public/booking-channels", file)), "Missing booking channel image: " + file)
+}
 // Catch stale Next CSS artifacts even when the updated JS and version are present.
 const cssDir = path.join(appDir, ".next/static/css")
 const bundledCss = fs.readdirSync(cssDir).filter(name => name.endsWith(".css"))

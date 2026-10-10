@@ -1,7 +1,6 @@
 const { app, BrowserWindow, ipcMain, screen } = require("electron")
 const fs = require("node:fs")
 const path = require("path")
-const { exec } = require("child_process")
 
 let overlayButton = null
 let kioskPopup = null
@@ -14,8 +13,7 @@ function logPopup(message) {
   catch (error) { console.error("[OVERLAY_POPUP] diagnostic log unavailable:", error.message) }
 }
 
-const AGGRESSIVE_MODE = process.env.AGGRESSIVE_TOPMOST === "true"
-const CHECK_INTERVAL = 10 // 타사 키오스크의 최상위 창 재설정보다 자주 복구
+const CHECK_INTERVAL = 250
 
 /**
  * Electron 고급 메서드로 최상위 유지
@@ -28,12 +26,12 @@ function keepOnTopAggressive(window) {
   window.setAlwaysOnTop(true, "screen-saver", 1)
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   window.moveTop()
-  window.focus()
+  // Keep the button visible without taking input focus from the third-party kiosk.
 }
 
 /**
  * 최상위 유지 시작
- * 두 모드 모두 10ms마다 최상위 창을 복구한다.
+ * 타사 프로그램의 입력 포커스를 바꾸지 않고 표시 순서만 복구한다.
  */
 function startTopmostKeeper(window) {
   stopTopmostKeeper()
@@ -47,7 +45,6 @@ function startTopmostKeeper(window) {
     }
   }, CHECK_INTERVAL)
 
-  console.log(`[v0] Topmost keeper started: ${AGGRESSIVE_MODE ? "AGGRESSIVE" : "LIGHT"} (10ms)`)
 }
 
 /**
@@ -71,17 +68,16 @@ function createOverlayButton() {
   }
 
   const primaryDisplay = screen.getPrimaryDisplay()
-  const { width: screenWidth, height: screenHeight } = primaryDisplay.bounds
-  const buttonWidth = 200
-  const buttonHeight = 125
-  const topLeftX = 9 // 9px from left edge
-  const topLeftY = 14 // 14px from top edge
+  const { x, y, width, height } = primaryDisplay.bounds
+  const kariv = process.env.KIOSK_PROPERTY_ID === "property2"
+  const inset = Math.round(height * 0.01)
+  // Kariv's room tabs start below the top 14% of the supplied screen.
+  const bounds = kariv
+    ? { x: x + inset, y: y + inset, width: width - inset * 2, height: Math.floor(height * 0.12) }
+    : { x: x + 9, y: y + 14, width: 200, height: 125 }
 
   overlayButton = new BrowserWindow({
-    width: buttonWidth,
-    height: buttonHeight,
-    x: topLeftX, // Top-left positioning
-    y: topLeftY, // Top-left positioning
+    ...bounds,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -91,7 +87,8 @@ function createOverlayButton() {
     minimizable: false,
     maximizable: false,
     closable: false,
-    focusable: true,
+    focusable: false,
+    show: false,
     type: "toolbar",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -101,7 +98,7 @@ function createOverlayButton() {
     },
   })
 
-  overlayButton.loadFile(path.join(__dirname, "overlay-button.html"))
+  overlayButton.loadFile(path.join(__dirname, "overlay-button.html"), { query: { layout: kariv ? "banner" : "compact" } })
 
   overlayButton.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     callback({
@@ -120,6 +117,7 @@ function createOverlayButton() {
   overlayButton.webContents.on("did-finish-load", () => {
     console.log("[v0] Overlay button page loaded")
     overlayButton.webContents.send("kiosk:overlay-idle", true)
+    overlayButton.showInactive()
     keepOnTopAggressive(overlayButton)
   })
 
@@ -131,7 +129,6 @@ function createOverlayButton() {
 
   startTopmostKeeper(overlayButton)
 
-  console.log(`[v0] Overlay button created with ${AGGRESSIVE_MODE ? "AGGRESSIVE" : "LIGHT"} mode`)
 
   return overlayButton
 }
@@ -142,16 +139,14 @@ function createOverlayButton() {
 function createKioskPopup() {
   console.log("[v0] createKioskPopup called")
 
-  if (kioskPopup) {
-    kioskPopup.close()
-  }
+  if (kioskPopup && !kioskPopup.isDestroyed()) return kioskPopup
 
   const primaryDisplay = screen.getPrimaryDisplay()
-  const { width: screenWidth, height: screenHeight } = primaryDisplay.bounds
+  const { x, y, width: screenWidth, height: screenHeight } = primaryDisplay.bounds
   const popupWidth = Math.round(screenWidth * 1.0)
   const popupHeight = Math.round(screenHeight * 1.0)
-  const popupX = Math.round((screenWidth - popupWidth) / 2)
-  const popupY = Math.round((screenHeight - popupHeight) / 2)
+  const popupX = x
+  const popupY = y
 
   console.log(
     `[v0] Screen: ${screenWidth}x${screenHeight}, Popup: ${popupWidth}x${popupHeight} at (${popupX}, ${popupY})`,
@@ -178,6 +173,7 @@ function createKioskPopup() {
 
   kioskPopup.webContents.on("did-finish-load", () => {
     kioskPopup.webContents.setZoomFactor(0.7)
+    kioskPopup.focus()
     keepOnTopAggressive(kioskPopup)
     startTopmostKeeper(kioskPopup)
   })
@@ -219,7 +215,7 @@ function createKioskPopup() {
     stopTopmostKeeper()
     kioskPopup = null
     if (overlayButton) {
-      overlayButton.show()
+      overlayButton.showInactive()
       overlayButton.webContents.send("kiosk:overlay-idle", true)
       keepOnTopAggressive(overlayButton)
       startTopmostKeeper(overlayButton)
@@ -232,40 +228,16 @@ function createKioskPopup() {
   return kioskPopup
 }
 
-/**
- * PMS 프로그램으로 포커스 복구
- */
-function restorePMSFocus() {
-  const pmsWindowTitle = process.env.PMS_WINDOW_TITLE || "PMS"
-
-  console.log(`[v0] Attempting to restore focus to: ${pmsWindowTitle}`)
-
-  stopTopmostKeeper()
-
-  const command = `powershell -command "(New-Object -ComObject WScript.Shell).AppActivate('${pmsWindowTitle}')"`
-
-  exec(command, (error) => {
-    if (error) {
-      console.error("[v0] Failed to restore PMS focus:", error)
-      exec("powershell -command '(New-Object -ComObject Shell.Application).MinimizeAll()'", () => {
-        console.log("[v0] Minimized all windows as fallback")
-      })
-    } else {
-      console.log("[v0] Successfully restored PMS focus")
-    }
-
-    if (overlayButton) {
-      setTimeout(() => {
-        startTopmostKeeper(overlayButton)
-      }, 1000)
-    }
-  })
+function isWindowEvent(event, window) {
+  return !!window && !window.isDestroyed() && event.sender === window.webContents &&
+    event.senderFrame === window.webContents.mainFrame
 }
 
 // IPC 핸들러 등록
 console.log("[v0] Registering overlay button IPC handlers")
 
-ipcMain.on("overlay-button-clicked", () => {
+ipcMain.on("overlay-button-clicked", event => {
+  if (!isWindowEvent(event, overlayButton) || !overlayButton.isVisible() || kioskPopup || global.kioskMaintenance) return
   console.log("[v0] IPC: overlay-button-clicked received")
 
   stopTopmostKeeper()
@@ -279,38 +251,15 @@ ipcMain.on("overlay-button-clicked", () => {
   createKioskPopup()
 })
 
-ipcMain.on("checkin-complete", () => {
-  console.log("[v0] IPC: checkin-complete received, closing popup immediately")
-
-  if (kioskPopup) {
-    kioskPopup.close()
-  }
-
-  restorePMSFocus()
-
-  if (overlayButton) {
-    overlayButton.show()
-  }
-})
-
-ipcMain.on("close-popup", () => {
-  console.log("[v0] IPC: close-popup received")
-
-  if (kioskPopup) {
-    kioskPopup.close()
-  }
-
-  restorePMSFocus()
-
-  if (overlayButton) {
-    overlayButton.show()
-  }
-})
+for (const channel of ["checkin-complete", "close-popup"]) {
+  ipcMain.on(channel, event => {
+    if (isWindowEvent(event, kioskPopup)) kioskPopup.close()
+  })
+}
 
 module.exports = {
   createOverlayButton,
   createKioskPopup,
-  restorePMSFocus,
   isIdleButtonSender: sender => !!overlayButton && !overlayButton.isDestroyed() &&
     overlayButton.isVisible() && !kioskPopup && overlayButton.webContents === sender,
 }

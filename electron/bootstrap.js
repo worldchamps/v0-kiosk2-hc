@@ -48,9 +48,12 @@ if (!app.isPackaged) {
     const localSender = (event) => {
       try {
         if (event.senderFrame !== event.sender.mainFrame) return false
-        if (new URL(event.senderFrame.url).origin === "http://localhost:3000") return true
+        const frameURL = new URL(event.senderFrame.url)
+        if (frameURL.origin === "http://localhost:3000") return true
+        frameURL.search = ""
+        frameURL.hash = ""
         return overlayMode && require("./overlay-button").isIdleButtonSender(event.sender) &&
-          event.senderFrame.url === require("node:url").pathToFileURL(path.join(__dirname, "overlay-button.html")).href
+          frameURL.href === require("node:url").pathToFileURL(path.join(__dirname, "overlay-button.html")).href
       }
       catch { return false }
     }
