@@ -1,6 +1,6 @@
 {
   "name": "thebeachstay-kiosk",
-  "version": "1.3.31",
+  "version": "1.3.32",
   "private": true,
   "main": "electron/bootstrap.js",
   "scripts": {
@@ -75,7 +75,12 @@
     "appId": "com.thebeachstay.kiosk",
     "productName": "TheBeachStay Kiosk",
     "asar": false,
-    "publish": [{ "provider": "generic", "url": "https://updates.invalid/" }],
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://updates.invalid/"
+      }
+    ],
     "directories": {
       "output": "dist"
     },
@@ -102,10 +107,21 @@
           "**/*"
         ]
       },
-      { "from": ".local/update-public.pem", "to": "update-public.pem" }
+      {
+        "from": ".local/update-public.pem",
+        "to": "update-public.pem"
+      }
     ],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64", "ia32"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "ia32"
+          ]
+        }
+      ],
       "artifactName": "TheBeachStay Kiosk Setup ${version}-${arch}.${ext}",
       "icon": "public/icon.ico"
     },
