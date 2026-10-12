@@ -30,6 +30,11 @@ test('card store writes only ciphertext and returns only room/date metadata', t 
   assert.deepEqual(store.list(), [{ room: 'A101', registeredAt: record.registeredAt }])
   assert.equal(fs.readFileSync(path.join(directory, 'room-A101.bin')).includes(Buffer.from(record.blocks[1])), false)
   assert.deepEqual(fs.readdirSync(directory), ['room-A101.bin'])
+  const operationId = 'operation-' + crypto.createHash('sha256').update('reset:' + crypto.randomUUID()).digest('hex')
+  store.write(operationId, { status: 'started' })
+  assert.deepEqual(store.read(operationId), { status: 'started' })
+  assert.throws(() => store.write('device-job-' + crypto.randomUUID(), { status: 'started' }))
+  assert.deepEqual(store.list(), [{ room: 'A101', registeredAt: record.registeredAt }])
   const replacement = { ...record, registeredAt: '2026-10-07T01:00:00.000Z' }
   store.write('room-A101', replacement)
   assert.deepEqual(store.read('room-A101'), replacement)
@@ -40,5 +45,5 @@ test('card store writes only ciphertext and returns only room/date metadata', t 
   safeStorage.encryptString = () => Buffer.from('BROKEN')
   assert.throws(() => store.write('room-A101', record))
   assert.deepEqual(store.read('room-A101'), replacement)
-  assert.deepEqual(fs.readdirSync(directory), ['room-A101.bin'])
+  assert.deepEqual(fs.readdirSync(directory), [operationId + '.bin', 'room-A101.bin'])
 })

@@ -20,7 +20,8 @@ const { createOperationsReporter, verifyRecoveryCommand } = require("./kiosk-ope
 const { deviceFiles } = require("./device-setup")
 const { createDeviceSettings } = require("./device-settings")
 const { createCardKeyStore } = require("./card-key-store")
-const { createCardKeyService } = require("./card-key-service")
+const { createCardKeyService, enabled: cardDispenserEnabled } = require("./card-key-service")
+const { createDeviceRecovery, runRemoteReset } = require("./device-recovery")
 const { createCashIncidentDelivery } = require("./cash-incidents")
 const { createCashTrace, createCashDiagnostics, responsePacket } = require("./cash-diagnostics")
 const { buildSam4sPrintLines, findSam4sPrinter, findWoosimPrinter } = require("./sam4s-receipt")
@@ -59,6 +60,13 @@ ipcMain.handle('printer:report-result', (event, input) => {
   if (event.senderFrame !== event.sender.mainFrame || new URL(event.senderFrame.url).origin !== 'http://localhost:3000' ||
     !['sent', 'failed'].includes(input?.status) || typeof input?.error !== 'string' || typeof input?.roomNumber !== 'string') return
   lastPrinterResult = { status: input.status, error: input.error.slice(0, 500), roomNumber: input.roomNumber.slice(0, 40), at: Date.now() }
+  if (input.status === 'failed') deviceRecovery?.fault('printer', 'printer_failed')
+})
+ipcMain.on('device-recovery:fault', (event, key) => {
+  try {
+    if (event.senderFrame === event.sender.mainFrame && new URL(event.senderFrame.url).origin === 'http://localhost:3000' &&
+      ['acceptor', 'dispenser', 'cardTerminal', 'printer', 'cardDispenser'].includes(key)) deviceRecovery?.fault(key)
+  } catch { /* Ignore foreign frames. */ }
 })
 
 const paymentRecovery = createPaymentRecovery({
@@ -94,9 +102,19 @@ ipcMain.handle('payment-recovery:archive-remote', (event, input) => paymentRecov
 const deliverCashIncidents = createCashIncidentDelivery({ app, safeStorage: require("electron").safeStorage })
 ipcMain.handle("payment-recovery:report-cash", async (event, input) => {
   const result = await paymentRecovery.archive(event, input, true)
-  if (result.success) void deliverCashIncidents()
+  if (result.success) {
+    if (result.cashStopped === false) {
+      global.kioskCashBlocked = true
+      if (deviceRecovery?.hardware.acceptor) deviceRecovery.hardware.acceptor = {
+        ...deviceRecovery.hardware.acceptor, state: 'needs_attention', reason: 'acceptor_stop_unconfirmed' }
+    }
+    await deliverCashIncidents()
+    const receipt = path.join(app.getPath('userData'), 'payment-recovery-archive', result.archiveId + '.bin.sent')
+    if (!require('node:fs').existsSync(receipt)) return { success: false, error: 'PMS 사고 기록을 확인 중입니다.' }
+  }
   return result
 })
+ipcMain.handle('cash:available', () => !global.kioskCashBlocked)
 
 const cashDiagnostics = createCashDiagnostics({
   authorize: (event, password) => paymentRecovery.authorize(event, password),
@@ -121,6 +139,8 @@ app.whenReady().then(() => {
 })
 
 tossFrontBridge.on("status", (status) => {
+  if (status.configured && !status.authenticated) deviceRecovery?.fault('cardTerminal', 'terminal_unavailable')
+  else if (status.authenticated) deviceRecovery?.ready('cardTerminal')
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("toss-front:status", status)
   }
@@ -139,20 +159,40 @@ ipcMain.handle("device-settings:read", (event, password) => deviceSettings.read(
 ipcMain.handle("device-settings:save", (event, input) => deviceSettings.save(event, input))
 
 process.env.CARD_BRIDGE_TOKEN = require('node:crypto').randomBytes(32).toString('hex')
+let cardRendererIdle = false
+let deviceRecovery
+const cardAutoIdle = () => cardRendererIdle && mainWindow && !mainWindow.isDestroyed() && !global.kioskMaintenance && !global.kioskPaymentRecoveryActive && !global.kioskHttpActive &&
+  tossFrontBridge.pending.size === 0 && !cardKey.isBusy() && (global.kioskActiveOperations?.() || 0) === 0 && Date.now() - lastAcceptorCommand > 8000
+const cardStore = createCardKeyStore({ directory: path.join(app.getPath('userData'), 'card-keys'), safeStorage: require('electron').safeStorage })
 const cardKey = createCardKeyService({
   env: process.env, token: process.env.CARD_BRIDGE_TOKEN, bridge: hardwareBridge,
-  store: createCardKeyStore({ directory: path.join(app.getPath('userData'), 'card-keys'), safeStorage: require('electron').safeStorage }),
+  store: cardStore,
   authorize: (event, password) => paymentRecovery.authorize(event, password),
   isIdle: () => !global.kioskMaintenance && !global.kioskPaymentRecoveryActive && !global.kioskHttpActive &&
-    tossFrontBridge.pending.size === 0 && (global.kioskActiveOperations?.() || 1) === 1 && Date.now() - lastAcceptorCommand > 8000,
+    !global.kioskDeviceRecoveryActive && tossFrontBridge.pending.size === 0 && (global.kioskActiveOperations?.() || 1) === 1 && Date.now() - lastAcceptorCommand > 8000,
+  isAutoIdle: cardAutoIdle, onStatus: status => {
+    if (status.state === 'needs_attention') deviceRecovery?.fault('cardDispenser', status.reason)
+    else if (status.state === 'ok' && hardwareBridge.isConnected) deviceRecovery?.ready('cardDispenser')
+  },
   setBusy: value => { global.kioskCardBusy = value },
+})
+ipcMain.on('card-key:idle', (event, value) => {
+  try {
+    if (event.senderFrame !== event.sender.mainFrame || new URL(event.senderFrame.url).origin !== 'http://localhost:3000') return
+    cardRendererIdle = value === true
+    if (cardRendererIdle) void deviceRecovery?.tick()
+  } catch { /* Wait for a valid local renderer. */ }
+})
+app.whenReady().then(() => {
+  cardKey.initialize()
+  global.kioskCardBusy = cardKey.needsRecovery()
 })
 ipcMain.handle('card-key:available', event => cardKey.available(event))
 ipcMain.handle('card-key:run', (event, command, input) => cardKey.run(event, command, input))
 ipcMain.handle('card-key:checkin-required', event => cardKey.checkInRequired(event))
-ipcMain.handle('card-key:ready', (event, room, reservationId) => cardKey.run(event, 'ready', { room, reservationId }))
-ipcMain.handle('card-key:issue-checkin', (event, ticket) => cardKey.run(event, 'checkin_issue', { ticket }))
-ipcMain.handle('card-key:issue-remote', (event, envelope) => cardKey.run(event, 'remote_issue', { envelope }))
+ipcMain.handle('card-key:ready', (event, room, reservationId) => global.kioskDeviceRecoveryActive ? { success: false, reason: 'busy' } : cardKey.run(event, 'ready', { room, reservationId }))
+ipcMain.handle('card-key:issue-checkin', (event, ticket) => global.kioskDeviceRecoveryActive ? { success: false, reason: 'busy' } : cardKey.run(event, 'checkin_issue', { ticket }))
+ipcMain.handle('card-key:issue-remote', (event, envelope) => global.kioskDeviceRecoveryActive ? { success: false, reason: 'busy' } : cardKey.run(event, 'remote_issue', { envelope }))
 
 const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
 const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"
@@ -415,6 +455,7 @@ function createWindow() {
 
       // Hardware Server Bridge initialization
       hardwareBridge.onStatus((status) => {
+        if (!status.connected) for (const key of ['acceptor', 'dispenser', 'cardDispenser', ...(usesWoosim() || KIOSK_PROPERTY_ID === 'property4' ? [] : ['printer'])]) deviceRecovery?.fault(key, 'bridge_disconnected')
         cashTrace.write('bridge', { event: status.connected ? 'connected' : 'disconnected' })
         if (mainWindow && mainWindow.webContents) {
           mainWindow.webContents.send("bill-acceptor-status", { connected: status.connected })
@@ -690,6 +731,7 @@ async function connectPrinter() {
 }
 
 ipcMain.handle("send-to-bill-acceptor", async (event, command) => {
+  if (global.kioskDeviceRecoveryActive) return { success: false }
   lastAcceptorCommand = Date.now()
   cashTrace.write('bridge', { event: 'send', bytes: Array.from(command) })
   const success = hardwareBridge.send({ type: "raw_acceptor", data: Array.from(command) })
@@ -697,6 +739,7 @@ ipcMain.handle("send-to-bill-acceptor", async (event, command) => {
 })
 
 ipcMain.handle("send-to-bill-dispenser", async (event, command) => {
+  if (global.kioskDeviceRecoveryActive) return { success: false }
   const success = hardwareBridge.send({ type: "raw_dispenser", data: Array.from(command) })
   return { success }
 })
@@ -755,6 +798,7 @@ ipcMain.handle("toss-front:scan-reservation-qr", async () => {
 })
 
 ipcMain.handle("toss-front:request-payment", async (_event, payload) => {
+  if (global.kioskDeviceRecoveryActive) return { success: false, notApproved: true, error: '장비 연결을 확인하고 있습니다.' }
   try {
     const payment = await tossFrontBridge.requestPayment(payload)
     return { success: true, payment }
@@ -1290,15 +1334,73 @@ global.shutdownKiosk = async () => {
 }
 
 app.whenReady().then(async () => {
+  const configured = ['acceptor', 'dispenser', 'printer']
+  if (tossFrontBridge.configured) configured.push('cardTerminal')
+  if (cardDispenserEnabled(process.env)) configured.push('cardDispenser')
+  deviceRecovery = createDeviceRecovery({ configured,
+    bridgeDevices: configured.filter(key => key !== 'cardTerminal' && (key !== 'printer' || !usesWoosim() && KIOSK_PROPERTY_ID !== 'property4')),
+    bridge: hardwareBridge, cardKey, terminal: tossFrontBridge,
+    isIdle: cardAutoIdle, onBusy: value => { global.kioskDeviceRecoveryActive = value },
+    onRecovered: key => { if (key === 'acceptor') global.kioskCashBlocked = false },
+    printer: async () => {
+      if (usesWoosim() || KIOSK_PROPERTY_ID === 'property4') {
+        if (!mainWindow || mainWindow.isDestroyed()) throw Error('printer_unavailable')
+        const printers = await mainWindow.webContents.getPrintersAsync()
+        const found = usesWoosim() ? findWoosimPrinter(printers, process.env.WOOSIM_PRINTER_NAME || '')
+          : findSam4sPrinter(printers, process.env.SAM4S_PRINTER_NAME || '')
+        if (!found) throw Error('printer_unavailable')
+        return
+      }
+      await new Promise((resolve, reject) => {
+        let unsubscribe = () => {}, done = false
+        const finish = error => { if (done) return; done = true; clearTimeout(timer); unsubscribe(); error ? reject(Error(error)) : resolve() }
+        const timer = setTimeout(() => finish('printer_timeout'), 3000)
+        unsubscribe = hardwareBridge.subscribeMessage(message => {
+          if (message.type === 'printer_status') finish(message.ready ? null : 'printer_unavailable')
+        })
+        if (!hardwareBridge.send({ type: 'printer_status' })) finish('bridge_disconnected')
+      })
+    },
+    restartServer: async () => {
+      if (hardwareServerProcess && !hardwareServerProcess.killed) {
+        const child = hardwareServerProcess
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(Error('server_stop_timeout')), 10000)
+          const fallback = setTimeout(() => child.kill(), 5000)
+          child.once('exit', () => { clearTimeout(timer); clearTimeout(fallback); resolve() })
+          if (hardwareBridge.isConnected && process.env.CARD_BRIDGE_TOKEN) {
+            if (!hardwareBridge.send({ type: 'shutdown', token: process.env.CARD_BRIDGE_TOKEN })) child.kill()
+          } else child.kill()
+        })
+      }
+      startHardwareServer()
+      hardwareBridge.retryConnection()
+      const until = Date.now() + 10000
+      while (!hardwareBridge.isConnected && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 250))
+      if (!hardwareBridge.isConnected) throw Error('server_reconnect_failed')
+    },
+  })
+  setInterval(() => void deviceRecovery.tick(), 15000).unref()
   const operations = createOperationsReporter({ identity: operationsIdentity(), key: process.env.FIREBASE_PRIVATE_KEY,
     read: async () => {
       if (!mainWindow || mainWindow.isDestroyed() || global.kioskMaintenance) throw Error('화면 연결 대기')
       const snapshot = await askOperationsRenderer('snapshot')
       if (!snapshot || !(snapshot.raw === null || typeof snapshot.raw === 'string') || typeof snapshot.memory !== 'string') throw Error('결제 상태를 확인하지 못했습니다.')
-      return { ...snapshot, printer: lastPrinterResult }
+      const hardware = { ...deviceRecovery.hardware }
+      if (hardware.cardDispenser) {
+        const status = cardKey.status()
+        hardware.cardDispenser = { ...hardware.cardDispenser,
+          state: hardware.cardDispenser.state === 'ok' ? status.state : hardware.cardDispenser.state,
+          reason: hardware.cardDispenser.state === 'ok' ? status.reason : hardware.cardDispenser.reason,
+          empty: status.empty, low: status.low, captureFull: status.captureFull, hopperFull: status.hopperFull }
+      }
+      return { ...snapshot, printer: lastPrinterResult, hardware }
     },
     recover: async command => {
-      if (!mainWindow || mainWindow.isDestroyed() || global.kioskMaintenance || global.kioskCardBusy || (global.kioskActiveOperations?.() || 0) > 0)
+      if (command.request.action === 'reset_device') {
+        return runRemoteReset(command.request, cardStore, deviceRecovery, cardAutoIdle)
+      }
+      if (!mainWindow || mainWindow.isDestroyed() || global.kioskMaintenance || (global.kioskActiveOperations?.() || 0) > 0)
         throw Error('진행 중인 장비 작업이 있습니다. 완료 후 다시 요청해 주세요.')
       const sender = mainWindow.webContents
       const result = await askOperationsRenderer('recover', command)

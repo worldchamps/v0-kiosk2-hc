@@ -1,10 +1,11 @@
 const { verify, createHash } = require('node:crypto')
 const { publicKey } = require('./pms-card-public-key.json')
+const signed = (envelope, prefix, key) => envelope?.request && typeof envelope.signature === 'string' && envelope.signature.length <= 1024 &&
+  verify('sha256', Buffer.from(prefix + JSON.stringify(envelope.request)), key, Buffer.from(envelope.signature, 'base64'))
 
 function verifyRequest(envelope, env, now = Date.now(), key = publicKey) {
   const request = envelope?.request
-  if (!request || typeof envelope.signature !== 'string' || envelope.signature.length > 1024 ||
-      !verify('sha256', Buffer.from('pms-card-v1:' + JSON.stringify(request)), key, Buffer.from(envelope.signature, 'base64')))
+  if (!signed(envelope, 'pms-card-v1:', key))
     throw new Error('invalid_remote_request')
   const { id, room, property, deviceId, createdAt, expiresAt } = request
   if (!/^[a-f0-9-]{36}$/.test(id || '') || deviceId !== env.KIOSK_DEVICE_ID || property !== env.KIOSK_PROPERTY_ID ||

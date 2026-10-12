@@ -55,7 +55,6 @@ export default function CheckInComplete({
 
   const roomNumber = revealedInfo?.roomNumber || reservation?.roomNumber || ""
   const cardDelivery = reservation?.cardDelivery
-  const cardUnresolved = cardDelivery?.settled === false
   const buildingZoomImagePath = getBuildingZoomImagePath(roomNumber)
 
   const getBuildingType = (): string => {
@@ -221,7 +220,6 @@ export default function CheckInComplete({
 
   const startRedirectCountdown = () => {
     clearAllTimers()
-    if (cardUnresolved) { setCountdown(null); return }
     if (assistantOpenRef.current) {
       assistantPausedRedirectRef.current = true
       setCountdown(null)
@@ -261,7 +259,6 @@ export default function CheckInComplete({
   }, [assistantOpen])
 
   const handleRedirect = () => {
-    if (cardUnresolved) return
     if (isPopupMode) {
       const property = getKioskPropertyId()
       if (propertyUsesElectron(property)) {
@@ -283,6 +280,12 @@ export default function CheckInComplete({
   }
 
   useEffect(() => {
+    if (!cardDelivery || cardDelivery.success) return
+    const timer = setTimeout(() => handleRedirect(), 30000)
+    return () => clearTimeout(timer)
+  }, [cardDelivery])
+
+  useEffect(() => {
     if (countdown !== null) {
       logDebug(`Countdown: ${countdown} seconds`)
     }
@@ -300,7 +303,7 @@ export default function CheckInComplete({
       }
     },
     idleTime: 60000,
-    enabled: !isPopupMode && !cardUnresolved,
+    enabled: !isPopupMode,
   })
 
   return (
@@ -364,7 +367,6 @@ export default function CheckInComplete({
         <button
           type="button"
           className="is-primary"
-          disabled={cardUnresolved}
           onClick={() => {
             logDebug("Back button clicked: clearing all timers")
             clearAllTimers()

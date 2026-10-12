@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { useAdmin } from "@/contexts/admin-context"
 import { usePayment } from "@/contexts/payment-context"
 
-export default function PaymentRecoveryPanel({ disabled = false, customerMode = false, onResolved }: { disabled?: boolean; customerMode?: boolean; onResolved: () => void }) {
+export default function PaymentRecoveryPanel({ disabled = false, customerMode = false, allowPending = false, onResolved }: { disabled?: boolean; customerMode?: boolean; allowPending?: boolean; onResolved: () => void }) {
   const { paymentSession: session, storageError, resolveRecovery, reportCashRecovery } = usePayment()
   const [open, setOpen] = useState(false)
   const { password, authenticate, lock } = useAdmin()
@@ -14,8 +14,8 @@ export default function PaymentRecoveryPanel({ disabled = false, customerMode = 
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const busyRef = useRef(false)
-  const automaticCash = !storageError && session.isActive && session.method === "cash" &&
-    session.cashAutoReturn !== false && !!session.recoveryRequired && !session.cardInFlight && !session.recoveryEvidence && !session.pendingBooking
+  const automaticCash = Boolean(storageError || session.isActive &&
+    (session.recoveryRequired || session.pendingBooking) && (!session.pendingBooking || allowPending))
   const resolvedCallback = useRef(onResolved)
   resolvedCallback.current = onResolved
   useEffect(() => {
@@ -52,8 +52,7 @@ export default function PaymentRecoveryPanel({ disabled = false, customerMode = 
     finally { busyRef.current = false; setBusy(false) }
   }
   if (automaticCash) return <section role="status" className="rounded-xl bg-blue-50 p-6 text-2xl space-y-3">
-    <p>입실을 중단하고 현금 오류 기록을 남긴 뒤 처음 화면으로 돌아갑니다.</p>
-    <p>추가 현금 투입은 하지 마세요. 반환 확인이 필요한 금액은 관리자가 확인합니다.</p>
+    <p>결제 기록을 보관하고 처음 화면으로 돌아갑니다. 결제 확인이 필요합니다. 연락처 010-5126-4644</p>
     {error && <p className="text-lg text-red-700">{error}</p>}
   </section>
   if (customerMode) return <p role="status" className="text-xl">결제 기록은 보관됩니다. 결제·반환 확인 전에는 다시 결제하지 마세요.</p>

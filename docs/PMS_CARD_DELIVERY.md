@@ -8,3 +8,6 @@
 - PMS의 기존 서버 서비스 계정 키로 도메인이 구분된 요청에 서명한다. 키오스크와 PMS의 `pms-card-public-key.json`/`kiosk-key-public-key.json`에는 공개 검증키만 포함한다. 서비스 계정 키를 교체하면 새 공개키를 검증하여 양쪽 코드를 함께 갱신해야 한다. 개인키나 카드 원본 데이터는 대기열로 보내지 않는다.
 - 서명·객실·숙소·장비 ID·유효기간을 로컬 서버와 Electron에서 검사한다. 동일 요청의 카드 결과는 기존 암호화 저장소에 남겨 재수신·재시작으로 두 장을 발급하지 않는다. 인쇄 시작을 기록한 후 출력하므로 결과가 불확실한 인쇄를 자동 반복하지 않는다.
 - 실제 카드 수령은 발급기 결과로 확인한다. 인쇄 결과는 명령 전달 결과이며, 용지 공급·절단은 현장에서 확인한다.
+- 키오스크는 15초 간격의 기존 `kiosk_operations/devices/{deviceId}` 보고에 `hardware.cardDispenser` 상태와 재고·회수함 플래그를 포함한다. PMS는 `lastSeen`으로 연결 상태를 판단한다.
+- PMS는 기존 `kiosk_operations/commands/{deviceId}` 슬롯에 `pms-recovery-v1:`로 서명한 `{id,action:"reset_device",device:"cardDispenser",deviceId,property,building,createdAt,expiresAt}`를 순서대로 기록한다. 만료시간은 생성 후 2분이다. 거래 중에는 대기하고 만료되면 `failed/busy`로 응답한다. 결과는 기존 `result` 보고와 같은 명령 슬롯에 기록한다.
+- 이 명령은 새 카드 배출을 포함하지 않는다. 고객 미수령 카드의 재발급은 기존 **객실키 배출** 경로를 사용한다.

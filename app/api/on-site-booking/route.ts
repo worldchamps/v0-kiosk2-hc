@@ -71,6 +71,7 @@ export async function POST(request: NextRequest) {
       payment.orderNo || "", payment.front || null]))
     const existing = await readOnSiteBooking(key)
     if (existing && existing.fingerprint !== fingerprint) return reject("같은 결제 요청을 다른 예약에 사용할 수 없습니다.", 409)
+    if (body.queryOnly === true) return existing ? resultOf(existing) : NextResponse.json({ success: false, pending: false, found: false }, { status: 404 })
     const previousPayment = payment.method === "CARD" ? await getPaymentClaim(provider, paymentId) : null
     if (previousPayment?.status === "canceled") return reject("이미 취소된 카드 결제입니다. 관리자에게 문의해 주세요.", 409)
     if (previousPayment && !existing) return reject("이미 예약에 사용된 카드 결제입니다. 관리자에게 문의해 주세요.", 409)

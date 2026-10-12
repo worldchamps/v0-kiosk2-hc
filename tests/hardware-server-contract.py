@@ -134,6 +134,29 @@ class HardwareContracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.sent, [{"type": "pong"}])
         self.assertNotIn(client, server.connected_clients)
 
+    async def test_printer_status_reconnects_without_printing_or_cutting(self):
+        client = FakeClient(['{"type":"printer_status"}'])
+        printer = Mock(is_connected=False)
+        def connect():
+            printer.is_connected = True
+        printer.connect.side_effect = connect
+        with patch.object(server, 'printer', printer):
+            await server.handle_client(client)
+        self.assertEqual(client.sent, [{"type": "printer_status", "ready": True}])
+        printer.connect.assert_called_once()
+        printer.print_text.assert_not_called()
+        printer.cut_paper.assert_not_called()
+
+    async def test_server_shutdown_requires_the_per_launch_secret(self):
+        secret = 'a' * 64
+        stop = asyncio.Event()
+        client = FakeClient([json.dumps({"type": "shutdown", "token": "b" * 64}),
+                             json.dumps({"type": "shutdown", "token": secret})])
+        with patch.object(server, 'CARD_BRIDGE_TOKEN', secret), patch.object(server, 'shutdown_event', stop):
+            await server.handle_client(client)
+        self.assertTrue(stop.is_set())
+        self.assertEqual(client.sent, [{"type": "shutdown_ack"}])
+
     async def test_one_closed_client_does_not_block_other_device_recipients(self):
         good, bad = FakeClient(), FakeClient(broken=True)
         server.connected_clients.update([good, bad])

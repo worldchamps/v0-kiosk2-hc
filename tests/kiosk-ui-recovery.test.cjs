@@ -139,7 +139,7 @@ test('cash recovery panel automatically records and returns home without complet
       storageError: '', reportCashRecovery: async () => { records++; return { success: true }; } }) },
   }, { setTimeout(fn) { timer = fn; return 1; }, clearTimeout() {} });
   h.render({ onResolved: () => returned++ });
-  assert(h.visible('입실을 중단')); assert(!h.component('AdminKeypad')); assert(!h.visible('관리자 복구'));
+  assert(h.visible('결제 기록을 보관')); assert(!h.component('AdminKeypad')); assert(!h.visible('관리자 복구'));
   for (const effect of h.effects) effect();
   timer(); await new Promise(resolve => setImmediate(resolve));
   assert.equal(records, 1); assert.equal(returned, 1);
@@ -427,7 +427,7 @@ test('unresolved payment returns home after five seconds, preserves evidence and
   assert.equal(h.session.pendingBooking, original); assert(h.session.isActive);
   assert.equal(h.component('PaymentRecoveryPanel').props.customerMode, undefined, 'optional staff reconciliation remains reachable from home');
   h.mode('success'); await h.click('기존 결제 처리 결과 다시 확인');
-  assert.equal(h.posts[0], h.posts[1]); assert.equal(h.observed.completed, 1);
+  assert.deepEqual(JSON.parse(h.posts[1]), { ...JSON.parse(h.posts[0]), queryOnly: true }); assert.equal(h.observed.completed, 1);
 });
 
 for (const status of [null, { configured: true, connected: false, authenticated: false }]) {
@@ -446,6 +446,7 @@ test('missing room original blocks payment before any payment session or booking
   const h = await onsite('overnight', { cardHelpers: { checkCardBeforePayment: async () => { throw Error('missing original') } } });
   await h.pay(); assert.equal(h.session.isActive, false); assert.equal(h.posts.length, 0);
   assert.equal(h.component('PaymentScreen'), undefined);
+  assert(h.button('숙박 오늘 입실 · 내일 퇴실'));
 });
 
 test('a failed schedule preflight never opens payment or invokes a card device', async () => {
@@ -482,7 +483,7 @@ for (const outcome of [{ success: true, settled: true }, { success: false, reaso
     finish(outcome); await pending; await h.settle();
     assert.equal(h.observed.completed, 1); assert.equal(h.observed.cancelledApprovals, 0);
     assert.equal(h.component('CheckInComplete').props.reservation.cardDelivery, outcome);
-    if (!outcome.settled) { await h.idle(); assert(h.component('CheckInComplete')); }
+    if (!outcome.settled) { await h.idle(); assert(h.button('숙박 오늘 입실 · 내일 퇴실')); }
   });
 }
 
@@ -511,7 +512,7 @@ for (const mode of ['lost', 'pending']) {
     await h.component('PaymentScreen').props.onPaymentComplete({ method: 'CARD', provider: 'TOSS_FRONT', front: { test: true } }); await h.settle();
     assert(h.visible('결제 처리 확인이 필요합니다')); assert(h.session.isActive); assert.equal(h.observed.cancelledApprovals, 0); assert.equal(h.observed.completed, 0);
     await h.idle(); assert(h.visible('결제 처리 확인이 필요합니다')); h.mode('success'); await h.click('기존 결제 처리 결과 다시 확인');
-    assert.equal(h.posts.length, 2); assert.equal(h.posts[0], h.posts[1]); assert(h.component('CheckInComplete')); assert.equal(h.observed.completed, 1);
+    assert.equal(h.posts.length, 2); assert.deepEqual(JSON.parse(h.posts[1]), { ...JSON.parse(h.posts[0]), queryOnly: true }); assert(h.component('CheckInComplete')); assert.equal(h.observed.completed, 1);
   });
 }
 test('booking in flight ignores double completion and idle, and only successful response completes', async () => {
@@ -520,9 +521,10 @@ test('booking in flight ignores double completion and idle, and only successful 
   assert.equal(h.posts.length, 1); assert(h.session.isActive); assert(h.visible('결제 처리 확인이 필요합니다'));
   h.release(); await pending; await h.settle(); assert(h.component('CheckInComplete'));
 });
-test('only explicit definitive rejection permits automatic card cancellation; cash rejection stays protected', async () => {
+test('definitive booking rejection does not automatically cancel a card approval or erase cash evidence', async () => {
   const card = await onsite(); await card.pay(); card.mode('reject'); await card.component('PaymentScreen').props.onPaymentComplete({ method: 'CARD', provider: 'TOSS_FRONT', front: {} });
-  assert.equal(card.observed.cancelledApprovals, 1);
+  assert.equal(card.observed.cancelledApprovals, 0);
+  assert(card.session.recoveryRequired);
   const cash = await onsite(); await cash.pay(); cash.session.acceptedAmount = 30000; cash.mode('reject');
   await cash.component('PaymentScreen').props.onPaymentComplete({ method: 'CASH' }); await cash.settle();
   assert.equal(cash.observed.completed, 0); assert.equal(cash.session.acceptedAmount, 30000);
@@ -590,7 +592,7 @@ test('amount mismatch preserves actual approval proof without booking, automatic
   assert.equal(requests, 1); assert.equal(cancels, 0); assert.equal(completions, 0);
 });
 async function kiosk(scenario = {}) {
-  let pending = true; const posts = [], keyHandlers = [];
+  let pending = true; const posts = [], keyHandlers = [], timers = [], commands = [];
   const components = ['standby-screen', 'idle-screen', 'reservation-confirm', 'current-location', 'on-site-reservation',
     'reservation-details', 'check-in-complete', 'reservation-not-found', 'reservation-list', 'admin-keypad', 'property-mismatch-dialog', 'property-redirect-dialog'];
   const deps = Object.fromEntries([...components, 'kiosk-ai-assistant'].map(name => ['@/components/' + name, { default: name }]));
@@ -605,7 +607,7 @@ async function kiosk(scenario = {}) {
     '@/lib/kiosk-scope': { buildingRestrictionMessage: () => 'B only' },
     '@/lib/kiosk-operator-shortcuts': load('lib/kiosk-operator-shortcuts.ts').exports,
   });
-  const h = load('components/kiosk-layout.tsx', deps, { alert() {}, window: { location: { search: '' }, addEventListener(type, fn) { if (type === 'keydown') keyHandlers.push(fn); }, removeEventListener() {}, electronAPI: { tossFront: { scanReservationQr: scenario.scan || (async () => ({success: true, value: 'AGAIN:RESERVATION:QA-ONLY'})) } } }, document: { body: { classList: { add() {}, remove() {} } } },
+  const h = load('components/kiosk-layout.tsx', deps, { alert() {}, setTimeout(fn, ms) { timers.push({ fn, ms }); return timers.length }, clearTimeout() {}, window: { location: { search: '' }, addEventListener(type, fn) { if (type === 'keydown') keyHandlers.push(fn); }, removeEventListener() {}, electronAPI: { send: command => commands.push(command), tossFront: { scanReservationQr: scenario.scan || (async () => ({success: true, value: 'AGAIN:RESERVATION:QA-ONLY'})) } } }, document: { body: { classList: { add() {}, remove() {} } } },
     fetch: async (url, options) => {
       if (url === '/api/kiosk-config') return { ok: true, json: async () => ({ property: 'property3', building: 'B' }) };
       if (url.startsWith('/api/reservations')) return scenario.lookup ? scenario.lookup(url, options) : { ok: true, json: async () => ({ reservations: [{ reservationId: 'QA-ONLY', roomNumber: 'B901', guestName: 'QA', roomType: 'Test', price: '30000', checkInDate: '2026-09-10', checkOutDate: '2026-09-11', password: '' }] }) };
@@ -615,8 +617,19 @@ async function kiosk(scenario = {}) {
   render(); for (const effect of h.effects) effect(); await settle();
   const navigate = h.component('on-site-reservation').props.onNavigate;
   await navigate('reservationConfirm'); await settle();
-  return { ...h, settle, render, navigate, posts, keyHandlers, confirmCheckIn: () => pending = false };
+  return { ...h, settle, render, navigate, posts, keyHandlers, timers, commands, confirmCheckIn: () => pending = false };
 }
+test('unconfirmed check-in returns to the customer home after five seconds without exposing a key', async () => {
+  const h = await kiosk();
+  await h.component('reservation-confirm').props.onCheckReservation('QA-ONLY'); await h.settle();
+  assert.equal(await h.component('reservation-details').props.onCheckIn(), false); await h.settle();
+  const recoveryEffect = h.renderEffects.find(effect => effect.toString().includes('setReservationData(null)'));
+  assert(recoveryEffect); recoveryEffect();
+  const timeouts = h.timers.filter(value => value.ms === 5000);
+  assert(timeouts.length); for (const timeout of timeouts) timeout.fn(); h.render();
+  assert(h.component('on-site-reservation') || h.commands.includes('close-popup'));
+  assert.equal(h.component('check-in-complete'), undefined);
+});
 test('reservation card issue waits for committed response, protects navigation, and preserves confirmed check-in on card failure', async () => {
   let finish, issued = 0;
   const h = await kiosk({ cardIssue: { required: true, ticket: 'committed' }, cardHelpers: {
@@ -630,7 +643,7 @@ test('reservation card issue waits for committed response, protects navigation, 
   assert(h.component('CardProgress')); await h.navigate('idle'); await h.settle(); assert(h.component('reservation-details'));
   finish({ success: false, reason: 'timeout', settled: false }); await pending; await h.settle();
   assert.equal(h.component('check-in-complete').props.reservation.cardDelivery.success, false);
-  await h.component('check-in-complete').props.onNavigate('idle'); await h.settle(); assert(h.component('check-in-complete')); assert.equal(issued, 1);
+  await h.component('check-in-complete').props.onNavigate('idle'); await h.settle(); assert(h.component('on-site-reservation')); assert.equal(issued, 1);
 });
 
 test('existing reservation check-in 202 retains its screen and keys stay hidden until confirmed success', async () => {

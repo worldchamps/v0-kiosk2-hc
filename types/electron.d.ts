@@ -105,10 +105,12 @@ export interface ElectronAPI {
   // 환경 설정
   getPropertyId: () => Promise<string>
   getOverlayMode: () => Promise<boolean>
+  cashAvailable?: () => Promise<boolean>
+  reportDeviceFault?: (key: 'acceptor' | 'dispenser' | 'cardTerminal' | 'printer' | 'cardDispenser') => void
   paymentRecovery: {
     onOperationsRequest?: (callback: (request: { kind: string; command?: unknown }) => Promise<unknown>) => () => void
     archiveRemote?: (input: { command: unknown; expectedRaw: string | null; memorySnapshot: string }) => Promise<{ success: boolean; archiveId?: string; error?: string }>
-    reportCash: (input: { expectedRaw: string | null; memorySnapshot: string }) => Promise<{ success: boolean; archiveId?: string; error?: string }>
+    reportCash: (input: { expectedRaw: string | null; memorySnapshot: string; storageError?: string }) => Promise<{ success: boolean; archiveId?: string; error?: string; cashStopped?: boolean }>
     authorize: (password: string) => Promise<{ success: boolean; error?: string }>
     archive: (input: { password: string; expectedRaw: string | null; memorySnapshot: string; confirmed: boolean; resolution: "zero_cash" | "operator_resolved"; note: string }) =>
       Promise<{ success: boolean; archiveId?: string; error?: string }>

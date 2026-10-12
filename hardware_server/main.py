@@ -83,6 +83,7 @@ if card_enabled(os.environ) and len(CARD_BRIDGE_TOKEN) == 64:
 
 connected_clients = set()
 card_tasks = set()
+shutdown_event = None
 
 
 async def handle_card_command(websocket, message):
@@ -256,6 +257,14 @@ async def handle_client(websocket, *args):
                     acceptor.send(bytes(msg.get("data", [])))
                 elif cmd_type == "ping":
                     await websocket.send(json.dumps({"type": "pong"}))
+                elif cmd_type == "printer_status":
+                    if printer and not printer.is_connected:
+                        printer.connect()
+                    await websocket.send(json.dumps({"type": "printer_status", "ready": bool(printer and printer.is_connected)}))
+                elif cmd_type == "shutdown" and shutdown_event and isinstance(msg.get("token"), str) and \
+                        len(msg["token"]) == 64 and CARD_BRIDGE_TOKEN and hmac.compare_digest(msg["token"], CARD_BRIDGE_TOKEN):
+                    await websocket.send(json.dumps({"type": "shutdown_ack"}))
+                    shutdown_event.set()
             except json.JSONDecodeError:
                 logger.error("Invalid JSON received")
             except Exception as exc:
@@ -272,8 +281,9 @@ async def handle_client(websocket, *args):
 
 
 async def main():
-    global main_loop
+    global main_loop, shutdown_event
     main_loop = asyncio.get_running_loop()
+    shutdown_event = asyncio.Event()
 
     if card_dispenser:
         card_dispenser.connect()
@@ -296,15 +306,10 @@ async def main():
 
     logger.info("Starting WebSocket server on ws://localhost:8082")
     # Only the native Electron bridge connects here; web pages must never issue cash/printer commands.
-    async with websockets.serve(handle_client, "localhost", 8082, origins=[None], max_size=65536):
-        await asyncio.Future()
-
-
-if __name__ == "__main__":
     try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Server stopping...")
+        async with websockets.serve(handle_client, "localhost", 8082, origins=[None], max_size=65536):
+            await shutdown_event.wait()
+    finally:
         if card_dispenser:
             card_dispenser.stop()
         if bac2400:
@@ -314,3 +319,10 @@ if __name__ == "__main__":
             acceptor.stop()
         if printer:
             printer.disconnect()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Server interrupted")
