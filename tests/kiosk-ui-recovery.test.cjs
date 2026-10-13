@@ -91,7 +91,7 @@ test('remote card delivery waits for idle, sends card before receipt, and expose
       window: { electronAPI: { cardKey: { available: async () => { availableCalls++; return true },
         issueRemote: async () => { calls.push('card'); return { success: scenario !== 'card-failed', reason: 'empty', settled: true } } } } },
       fetch: async (_url, options = {}) => {
-        if (options.method !== 'POST') return Response.json({ jobs: queries++ ? [] : ['synthetic-job'] })
+        if (options.method !== 'POST') return Response.json({ jobs: queries++ ? [] : [{ id: 'synthetic-job', expiresAt: Date.now() + 600000 }] })
         const { action } = JSON.parse(options.body); calls.push(action)
         return Response.json(action === 'claim' ? { envelope: {}, receipt: { roomNumber: 'C103', password: '', floor: '1F' } } : { success: true })
       },
@@ -110,6 +110,105 @@ test('remote card delivery waits for idle, sends card before receipt, and expose
     for (const cleanup of cleanups) cleanup?.()
   }
 })
+for (const failure of [409, 400, 503, 'network']) {
+  test(`remote claim ${failure} stays invisible and backs off per job from 30 seconds to five minutes`, async () => {
+    let now = 100000, interval
+    const busy = [], attempts = []
+    const jobs = [{ id: 'retry-job', expiresAt: now + 2000000 }]
+    class Clock extends Date { static now() { return now } }
+    const h = load('components/remote-key-listener.tsx', {
+      '@/lib/printer-utils': { autoConnectPrinter: async () => assert.fail('unclaimed job connected printer'),
+        printRoomInfoReceipt: async () => assert.fail('unclaimed job printed') },
+    }, {
+      Date: Clock,
+      window: { electronAPI: { cardKey: { available: async () => true,
+        issueRemote: async () => assert.fail('unclaimed job issued card') } } },
+      fetch: async (_url, options = {}) => {
+        if (options.method !== 'POST') return Response.json({ jobs })
+        const request = JSON.parse(options.body)
+        assert.equal(request.action, 'claim')
+        attempts.push({ id: request.id, at: now })
+        if (failure === 'network') throw Error('offline')
+        return Response.json({ error: '이미 처리된 요청입니다.' }, { status: failure })
+      },
+      setInterval: callback => { interval = callback; return 1 }, clearInterval() {},
+    })
+    const props = { idle: true, onBusy: value => busy.push(value) }
+    const settle = async () => {
+      for (let n = 0; n < 3; n++) await new Promise(resolve => setImmediate(resolve))
+      assert.equal(h.render(props, 'RemoteKeyListener'), null, 'claim failures must show neither overlay nor toast')
+      assert.deepEqual(busy, [])
+    }
+    h.render(props, 'RemoteKeyListener')
+    const cleanup = h.effects[0]()
+    await settle()
+    assert.equal(attempts.length, 1)
+    const firstJob = jobs.shift()
+    interval(); await settle()
+    jobs.push(firstJob); interval(); await settle()
+    assert.equal(attempts.length, 1, 'a transient empty queue must not reset the same job backoff')
+    for (const delay of [30000, 60000, 120000, 240000, 300000, 300000]) {
+      const count = attempts.length
+      now += delay - 1; interval(); await settle()
+      assert.equal(attempts.length, count)
+      now++; interval(); await settle()
+      assert.equal(attempts.length, count + 1)
+    }
+    jobs.push({ id: 'another-job', expiresAt: now + 600000 })
+    interval(); await settle()
+    assert.equal(attempts.at(-1).id, 'another-job', 'one backed-off job must not block another')
+    now = jobs[0].expiresAt
+    const count = attempts.length
+    jobs.pop(); interval(); await settle()
+    assert.equal(attempts.length, count, 'expired jobs must not be claimed even at the retry boundary')
+    cleanup()
+  })
+}
+
+test('remote overlay starts after claim, releases busy after parent becomes non-idle, and never starts if idle is lost during claim', async () => {
+  for (const loseIdle of [false, true]) {
+    let resolveClaim, resolvePrinter
+    const busy = [], calls = []
+    const h = load('components/remote-key-listener.tsx', {
+      '@/lib/printer-utils': { autoConnectPrinter: () => new Promise(resolve => { resolvePrinter = resolve }),
+        printRoomInfoReceipt: async () => true },
+    }, {
+      window: { electronAPI: { cardKey: { available: async () => true,
+        issueRemote: async () => { calls.push('card'); return { success: true } } } } },
+      fetch: async (_url, options = {}) => {
+        if (options.method !== 'POST') return Response.json({ jobs: [{ id: 'job', expiresAt: Date.now() + 600000 }] })
+        const { action } = JSON.parse(options.body); calls.push(action)
+        if (action === 'claim') return new Promise(resolve => { resolveClaim = resolve })
+        return Response.json({ success: true })
+      }, setInterval: () => 1, clearInterval() {},
+    })
+    const props = { idle: true, onBusy: value => {
+      busy.push(value); h.render({ ...props, idle: !value }, 'RemoteKeyListener')
+    } }
+    h.render(props, 'RemoteKeyListener')
+    const cleanup = h.effects[0]()
+    for (let n = 0; n < 3; n++) await new Promise(resolve => setImmediate(resolve))
+    assert.equal(h.render(props, 'RemoteKeyListener'), null)
+    assert.deepEqual(busy, [])
+    if (loseIdle) h.render({ ...props, idle: false }, 'RemoteKeyListener')
+    resolveClaim(Response.json({ envelope: {}, receipt: { roomNumber: 'C201' } }))
+    for (let n = 0; n < 3; n++) await new Promise(resolve => setImmediate(resolve))
+    if (loseIdle) {
+      assert.equal(h.render({ ...props, idle: false }, 'RemoteKeyListener'), null)
+      assert.deepEqual(busy, []); assert.deepEqual(calls, ['claim'])
+    } else {
+      h.render({ ...props, idle: false }, 'RemoteKeyListener')
+      assert.equal(h.component('CardProgress').props.remoteRoom, 'C201')
+      assert.deepEqual(busy, [true])
+      resolvePrinter(true)
+      for (let n = 0; n < 3; n++) await new Promise(resolve => setImmediate(resolve))
+      assert.deepEqual(busy, [true, false])
+      assert.deepEqual(calls, ['claim', 'card', 'printing', 'complete'])
+    }
+    cleanup()
+  }
+})
+
 test('cash auto recovery clears only the archived session without asking for an administrator code', async () => {
   let request;
   const saved = JSON.stringify({ isActive: true, method: 'cash', acceptedAmount: 50000, requiredAmount: 30000,

@@ -76,6 +76,10 @@ test('uncertain remote delivery cannot dispense again after restart', async () =
   assert.equal(f.sent.length, 1)
 })
 test('remote queue claims and print transitions reject wrong devices, stale jobs and repeated printing', async () => {
+  const firebaseTransaction = {}
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../lib/firebase-transaction.ts'), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText, { exports: firebaseTransaction })
   const valid = envelope(), foreign = envelope('A101', { property: 'property3', deviceId: 'property3-kiosk-01' })
   valid.request = firebaseOrder(valid.request)
   foreign.request = firebaseOrder(foreign.request)
@@ -88,15 +92,16 @@ test('remote queue claims and print transitions reject wrong devices, stale jobs
     '@/lib/firebase-admin': { getDB: () => ({ ref: name => { assert.equal(name, 'kiosk_key_jobs/property1'); return {
       orderByChild(field) { assert.equal(field, 'request/createdAt'); return this },
       limitToLast: () => ({ once: async () => ({ val: () => rows }) }),
-      child: id => ({ once: async () => ({ val: () => rows[id] }), transaction: async callback => {
+      child: id => ({ on() {}, off() {}, once: async () => ({ val: () => rows[id] }), transaction: async callback => {
         const next = callback(rows[id]); if (next) rows[id] = next; return { committed: !!next }
       } }),
     } } }) },
+    '@/lib/firebase-transaction': firebaseTransaction,
   }
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../app/api/remote-key/route.ts'), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText, { exports, require: name => { assert(name in deps, name); return deps[name] }, process: { env }, Date })
-  assert.deepEqual((await (await exports.GET()).json()).jobs, [valid.request.id])
+  assert.deepEqual((await (await exports.GET()).json()).jobs, [{ id: valid.request.id, expiresAt: valid.request.expiresAt }])
   const post = action => exports.POST({ json: async () => ({ id: valid.request.id, action }) })
   const claim = await (await post('claim')).json()
   assert.equal(claim.receipt.password, '')

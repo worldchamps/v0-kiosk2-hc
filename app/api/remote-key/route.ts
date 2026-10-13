@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { getDB } from "@/lib/firebase-admin"
+import { transactionWithReadCache } from "@/lib/firebase-transaction"
 import { getKioskScope } from "@/lib/kiosk-scope"
 import { getRoomInfoByMatchingNumber } from "@/lib/firebase-beach-rooms"
 import { verifyRequest } from "@/electron/pms-card-request"
@@ -17,7 +18,7 @@ export async function GET() {
     const jobs = Object.entries(snapshot.val() || {}).filter(([id, job]: [string, any]) => {
       try { return verifyRequest(job, process.env).id === id && ["pending", "processing"].includes(job.status) }
       catch { return false }
-    }).map(([id]) => id)
+    }).map(([id, job]: [string, any]) => ({ id, expiresAt: job.request.expiresAt }))
     return NextResponse.json({ jobs })
   } catch { return NextResponse.json({ jobs: [] }) }
 }
@@ -31,8 +32,9 @@ export async function POST(request: Request) {
     if (claim.id !== id) throw Error("잘못된 요청입니다.")
     const room = action === "claim" ? await getRoomInfoByMatchingNumber(claim.room) : null
     if (action === "claim" && !room) throw Error("객실 정보를 확인하지 못했습니다.")
-    const result = await ref.transaction(current => {
+    const result = await transactionWithReadCache(ref, current => {
       if (!current || current.signature !== existing.signature || JSON.stringify(current.request) !== JSON.stringify(existing.request)) return
+      if (action === "claim" && current.request.expiresAt <= Date.now()) return
       if (action === "claim" && ["pending", "processing"].includes(current.status))
         return { ...current, status: "processing", startedAt: current.startedAt || new Date().toISOString() }
       if (action === "printing" && current.status === "processing")
