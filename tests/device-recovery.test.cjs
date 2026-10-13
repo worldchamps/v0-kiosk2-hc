@@ -65,9 +65,39 @@ function fixture(configured = ['acceptor', 'dispenser', 'cardTerminal', 'printer
     onBusy: value => busyChanges.push(value),
     now: () => now, sleep: async ms => { now += ms }, setTimeout: scheduleTimeout,
     clearTimeout: id => timers.delete(id), commandTimeoutMs: 15 })
-  return { recovery: { ...recovery, reset: target => run(() => recovery.reset(target)), tick: () => run(() => recovery.tick()) },
+  return { recovery: { ...recovery, reset: target => run(() => recovery.reset(target)) },
     calls, bridge, busyChanges, now: () => now, setIdle(value) { idle = value }, setFault(value) { fault = value }, advance(ms) { now += ms }, get restarts() { return restarts } }
 }
+
+test('creation, idle time and observed faults never probe or reset devices', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
+  const h = fixture()
+  const initial = Object.fromEntries(Object.keys(h.recovery.hardware).map(key => [key,
+    { state: 'ok', reason: null, lastResetAt: null, lastResetResult: null }]))
+  assert.deepEqual(h.recovery.hardware, initial)
+  assert.equal('tick' in h.recovery, false)
+  h.advance(600000); t.mock.timers.tick(600000)
+  assert.deepEqual(h.recovery.hardware, initial)
+  h.recovery.fault('acceptor', 'device_error')
+  h.bridge.isConnected = false
+  h.setIdle(false); h.advance(600000); t.mock.timers.tick(600000)
+  h.setIdle(true); h.advance(600000); t.mock.timers.tick(600000)
+  assert.deepEqual(h.recovery.hardware, { ...initial,
+    acceptor: { ...initial.acceptor, state: 'needs_attention', reason: 'device_error' } })
+  assert.deepEqual(h.calls, [])
+  assert.deepEqual(h.busyChanges, [])
+  assert.equal(h.recovery.isBusy(), false)
+  assert.equal(h.restarts, 0)
+})
+
+test('main has no recovery tick call or recovery interval', () => {
+  const fs = require('node:fs'), path = require('node:path')
+  const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8')
+  assert.doesNotMatch(source, /\bdeviceRecovery(?:\?\.|\.)tick\b/)
+  assert.doesNotMatch(source, /\bsetInterval\s*\([^;\n]*\bdeviceRecovery\b/)
+  const idleHandler = source.slice(source.indexOf("ipcMain.on('card-key:idle'"), source.indexOf("ipcMain.on('card-key:idle'") + 400)
+  assert.match(idleHandler, /cardRendererIdle = value === true/)
+})
 
 test('all configured devices reset in order after idle without a money, approval or card issue command', async () => {
   const h = fixture()
@@ -88,13 +118,13 @@ test('all configured devices reset in order after idle without a money, approval
 })
 
 for (const profile of [{ property: 'property3', building: 'B' }, { property: 'property4', building: '' }]) {
-  test(`${profile.property}/${profile.building}: idle integrated board recovery never sends ONEPLUS, payout or return`, async () => {
+  test(`${profile.property}/${profile.building}: PMS integrated board reset never sends ONEPLUS, payout or return`, async () => {
     const h = fixture(['acceptor', 'dispenser'], profile)
-    h.setIdle(false); await h.recovery.tick(); assert.equal(h.calls.length, 0)
-    h.setIdle(true); await h.recovery.tick()
-    assert.deepEqual(h.calls.map(c => c.type), ['ping', 'cash_board_recover', 'cash_board_recover'])
-    assert.deepEqual(h.calls.slice(1).map(c => c.target), ['acceptor', 'dispenser'])
-    assert.equal(new Set(h.calls.slice(1).map(c => c.requestId)).size, 2)
+    h.setIdle(false); await assert.rejects(h.recovery.reset('all'), /busy/); assert.equal(h.calls.length, 0)
+    h.setIdle(true); await h.recovery.reset('all')
+    assert.deepEqual(h.calls.map(c => c.type), ['cash_board_recover', 'cash_board_recover'])
+    assert.deepEqual(h.calls.map(c => c.target), ['acceptor', 'dispenser'])
+    assert.equal(new Set(h.calls.map(c => c.requestId)).size, 2)
     assert.deepEqual(Object.values(h.recovery.hardware).map(d => d.state), ['ok', 'ok'])
     assert.equal(h.busyChanges.at(-1), false)
     h.setFault('unverified'); await assert.rejects(h.recovery.reset('acceptor'), /device_ng/)
@@ -105,22 +135,25 @@ for (const profile of [{ property: 'property3', building: 'B' }, { property: 'pr
     await assert.rejects(h.recovery.reset('acceptor'), /timeout/)
     assert.equal(h.now() - startedAt, 45)
     assert.equal(h.busyChanges.at(-1), false)
-    assert(h.calls.every(c => ['ping', 'cash_board_recover'].includes(c.type)))
+    assert(h.calls.every(c => c.type === 'cash_board_recover'))
   })
 }
 
-test('NG and timeout latch only the affected device, then idle retry restores it', async () => {
-  const h = fixture(['acceptor'])
+test('NG and timeout latch only the affected device, then a later PMS reset restores it', async () => {
+  const h = fixture(['acceptor', 'dispenser'])
   h.setFault('ng')
   await assert.rejects(h.recovery.reset('acceptor'), /device_ng/)
   assert.equal(h.recovery.hardware.acceptor.state, 'needs_attention')
+  assert.equal(h.recovery.hardware.dispenser.state, 'ok')
   h.setFault('timeout'); h.advance(60000)
-  await h.recovery.tick()
+  await assert.rejects(h.recovery.reset('acceptor'), /timeout/)
   assert.equal(h.recovery.hardware.acceptor.state, 'needs_attention')
+  assert.equal(h.recovery.hardware.dispenser.state, 'ok')
   h.setFault(null); h.advance(60000)
-  await h.recovery.tick()
+  await h.recovery.reset('acceptor')
   assert.equal(h.recovery.hardware.acceptor.state, 'ok')
-  assert(h.calls.every(value => value.type === 'raw_acceptor' || value.type === 'ping'))
+  assert.equal(h.recovery.hardware.dispenser.lastResetAt, null)
+  assert(h.calls.every(value => value.type === 'raw_acceptor'))
 })
 test('dispenser accepts fragmented status frames but never a bad checksum', async () => {
   const h = fixture(['dispenser'])
@@ -134,11 +167,11 @@ test('dispenser accepts fragmented status frames but never a bad checksum', asyn
 })
 
 for (const building of ['C', 'D']) {
-  test(`property1/${building}: legacy ONEPLUS replies and a ready Bixolon restore idle recovery to ok`, async () => {
+  test(`property1/${building}: PMS reset verifies legacy ONEPLUS replies and a ready Bixolon`, async () => {
     const h = fixture(['dispenser', 'printer'], { property: 'property1', building })
     h.setFault('fragment')
-    await h.recovery.tick()
-    assert.deepEqual(h.calls.map(c => c.type), ['ping', 'raw_dispenser', 'raw_dispenser', 'raw_dispenser', 'printer_status'])
+    await h.recovery.reset('all')
+    assert.deepEqual(h.calls.map(c => c.type), ['raw_dispenser', 'raw_dispenser', 'raw_dispenser', 'printer_status'])
     assert.deepEqual(h.calls.filter(c => c.type === 'raw_dispenser').map(c => c.data), [
       [0x24, 0x53, 0x74, 0x3f, 0x06], // Existing renderer getDispenserStatus: $St?
       [0x24, 0x49, 0x00, 0x00, 0x49], // Existing renderer resetDispenser: $I\0\0
@@ -166,24 +199,30 @@ for (const [key, failure] of [['dispenser', 'dispenser_ng'], ['cardTerminal', 't
   })
 }
 
-test('dead bridge restarts only after a sustained idle failure', async () => {
+test('PMS hardware-server reset waits for idle and verifies the restarted bridge', async () => {
   const h = fixture(['acceptor'])
   h.bridge.isConnected = false
-  await h.recovery.tick()
+  h.recovery.fault('acceptor', 'bridge_disconnected')
+  h.setIdle(false)
+  await assert.rejects(h.recovery.reset('hardwareServer'), /busy/)
   assert.equal(h.restarts, 0)
-  h.advance(29999); await h.recovery.tick()
-  assert.equal(h.restarts, 0)
-  h.setIdle(false); h.advance(2); await h.recovery.tick()
-  assert.equal(h.restarts, 0)
-  h.setIdle(true); await h.recovery.tick()
+  h.setIdle(true)
+  h.setFault('timeout')
+  await assert.rejects(h.recovery.reset('hardwareServer'), /timeout/)
   assert.equal(h.restarts, 1)
-  assert.equal(h.recovery.hardware.acceptor.state, 'ok')
+  assert.equal(h.recovery.isBusy(), false)
+  h.setFault(null)
+  await h.recovery.reset('hardwareServer')
+  assert.equal(h.restarts, 2)
+  assert.deepEqual(h.calls.map(c => c.type), ['ping', 'ping'])
+  assert.equal(h.recovery.hardware.acceptor.state, 'needs_attention')
+  assert.deepEqual(h.busyChanges, [true, false, true, false])
 })
 
 test('an overlay with no native devices never probes or restarts a phantom hardware server', async () => {
   const h = fixture([])
   h.bridge.isConnected = false
-  for (let i = 0; i < 6; i++) { h.advance(60000); await h.recovery.tick() }
+  h.advance(600000)
   assert.deepEqual(h.recovery.hardware, {})
   assert.equal(h.calls.length, 0); assert.equal(h.restarts, 0)
   await assert.rejects(h.recovery.reset('printer'), /device_unconfigured/)

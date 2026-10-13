@@ -27,7 +27,7 @@ function nativeOperations({ overlay = true, property = 'property2' } = {}) {
   }
   vm.runInNewContext(source.slice(source.indexOf('function getOperationsWindow()'), source.indexOf("ipcMain.handle('printer:report-result'")) +
     source.slice(source.indexOf('const cardAutoIdle ='), source.indexOf('const cardStore =')) +
-    source.slice(source.indexOf('  const karivOverlay ='), source.indexOf('  setInterval(() => void deviceRecovery.tick()')) +
+    source.slice(source.indexOf('  const karivOverlay ='), source.indexOf('  const operations = createOperationsReporter')) +
     source.slice(source.indexOf('  const operations = createOperationsReporter'), source.indexOf('  setInterval(() => void operations.tick()')) +
     '\nglobal.operations = operations; global.cardAutoIdle = cardAutoIdle', context)
   const window = { isDestroyed: () => false, webContents: { reload: () => reloads++,
@@ -126,7 +126,7 @@ test('property1 native Bixolon recovery reads the existing server status and res
   h.context.deviceRecovery.fault('printer', 'printer_unavailable')
   await h.context.deviceRecovery.reset('printer')
   assert.equal(h.context.deviceRecovery.hardware.printer.state, 'ok')
-  assert.equal(h.context.deviceRecovery.hardware.dispenser.state, 'recovering')
+  assert.equal(h.context.deviceRecovery.hardware.dispenser.state, 'ok')
   ready = false
   await assert.rejects(h.context.deviceRecovery.reset('printer'), /printer_unavailable/)
   assert.equal(h.context.deviceRecovery.hardware.printer.state, 'needs_attention')

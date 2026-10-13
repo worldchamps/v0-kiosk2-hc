@@ -3,10 +3,9 @@ const { createHash, randomUUID } = require('node:crypto')
 const { usesIntegratedCash } = require('./cash-device-profile')
 const clean = value => String(value || 'reset_failed').replace(/[^a-z0-9_:-]/gi, '_').slice(0, 80)
 
-function createDeviceRecovery({ configured, bridgeDevices = configured.filter(key => key !== 'cardTerminal'), property, building, bridge, cardKey, terminal, printer, restartServer, isIdle, onRecovered = () => {}, onBusy = () => {}, now = Date.now, sleep = wait, setTimeout: scheduleTimeout = setTimeout, clearTimeout: cancelTimeout = clearTimeout, commandTimeoutMs = 3000 }) {
-  const hardware = Object.fromEntries(configured.map(key => [key, { state: 'recovering', reason: 'startup', lastResetAt: null, lastResetResult: null }]))
-  let busy = false, serverFailures = 0, nextServerAttempt = 0, lastPing = 0, unresponsiveSince = 0
-  const lastAttempt = Object.fromEntries(configured.map(key => [key, 0]))
+function createDeviceRecovery({ configured, property, building, bridge, cardKey, terminal, printer, restartServer, isIdle, onRecovered = () => {}, onBusy = () => {}, now = Date.now, sleep = wait, setTimeout: scheduleTimeout = setTimeout, clearTimeout: cancelTimeout = clearTimeout, commandTimeoutMs = 3000 }) {
+  const hardware = Object.fromEntries(configured.map(key => [key, { state: 'ok', reason: null, lastResetAt: null, lastResetResult: null }]))
+  let busy = false
   const update = (key, state, reason, result) => {
     hardware[key] = { ...hardware[key], state, reason, lastResetAt: now(), lastResetResult: result }
   }
@@ -87,7 +86,6 @@ function createDeviceRecovery({ configured, bridgeDevices = configured.filter(ke
   async function resetOne(key) {
     if (!Object.hasOwn(hardware, key)) throw Error('device_unconfigured')
     if (!isIdle()) throw Error('busy')
-    lastAttempt[key] = now()
     hardware[key] = { ...hardware[key], state: 'recovering', reason: null }
     try {
       if ((key === 'acceptor' || key === 'dispenser') && usesIntegratedCash(property, building)) await integratedRecovery(key)
@@ -119,7 +117,6 @@ function createDeviceRecovery({ configured, bridgeDevices = configured.filter(ke
       if (target === 'hardwareServer') {
         await restartServer()
         await ping()
-        serverFailures = 0; nextServerAttempt = 0; unresponsiveSince = 0
         return
       }
       if (target === 'all') {
@@ -131,28 +128,7 @@ function createDeviceRecovery({ configured, bridgeDevices = configured.filter(ke
       } else await resetOne(target)
     } finally { busy = false; onBusy(false) }
   }
-  async function tick() {
-    if (busy || !isIdle()) return
-    if (bridgeDevices.length && now() - lastPing >= 15000) {
-      lastPing = now()
-      try { await ping(); unresponsiveSince = 0 } catch { unresponsiveSince ||= now() }
-    }
-    if (unresponsiveSince) for (const key of bridgeDevices) {
-      if (hardware[key]) hardware[key] = { ...hardware[key], state: 'needs_attention', reason: 'bridge_unresponsive' }
-    }
-    if (unresponsiveSince && now() - unresponsiveSince >= 30000 && now() >= nextServerAttempt) {
-      try { await reset('hardwareServer') } catch {
-        nextServerAttempt = now() + [60000, 120000, 300000, 600000][Math.min(serverFailures++, 3)]
-      }
-    }
-    if (unresponsiveSince) return
-    for (const [key, state] of Object.entries(hardware)) {
-      if (state.state !== 'ok' && now() - lastAttempt[key] >= 60000) {
-        try { await reset(key) } catch { /* Keep the failed device scoped and retry at the next idle interval. */ }
-      }
-    }
-  }
-  return { hardware, reset, tick, isBusy: () => busy,
+  return { hardware, reset, isBusy: () => busy,
     ready(key) { if (hardware[key]) update(key, 'ok', null, 'ok') },
     fault(key, reason = 'device_error') {
       if (hardware[key]) hardware[key] = { ...hardware[key], state: 'needs_attention', reason: clean(reason) }

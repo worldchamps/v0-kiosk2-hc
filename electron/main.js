@@ -190,7 +190,6 @@ ipcMain.on('card-key:idle', (event, value) => {
   try {
     if (event.senderFrame !== event.sender.mainFrame || new URL(event.senderFrame.url).origin !== 'http://localhost:3000') return
     cardRendererIdle = value === true
-    if (cardRendererIdle) void deviceRecovery?.tick()
   } catch { /* Wait for a valid local renderer. */ }
 })
 app.whenReady().then(() => {
@@ -1365,7 +1364,6 @@ app.whenReady().then(async () => {
   if (!karivOverlay && tossFrontBridge.configured) configured.push('cardTerminal')
   if (cardDispenserEnabled(process.env)) configured.push('cardDispenser')
   deviceRecovery = createDeviceRecovery({ configured, property: KIOSK_PROPERTY_ID, building: process.env.KIOSK_BUILDING,
-    bridgeDevices: configured.filter(key => key !== 'cardTerminal' && (key !== 'printer' || !usesWoosim() && KIOSK_PROPERTY_ID !== 'property4')),
     bridge: hardwareBridge, cardKey, terminal: tossFrontBridge,
     isIdle: cardAutoIdle, onBusy: value => { global.kioskDeviceRecoveryActive = value },
     onRecovered: key => { if (key === 'acceptor') global.kioskCashBlocked = false },
@@ -1407,7 +1405,6 @@ app.whenReady().then(async () => {
       if (!hardwareBridge.isConnected) throw Error('server_reconnect_failed')
     },
   })
-  setInterval(() => void deviceRecovery.tick(), 15000).unref()
   const operations = createOperationsReporter({ identity: operationsIdentity(), key: process.env.FIREBASE_PRIVATE_KEY,
     read: async () => {
       if (global.kioskMaintenance) throw Error('화면 연결 대기')
