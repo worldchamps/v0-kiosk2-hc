@@ -37,9 +37,11 @@ function device(kind, runtime = {}) {
   let onData, onStatus
   let response = () => packet(0x6d, 0x65, 0x13)
   let result = { success: true }, sends = 0
+  const traces = []
   let hardwareStatus = async () => ({ connected: true })
   let reconnect = async () => ({ success: true })
   const ipc = {
+    cashDiagnostics: { trace: value => traces.push(value) },
     getHardwareStatus: () => hardwareStatus(),
     ["onBill" + suffix + "Data"]: callback => { onData = callback },
     ["onBill" + suffix + "Status"]: callback => { onStatus = callback },
@@ -58,7 +60,6 @@ function device(kind, runtime = {}) {
   return {
     ...loaded,
     connect: () => loaded.api["connectBill" + suffix](),
-    disconnect: () => loaded.api["disconnectBill" + suffix](),
     connected: () => loaded.api["isBill" + suffix + "Connected"](),
     serverStatus: status => onStatus?.(status),
     respond: next => { response = next },
@@ -66,6 +67,7 @@ function device(kind, runtime = {}) {
     hardwareStatus: next => { hardwareStatus = next },
     reconnect: next => { reconnect = next },
     sends: () => sends,
+    traces,
   }
 }
 
@@ -74,7 +76,7 @@ for (const kind of ["acceptor", "dispenser"]) {
     const h = device(kind)
     assert.equal(h.connected(), false)
     assert.equal(await h.connect(), true)
-    await h.disconnect()
+    h.serverStatus({ connected: false })
     h.serverStatus({ connected: true })
     assert.equal(h.connected(), false)
     assert.equal(await h.api.checkConnection(), true)
@@ -131,19 +133,13 @@ for (const kind of ["acceptor", "dispenser"]) {
   })
 }
 
-test("acceptor: NG cannot confirm disable and unknown configuration is not fabricated", async () => {
+test("acceptor: NG cannot confirm the payment STOP command", async () => {
   const h = device("acceptor")
   await h.connect()
-  assert.equal(await h.api.getConfig(), null)
-  assert.equal(await h.api.getErrorCode(), null)
   h.respond(() => packet(0x4e, 0x47, 0))
-  assert.equal(await h.api.disableAcceptance(), false)
+  assert.equal(await h.api.setConfig(0x1c), false)
   h.respond(() => packet(0x4f, 0x4b, 0))
-  assert.equal(await h.api.disableAcceptance(), true)
-  assert.equal(await h.api.setConfig(0x3c), true)
-  assert.equal(await h.api.getConfig(), 0x3c)
-  h.serverStatus({ connected: false })
-  assert.equal(await h.api.getConfig(), null)
+  assert.equal(await h.api.setConfig(0x1c), true)
 })
 
 test('acceptor records NG, timeout and transport failure outcomes', async () => {
@@ -151,13 +147,13 @@ test('acceptor records NG, timeout and transport failure outcomes', async () => 
   await h.connect()
   h.respond(() => packet(0x4e, 0x47, 0))
   assert.equal(await h.api.initializeDevice(), false)
-  assert.equal(h.api.getBillAcceptorCommandLog().at(-1).error, 'ng')
+  assert.equal(h.traces.at(-1).result, 'ng')
   h.respond(() => null)
   assert.equal(await h.api.setConfig(0x1c), false)
-  assert.equal(h.api.getBillAcceptorCommandLog().at(-1).error, 'timeout')
+  assert.equal(h.traces.at(-1).result, 'timeout')
   h.result({ success: false })
   assert.equal(await h.api.setConfig(0x1c), false)
-  assert.equal(h.api.getBillAcceptorCommandLog().at(-1).error, 'send_failed')
+  assert.equal(h.traces.at(-1).result, 'send_failed')
   assert.equal(h.timers.size, 0)
 })
 
@@ -248,9 +244,6 @@ test("dispenser: integer count and the existing response command/count must matc
   assert.equal(await h.api.dispenseBills(2), false)
   h.respond(command => packet(0x64, command[2], 0x53))
   assert.equal(await h.api.dispenseBills(2), true)
-  assert.equal(h.api.getBillDispenserStatus().dispensedCount, 2)
-  assert.equal(await h.api.getTotalDispensedCount(), null)
-  await assert.rejects(h.api.clearTotalDispensedCount(), /지원하지 않습니다/)
 })
 
 test("missing Electron fails closed without accessing a browser device API", async () => {

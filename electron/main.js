@@ -23,6 +23,7 @@ const { usesIntegratedCash } = require("./cash-device-profile")
 const { createCardKeyStore } = require("./card-key-store")
 const { createCardKeyService, enabled: cardDispenserEnabled } = require("./card-key-service")
 const { createDeviceRecovery, runRemoteReset } = require("./device-recovery")
+const { attachRendererRecovery } = require("./renderer-recovery")
 const { createCashIncidentDelivery } = require("./cash-incidents")
 const { createCashTrace, createCashDiagnostics, responsePacket } = require("./cash-diagnostics")
 const { buildSam4sPrintLines, findSam4sPrinter, findWoosimPrinter } = require("./sam4s-receipt")
@@ -170,9 +171,23 @@ ipcMain.handle("device-settings:save", (event, input) => deviceSettings.save(eve
 
 process.env.CARD_BRIDGE_TOKEN = require('node:crypto').randomBytes(32).toString('hex')
 let cardRendererIdle = false
+// Unknown until PaymentProvider reads the journal; retain this guard when its renderer dies.
+let paymentDeviceRecoveryBlocked = true
 let deviceRecovery
-const cardAutoIdle = () => (OVERLAY_MODE ? !getOperationsWindow() : cardRendererIdle && getOperationsWindow()) && !global.kioskMaintenance && !global.kioskPaymentRecoveryActive && !global.kioskHttpActive &&
+const deviceCommandsIdle = () => !paymentDeviceRecoveryBlocked && !global.kioskMaintenance && !global.kioskPaymentRecoveryActive && !global.kioskHttpActive &&
   tossFrontBridge.pending.size === 0 && !cardKey.isBusy() && (global.kioskActiveOperations?.() || 0) === 0 && Date.now() - lastAcceptorCommand > 8000
+const cardAutoIdle = () => (OVERLAY_MODE ? !getOperationsWindow() : cardRendererIdle && getOperationsWindow()) && deviceCommandsIdle()
+const canRestartServer = () => deviceCommandsIdle() && !global.kioskCardBusy && !cardKey.status().recoveryRequired &&
+  !['card_present', 'moving'].includes(cardKey.status().reason)
+ipcMain.on('payment-recovery:device-blocked', (event, blocked) => {
+  event.returnValue = false
+  try {
+    if (event.sender !== getOperationsWindow()?.webContents || event.senderFrame !== event.sender.mainFrame ||
+      new URL(event.senderFrame.url).origin !== 'http://localhost:3000' || typeof blocked !== 'boolean') return
+    paymentDeviceRecoveryBlocked = blocked
+    event.returnValue = !global.kioskDeviceRecoveryActive
+  } catch { /* An unverified frame cannot release the transaction guard. */ }
+})
 const cardStore = createCardKeyStore({ directory: path.join(app.getPath('userData'), 'card-keys'), safeStorage: require('electron').safeStorage })
 const cardKey = createCardKeyService({
   env: process.env, token: process.env.CARD_BRIDGE_TOKEN, bridge: hardwareBridge,
@@ -426,7 +441,8 @@ function createWindow() {
       return { action: "deny" }
     })
 
-    const startUrl = getKioskStartUrl("http://localhost:3000")
+    const startUrl = getKioskStartUrl("http://localhost:3000") + "?mode=kiosk&home=true"
+    attachRendererRecovery(mainWindow, { startUrl })
 
     if (isDev) {
       console.log("[v0] Loading URL:", startUrl)
@@ -436,17 +452,6 @@ function createWindow() {
 
     mainWindow.once("ready-to-show", () => {
       mainWindow.show()
-    })
-
-    mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription) => {
-      console.error("[v0] Failed to load:", errorCode, errorDescription)
-      console.log("[v0] Retrying in 3 seconds... (Make sure Next.js server is running on http://localhost:3000)")
-      // 항상 재시도 - NODE_ENV 설정과 관계없이 서버 준비될 때까지 반복
-      setTimeout(() => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.loadURL(startUrl)
-        }
-      }, 3000)
     })
 
     mainWindow.webContents.on("did-finish-load", () => {
@@ -1365,7 +1370,7 @@ app.whenReady().then(async () => {
   if (cardDispenserEnabled(process.env)) configured.push('cardDispenser')
   deviceRecovery = createDeviceRecovery({ configured, property: KIOSK_PROPERTY_ID, building: process.env.KIOSK_BUILDING,
     bridge: hardwareBridge, cardKey, terminal: tossFrontBridge,
-    isIdle: cardAutoIdle, onBusy: value => { global.kioskDeviceRecoveryActive = value },
+    isIdle: cardAutoIdle, canRestartServer, onBusy: value => { global.kioskDeviceRecoveryActive = value },
     onRecovered: key => { if (key === 'acceptor') global.kioskCashBlocked = false },
     printer: async () => {
       if (usesWoosim() || KIOSK_PROPERTY_ID === 'property4') {
@@ -1432,7 +1437,8 @@ app.whenReady().then(async () => {
     },
     recover: async command => {
       if (command.request.action === 'reset_device') {
-        return runRemoteReset(command.request, cardStore, deviceRecovery, cardAutoIdle)
+        return runRemoteReset(command.request, cardStore, deviceRecovery,
+          command.request.device === 'hardwareServer' ? canRestartServer : cardAutoIdle)
       }
       const window = getOperationsWindow()
       if (!window || global.kioskMaintenance || (global.kioskActiveOperations?.() || 0) > 0)

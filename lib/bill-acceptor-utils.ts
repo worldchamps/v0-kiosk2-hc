@@ -261,12 +261,6 @@ export async function connectBillAcceptor(): Promise<boolean> {
   return true // 연결 성공
 }
 
-export async function disconnectBillAcceptor(): Promise<void> {
-  isConnected = false
-  currentStatus = null
-  lastConfig = null
-}
-
 export async function checkConnection(timeoutMs = 3000): Promise<boolean> {
   const packet = createPacket(0x48, 0x69, 0x3f) // 'H' 'i' '?'
   const res = await sendCommand(packet, 0x6d, 0x65, timeoutMs) // 'm' 'e'
@@ -295,28 +289,6 @@ export async function enableAcceptance(): Promise<boolean> {
     return true
   }
   return false
-}
-
-export async function disableAcceptance(): Promise<boolean> {
-  const packet = createPacket(0x53, 0x41, 0x0e) // 'S' 'A' 0x0E
-  const res = await sendCommand(packet, 0x4f, 0x4b)
-  if (res && res[1] === 0x4f && res[2] === 0x4b) {
-    isAcceptingBills = false
-    return true
-  }
-  return false
-}
-
-export async function stackBill(): Promise<boolean> {
-  const packet = createPacket(0x53, 0x41, 0x09) // 'S' 'A' 0x09
-  const res = await sendCommand(packet, 0x4f, 0x4b)
-  return res ? (res[1] === 0x4f && res[2] === 0x4b) : false
-}
-
-export async function returnBill(): Promise<boolean> {
-  const packet = createPacket(0x53, 0x41, 0x06) // 'S' 'A' 0x06
-  const res = await sendCommand(packet, 0x4f, 0x4b)
-  return res ? (res[1] === 0x4f && res[2] === 0x4b) : false
 }
 
 export async function setConfig(config: number): Promise<boolean> {
@@ -366,40 +338,4 @@ export function getStatusString(status: number | null): string {
     case 0x0c: return "ERROR_WAIT (오류 대기)"
     default: return `UNKNOWN (0x${status.toString(16)})`
   }
-}
-
-export function getBillAcceptorDiagnostics() {
-  return {
-    isConnected,
-    isAcceptingBills,
-    currentStatus: currentStatus,
-    eventProcessingEnabled,
-    lastEventMessage
-  };
-}
-
-export function getBillAcceptorStatus() {
-  return { ...getBillAcceptorDiagnostics(), accepting: isAcceptingBills, config: lastConfig, version: getVersion() };
-}
-
-export function getLastEventMessage() {
-  return lastEventMessage;
-}
-
-export function getBillAcceptorCommandLog() {
-  return commandLog;
-}
-
-export function getVersion(): string {
-  return "Hardware Bridge (장치 펌웨어 버전은 조회되지 않음)";
-}
-
-export function clearBillAcceptorCommandLog(): void { commandLog.length = 0 }
-export const resetDevice = initializeDevice
-// This bridge cannot read firmware configuration/error registers. Never invent a device response.
-export async function getConfig(): Promise<number | null> { return lastConfig }
-export async function getErrorCode(): Promise<number | null> { return null }
-export function getErrorString(code: number): string { return `${getStatusString(code)} — 상세 오류 코드는 장치에서 확인하세요.` }
-export async function processBillAcceptance(): Promise<{ success: boolean; amount: number; error?: string }> {
-  return { success: false, amount: 0, error: "단독 수취 검사는 지원하지 않습니다. 결제 화면의 수취·반환 절차를 사용하세요." }
 }

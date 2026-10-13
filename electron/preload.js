@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getPropertyId: () => ipcRenderer.invoke("get-property-id"),
   getOverlayMode: () => ipcRenderer.invoke("get-overlay-mode"),
   paymentRecovery: {
+    setDeviceRecoveryBlocked: blocked => ipcRenderer.sendSync('payment-recovery:device-blocked', blocked),
     onOperationsRequest: callback => {
       const listener = async (_event, request) => {
         let result
