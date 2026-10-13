@@ -13,7 +13,9 @@ function load(relative, electronAPI, dependencies = {}, timers = new Set(), runt
   const source = fs.readFileSync(path.join(root, relative), "utf8")
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const exports = {}
-  vm.runInNewContext(code, {
+  const inspect = relative === 'lib/bill-dispenser-utils.ts'
+    ? ';exports.readState = () => ({ currentStatus, dispensedCount, lastErrorCode })' : ''
+  vm.runInNewContext(code + inspect, {
     exports, Uint8Array, Date,
     require(name) {
       if (name === "@/lib/hardware-timeout") return load("lib/hardware-timeout.ts", electronAPI, {}, timers).api
@@ -37,7 +39,7 @@ function device(kind, runtime = {}) {
   let onData, onStatus
   let response = () => packet(0x6d, 0x65, 0x13)
   let result = { success: true }, sends = 0
-  const traces = []
+  const traces = [], commands = []
   let hardwareStatus = async () => ({ connected: true })
   let reconnect = async () => ({ success: true })
   const ipc = {
@@ -48,6 +50,7 @@ function device(kind, runtime = {}) {
     ["reconnectBill" + suffix]: () => reconnect(),
     ["sendToBill" + suffix]: async command => {
       sends += 1
+      commands.push(Array.from(command))
       if (result instanceof Error) throw result
       if (result.success) {
         const value = response(command)
@@ -67,7 +70,8 @@ function device(kind, runtime = {}) {
     hardwareStatus: next => { hardwareStatus = next },
     reconnect: next => { reconnect = next },
     sends: () => sends,
-    traces,
+    deliver: data => onData?.({ data }),
+    traces, commands,
   }
 }
 
@@ -244,6 +248,73 @@ test("dispenser: integer count and the existing response command/count must matc
   assert.equal(await h.api.dispenseBills(2), false)
   h.respond(command => packet(0x64, command[2], 0x53))
   assert.equal(await h.api.dispenseBills(2), true)
+})
+
+for (const cmd1 of [0x73, 0x53]) {
+  for (const [label, cmd2, data, result, state, count] of [
+    ['idle', 0x74, 0x62, 0x62, 0, 0],
+    ['dispensing', 0x6f, 0x6e, 0x6f, 1, 0],
+    ['inhibited', 0x68, 0x21, 0x21, 2, 0],
+    ['normal end', 2, 0x6f, 0x62, 3, 2],
+    ['normal end with ASCII o count', 0x6f, 0x6f, 0x62, 3, 0x6f],
+    ['abnormal end', 2, 0x6e, 0x65, 4, 2],
+  ]) {
+    test(`dispenser status ${cmd1.toString(16)}: ${label} follows the ONEPLUS numeric contract`, async () => {
+      const h = device('dispenser')
+      await h.connect()
+      h.respond(() => packet(cmd1, cmd2, data))
+      assert.equal(await h.api.getDispenserStatus(), result)
+      assert.deepEqual(h.commands.at(-1), [0x24, 0x53, 0, 0, 0x53])
+      assert.equal(h.api.readState().currentStatus, state)
+      assert.equal(h.api.readState().dispensedCount, count)
+      assert.equal(h.timers.size, 0)
+    })
+  }
+}
+
+test('dispenser error replies preserve each spec error code without claiming readiness or a count', async () => {
+  const h = device('dispenser')
+  await h.connect()
+  for (const code of [0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x8a, 0x8c, 0x8e]) {
+    h.respond(() => packet(0x73, 0x65, code))
+    assert.equal(await h.api.getDispenserStatus(), 0x65)
+    assert.equal(h.api.readState().lastErrorCode, code)
+    assert.equal(h.api.readState().currentStatus, 4)
+    assert.equal(h.api.readState().dispensedCount, 0)
+  }
+  assert.equal(h.timers.size, 0)
+})
+
+test('dispenser status accepts a fragmented reply after another frame without consuming a connection waiter', async () => {
+  const h = device('dispenser')
+  await h.connect()
+  h.respond(() => null)
+  const status = h.api.getDispenserStatus(), connection = h.api.checkConnection()
+  const ready = packet(0x53, 3, 0x6f)
+  h.deliver([...packet(0x69, 0, 0x61), ...ready.slice(0, 2)])
+  h.deliver(ready.slice(2))
+  assert.equal(await status, 0x62)
+  assert.equal(h.api.readState().dispensedCount, 3)
+  assert.equal(h.timers.size, 1, 'the connection command still needs its own reply')
+  h.deliver(packet(0x6d, 0x65, 0x21))
+  assert.equal(await connection, true)
+  assert.equal(h.timers.size, 0)
+})
+
+test('dispenser status ignores bad checksums and other commands, deduplicates waiters and can retry after timeout', async () => {
+  const h = device('dispenser')
+  await h.connect()
+  h.respond(() => null)
+  const before = h.sends(), first = h.api.getDispenserStatus()
+  assert.equal(await h.api.getDispenserStatus(), -1)
+  assert.equal(h.sends(), before + 1)
+  const bad = packet(0x73, 0x74, 0x62); bad[4] ^= 1
+  h.deliver([...packet(0x64, 1, 0x61), ...bad])
+  assert.equal(await first, -1)
+  assert.equal(h.timers.size, 0)
+  h.respond(() => packet(0x73, 0x74, 0x62))
+  assert.equal(await h.api.getDispenserStatus(), 0x62)
+  assert.equal(h.timers.size, 0)
 })
 
 test("missing Electron fails closed without accessing a browser device API", async () => {

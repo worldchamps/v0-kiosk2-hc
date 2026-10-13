@@ -1,9 +1,11 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { createDeviceRecovery, runRemoteReset } = require('../electron/device-recovery')
+const packet = (a, b, c) => [0x24, a, b, c, (a + b + c) & 0xff]
 
 function fixture(configured = ['acceptor', 'dispenser', 'cardTerminal', 'printer', 'cardDispenser'], profile = {}) {
   const calls = [], listeners = new Set(), busyChanges = [], timers = new Map()
+  let dispenserReplies = []
   let idle = true, now = 1000000, fault = null, restarts = 0, timerId = 0
   const scheduleTimeout = (callback, ms) => {
     const id = ++timerId
@@ -42,8 +44,11 @@ function fixture(configured = ['acceptor', 'dispenser', 'cardTerminal', 'printer
         else if (message.type === 'raw_acceptor') reply = p[1] === 71
           ? { type: 'acceptor_raw', packet: [36, 103, 97, 1, 201] }
           : { type: fault === 'ng' ? 'acceptor_ng' : 'acceptor_ok', data: 0 }
-        else if (message.type === 'raw_dispenser') reply = { type: 'dispenser_data', data: p[1] === 73
-          ? [36, 105, 0, 0, 105] : [36, 115, 116, fault === 'dispenser_ng' ? 101 : 98, 73] }
+        else if (message.type === 'raw_dispenser') {
+          const data = dispenserReplies.length ? dispenserReplies.shift() : p[1] === 73
+            ? packet(0x69, 0, 0x61) : fault === 'dispenser_ng' ? packet(0x73, 0, 0x6e) : packet(0x73, 0x74, 0x62)
+          if (data) reply = { type: 'dispenser_data', data }
+        }
         if (reply) for (const listener of [...listeners]) {
           if (message.type === 'raw_dispenser' && fault === 'fragment') {
             listener({ type: 'dispenser_data', data: reply.data.slice(0, 2) })
@@ -66,7 +71,8 @@ function fixture(configured = ['acceptor', 'dispenser', 'cardTerminal', 'printer
     now: () => now, sleep: async ms => { now += ms }, setTimeout: scheduleTimeout,
     clearTimeout: id => timers.delete(id), commandTimeoutMs: 15 })
   return { recovery: { ...recovery, reset: target => run(() => recovery.reset(target)) },
-    calls, bridge, busyChanges, now: () => now, setIdle(value) { idle = value }, setFault(value) { fault = value }, advance(ms) { now += ms }, get restarts() { return restarts } }
+    calls, bridge, busyChanges, now: () => now, setIdle(value) { idle = value }, setFault(value) { fault = value },
+    setDispenserReplies(...replies) { dispenserReplies = replies }, advance(ms) { now += ms }, get restarts() { return restarts } }
 }
 
 test('creation, idle time and observed faults never probe or reset devices', t => {
@@ -173,9 +179,9 @@ for (const building of ['C', 'D']) {
     await h.recovery.reset('all')
     assert.deepEqual(h.calls.map(c => c.type), ['raw_dispenser', 'raw_dispenser', 'raw_dispenser', 'printer_status'])
     assert.deepEqual(h.calls.filter(c => c.type === 'raw_dispenser').map(c => c.data), [
-      [0x24, 0x53, 0x74, 0x3f, 0x06], // Existing renderer getDispenserStatus: $St?
-      [0x24, 0x49, 0x00, 0x00, 0x49], // Existing renderer resetDispenser: $I\0\0
-      [0x24, 0x53, 0x74, 0x3f, 0x06],
+      [0x24, 0x53, 0x00, 0x00, 0x53], // Spec #9: $S\0\0
+      [0x24, 0x49, 0x00, 0x00, 0x49], // Spec #2: $I\0\0
+      [0x24, 0x53, 0x00, 0x00, 0x53],
     ])
     assert.deepEqual(Object.values(h.recovery.hardware).map(d => d.state), ['ok', 'ok'])
     assert.equal(h.busyChanges.at(-1), false)
@@ -199,7 +205,7 @@ for (const [key, failure] of [['dispenser', 'dispenser_ng'], ['cardTerminal', 't
   })
 }
 
-test('PMS hardware-server reset waits for idle and verifies the restarted bridge', async () => {
+test('PMS hardware-server reset defaults to the idle guard and verifies the restarted bridge', async () => {
   const h = fixture(['acceptor'])
   h.bridge.isConnected = false
   h.recovery.fault('acceptor', 'bridge_disconnected')
@@ -218,6 +224,62 @@ test('PMS hardware-server reset waits for idle and verifies the restarted bridge
   assert.equal(h.recovery.hardware.acceptor.state, 'needs_attention')
   assert.deepEqual(h.busyChanges, [true, false, true, false])
 })
+
+test('PMS server reset uses its own guard while device resets still require the idle screen', async () => {
+  let canRestart = true
+  const h = fixture(['acceptor'], { canRestartServer: () => canRestart })
+  h.setIdle(false)
+  await assert.rejects(h.recovery.reset('acceptor'), /busy/)
+  await assert.rejects(h.recovery.reset('all'), /busy/)
+  assert.equal(h.calls.length, 0)
+  const restarting = h.recovery.reset('hardwareServer')
+  await assert.rejects(h.recovery.reset('hardwareServer'), /busy/)
+  await restarting
+  assert.equal(h.restarts, 1)
+  assert.deepEqual(h.calls.map(c => c.type), ['ping'])
+  canRestart = false; h.setIdle(true)
+  await assert.rejects(h.recovery.reset('hardwareServer'), /busy/)
+  assert.equal(h.restarts, 1)
+  assert.deepEqual(h.busyChanges, [true, false])
+})
+
+for (const ready of [packet(0x73, 0x74, 0x62), packet(0x73, 2, 0x6f), packet(0x53, 250, 0x6f)]) {
+  test(`PMS dispenser reset accepts ready status ${ready.slice(1, 4)} before and after init`, async () => {
+    const h = fixture(['dispenser'])
+    h.setDispenserReplies(ready, packet(0x69, 0, 0x61), ready)
+    await h.recovery.reset('dispenser')
+    assert.deepEqual(h.calls.map(c => c.data), [packet(0x53, 0, 0), packet(0x49, 0, 0), packet(0x53, 0, 0)])
+    assert.equal(h.recovery.hardware.dispenser.state, 'ok')
+    assert.equal(h.restarts, 0)
+  })
+}
+
+for (const status of [packet(0x73, 0x6f, 0x6e), packet(0x73, 0x68, 0x21), packet(0x73, 2, 0x6e),
+  ...[0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x8a, 0x8c, 0x8e].map(code => packet(0x73, 0x65, code))]) {
+  test(`PMS dispenser reset rejects non-ready status ${status.slice(1, 4)} without sending init`, async () => {
+    const h = fixture(['dispenser'])
+    h.setDispenserReplies(status)
+    await assert.rejects(h.recovery.reset('dispenser'), /dispenser_not_idle/)
+    assert.deepEqual(h.calls.map(c => c.data), [packet(0x53, 0, 0)])
+    assert.equal(h.recovery.hardware.dispenser.state, 'needs_attention')
+    assert.equal(h.recovery.isBusy(), false)
+  })
+}
+
+for (const [label, replies, reason, count] of [
+  ['reset refused', [packet(0x73, 0x74, 0x62), packet(0x6e, 0x73, 0x21)], 'device_ng', 2],
+  ['wrong init acknowledgement', [packet(0x73, 0x74, 0x62), packet(0x69, 0, 0)], 'dispenser_reset_failed', 2],
+  ['not ready after init', [packet(0x73, 0x74, 0x62), packet(0x69, 0, 0x61), packet(0x73, 2, 0x6e)], 'dispenser_not_ready', 3],
+]) {
+  test(`PMS dispenser reset fails closed on ${label} without retrying`, async () => {
+    const h = fixture(['dispenser'])
+    h.setDispenserReplies(...replies)
+    await assert.rejects(h.recovery.reset('dispenser'), new RegExp(reason))
+    assert.equal(h.calls.length, count)
+    assert.equal(h.recovery.hardware.dispenser.state, 'needs_attention')
+    assert.equal(h.recovery.isBusy(), false)
+  })
+}
 
 test('an overlay with no native devices never probes or restarts a phantom hardware server', async () => {
   const h = fixture([])

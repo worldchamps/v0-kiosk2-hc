@@ -3,7 +3,7 @@ const { createHash, randomUUID } = require('node:crypto')
 const { usesIntegratedCash } = require('./cash-device-profile')
 const clean = value => String(value || 'reset_failed').replace(/[^a-z0-9_:-]/gi, '_').slice(0, 80)
 
-function createDeviceRecovery({ configured, property, building, bridge, cardKey, terminal, printer, restartServer, isIdle, onRecovered = () => {}, onBusy = () => {}, now = Date.now, sleep = wait, setTimeout: scheduleTimeout = setTimeout, clearTimeout: cancelTimeout = clearTimeout, commandTimeoutMs = 3000 }) {
+function createDeviceRecovery({ configured, property, building, bridge, cardKey, terminal, printer, restartServer, isIdle, canRestartServer = isIdle, onRecovered = () => {}, onBusy = () => {}, now = Date.now, sleep = wait, setTimeout: scheduleTimeout = setTimeout, clearTimeout: cancelTimeout = clearTimeout, commandTimeoutMs = 3000 }) {
   const hardware = Object.fromEntries(configured.map(key => [key, { state: 'ok', reason: null, lastResetAt: null, lastResetResult: null }]))
   let busy = false
   const update = (key, state, reason, result) => {
@@ -21,7 +21,9 @@ function createDeviceRecovery({ configured, property, building, bridge, cardKey,
         const p = buffer.slice(0, 5)
         if (!validPacket(p)) { buffer.shift(); continue }
         buffer = buffer.slice(5)
-        if (p[1] === command1 && p[2] === command2) return p[3]
+        if (command1 === 105 && p[1] === 110 && p[2] === 115 && p[3] === 33) return false
+        if ((p[1] === command1 || (command1 === 115 && p[1] === 83)) &&
+          (command2 === undefined || p[2] === command2)) return p
       }
     }
   }
@@ -76,11 +78,13 @@ function createDeviceRecovery({ configured, property, building, bridge, cardKey,
       message.type === 'acceptor_ok' ? true : message.type === 'acceptor_ng' ? false : undefined)
   }
   async function dispenser() {
-    const before = await exchange('raw_dispenser', packet(83, 116, 63), dispenserReply(115, 116))
-    if (before !== 98) throw Error('dispenser_not_idle')
-    await exchange('raw_dispenser', packet(73, 0, 0), dispenserReply(105, 0))
-    const status = await exchange('raw_dispenser', packet(83, 116, 63), dispenserReply(115, 116))
-    if (status !== 98) throw Error('dispenser_not_ready')
+    const ready = p => (p[2] === 116 && p[3] === 98) || p[3] === 111
+    const before = await exchange('raw_dispenser', packet(83, 0, 0), dispenserReply(115))
+    if (!ready(before)) throw Error('dispenser_not_idle')
+    const initialized = await exchange('raw_dispenser', packet(73, 0, 0), dispenserReply(105, 0))
+    if (initialized[3] !== 97) throw Error('dispenser_reset_failed')
+    const status = await exchange('raw_dispenser', packet(83, 0, 0), dispenserReply(115))
+    if (!ready(status)) throw Error('dispenser_not_ready')
   }
   async function ping() { await exchange('ping', null, message => message.type === 'pong' ? true : undefined) }
   async function resetOne(key) {
@@ -110,7 +114,7 @@ function createDeviceRecovery({ configured, property, building, bridge, cardKey,
     }
   }
   async function reset(target) {
-    if (busy || !isIdle()) throw Error('busy')
+    if (busy || !(target === 'hardwareServer' ? canRestartServer() : isIdle())) throw Error('busy')
     busy = true
     onBusy(true)
     try {

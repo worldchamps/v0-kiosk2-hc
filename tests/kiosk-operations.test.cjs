@@ -14,11 +14,12 @@ function nativeOperations({ overlay = true, property = 'property2' } = {}) {
   const events = new Map()
   const context = { global: {}, OVERLAY_MODE: overlay, KIOSK_PROPERTY_ID: property, mainWindow: null,
     lastOperationsSnapshot: null, lastPrinterResult: null, deviceRecovery: null, cardRendererIdle: false, lastAcceptorCommand: 0,
+    paymentDeviceRecoveryBlocked: false,
     pendingOperations: new Map(), URL, Date: { now: () => 100000 }, require,
     process: { env: { FIREBASE_PRIVATE_KEY: 'test-key' } },
     ipcMain: { on: (name, listener) => events.set(name, listener) },
     setTimeout: callback => setTimeout(callback, 5), clearTimeout, overlayButtonModule: { getKioskPopup: () => popup },
-    hardwareBridge: {}, tossFrontBridge: { configured: true, pending: new Map() }, cardKey: { isBusy: () => false },
+    hardwareBridge: {}, tossFrontBridge: { configured: true, pending: new Map() }, cardKey: { isBusy: () => false, status: () => ({}) },
     cardDispenserEnabled: () => false, usesWoosim: () => property === 'property3',
     createDeviceRecovery: require('../electron/device-recovery').createDeviceRecovery,
     operationsIdentity: () => ({ deviceId: 'property2-kariv-kiosk-01', property, building: '', version: 'QA' }),
@@ -26,7 +27,7 @@ function nativeOperations({ overlay = true, property = 'property2' } = {}) {
     runRemoteReset: async (_request, _store, _recovery, idle) => { assert(idle()); resets++ },
   }
   vm.runInNewContext(source.slice(source.indexOf('function getOperationsWindow()'), source.indexOf("ipcMain.handle('printer:report-result'")) +
-    source.slice(source.indexOf('const cardAutoIdle ='), source.indexOf('const cardStore =')) +
+    source.slice(source.indexOf('const deviceCommandsIdle ='), source.indexOf('const cardStore =')) +
     source.slice(source.indexOf('  const karivOverlay ='), source.indexOf('  const operations = createOperationsReporter')) +
     source.slice(source.indexOf('  const operations = createOperationsReporter'), source.indexOf('  setInterval(() => void operations.tick()')) +
     '\nglobal.operations = operations; global.cardAutoIdle = cardAutoIdle', context)
@@ -133,6 +134,20 @@ test('property1 native Bixolon recovery reads the existing server status and res
   assert.equal(h.context.global.kioskDeviceRecoveryActive, false)
   assert.equal(listeners.size, 0)
   assert.deepEqual(sent, ['printer_status', 'printer_status'])
+})
+
+test('PMS server resets use the command guard while a non-idle renderer still blocks device resets', async () => {
+  const h = nativeOperations({ overlay: false, property: 'property1' })
+  h.context.mainWindow = { isDestroyed: () => false }
+  const command = device => ({ request: { action: 'reset_device', device } })
+  assert.equal(h.context.global.cardAutoIdle(), false)
+  await h.options.recover(command('hardwareServer'))
+  assert.equal(h.resets, 1)
+  await assert.rejects(h.options.recover(command('all')))
+  h.context.paymentDeviceRecoveryBlocked = true
+  await assert.rejects(h.options.recover(command('hardwareServer')))
+  assert.equal(h.resets, 1)
+  assert.deepEqual(Object.values(h.context.deviceRecovery.hardware).map(d => d.state), Array(4).fill('ok'))
 })
 test('reports require a recent signature and the exact property/building/device', () => {
   const body = { ...identity, version: 'QA', at: 100000, recovery: recoverySummary(raw), printer: null,

@@ -233,7 +233,6 @@ export default function PaymentScreen({
       setError("")
 
       try {
-        if (await window.electronAPI?.cashAvailable?.() === false) throw new Error('Acceptor stop unconfirmed')
         if (!isBillAcceptorConnected()) {
           setStatusMessage("현금 결제를 준비하고 있습니다...")
           const connected = await connectBillAcceptor()

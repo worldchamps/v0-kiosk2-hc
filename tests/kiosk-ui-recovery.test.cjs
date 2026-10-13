@@ -362,7 +362,7 @@ test('mismatched approval evidence survives restart and cannot be cleared by nav
   assert.equal(JSON.stringify(restored.value.paymentSession.recoveryEvidence), JSON.stringify(evidence));
   assert.equal(await restored.value.cancelPayment(), false); assert.equal(restored.value.startPayment(30000), false);
 });
-function cashScreen(amount, dispenseResult, acceptor = {}, dispenser = {}) {
+function cashScreen(amount, dispenseResult, acceptor = {}, dispenser = {}, electronAPI = {}) {
   const calls = { dispense: [], cancelled: 0, complete: 0, recovery: '', returned: 0, polling: 0 };
   const paymentSession = { isActive: true, acceptedAmount: amount, acceptedBills: amount ? [amount] : [], requiredAmount: 30000, overpaymentAmount: Math.max(0, amount - 30000) };
   const payment = { paymentSession, startPayment: () => true, addBill() {}, isPaymentComplete: () => amount >= 30000,
@@ -374,7 +374,7 @@ function cashScreen(amount, dispenseResult, acceptor = {}, dispenser = {}) {
       connectBillAcceptor: async () => true, enableAcceptance: async () => true, getBillData: async () => 0x32, getStatus: async () => 0x01, ...acceptor },
     '@/lib/bill-dispenser-utils': { dispenseBills: async n => { calls.dispense.push(n); return dispenseResult; }, connectBillDispenser: async () => true, isBillDispenserConnected: () => true, getDispenserStatus: async () => 0x62, ...dispenser },
     '@/lib/printer-utils': { printReceipt() {} },
-  }, { window: {}, setTimeout: fn => { fn(); return 1; }, clearInterval() {}, setInterval() { calls.polling++; return 1; } });
+  }, { window: { electronAPI }, setTimeout: fn => { fn(); return 1; }, clearInterval() {}, setInterval() { calls.polling++; return 1; } });
   const props = { cardAmount: 30000, cashAmount: 30000, onCancel: () => calls.cancelled++, onPaymentComplete: () => calls.complete++, onUnavailable: message => calls.unavailable = message };
   const render = () => h.render(props);
   render(); h.button('현금 결제 30,000원').onClick(); render();
@@ -474,6 +474,21 @@ test('cash starts without acceptor or dispenser pre-checks', async () => {
   assert.equal(h.calls.cancelled, 0); assert.equal(h.calls.unavailable, undefined);
   assert.equal(h.calls.recovery, ''); assert.deepEqual(h.calls.dispense, []);
 });
+
+for (const [label, available] of [['blocked', () => false], ['hung', () => new Promise(() => {})]]) {
+  test(`cash connection and enable do not wait on recovery availability: ${label}`, async () => {
+    let connects = 0, enables = 0, availabilityChecks = 0;
+    const h = cashScreen(0, false, {
+      isBillAcceptorConnected: () => false,
+      connectBillAcceptor: async () => { connects++; return true; },
+      enableAcceptance: async () => { enables++; return true; },
+    }, {}, { cashAvailable: () => { availabilityChecks++; return available(); } });
+    h.renderEffects.at(-1)(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(availabilityChecks, 0); assert.equal(connects, 1); assert.equal(enables, 1);
+    assert.equal(h.calls.polling, 1); assert.equal(h.calls.recovery, '');
+    assert.equal(h.calls.cancelled, 0); assert.equal(h.calls.unavailable, undefined);
+  });
+}
 
 test('cash acceptor connection failure returns home before accepting money', async () => {
   let enables = 0;

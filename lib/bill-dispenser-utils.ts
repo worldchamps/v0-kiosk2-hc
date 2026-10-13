@@ -72,7 +72,7 @@ function handleIncomingData(data: { data: number[] }): void {
     }
     if (startIndex + 5 > streamBuffer.length) {
       streamBuffer = streamBuffer.slice(startIndex)
-      break
+      return
     }
     const packet = streamBuffer.slice(startIndex, startIndex + 5)
     if (packet[4] === calculateChecksum(packet[1], packet[2], packet[3])) {
@@ -91,28 +91,38 @@ function processReceivedPacket(packet: Uint8Array): void {
   const data = packet[3]
 
   const responseKey = `${cmd1.toString(16).padStart(2, "0")}-${cmd2.toString(16).padStart(2, "0")}`
-  const pendingCommand = pendingCommands.get(responseKey)
-
-  if (pendingCommand) {
-    clearTimeout(pendingCommand.timeout)
-    pendingCommands.delete(responseKey)
-    pendingCommand.resolve(packet)
+  // Status replies put the state or note count in cmd2, so wait on cmd1 only.
+  const responseKeys = (cmd1 === 0x73 || cmd1 === 0x53) ? [responseKey, "73"] : [responseKey]
+  for (const key of responseKeys) {
+    const pendingCommand = pendingCommands.get(key)
+    if (pendingCommand) {
+      clearTimeout(pendingCommand.timeout)
+      pendingCommands.delete(key)
+      pendingCommand.resolve(packet)
+    }
   }
 
   // 상태 업데이트
   if ((cmd1 === 0x73 || cmd1 === 0x53) && cmd2 === 0x74 && data === 0x62) currentStatus = 0 // 대기
   else if ((cmd1 === 0x73 || cmd1 === 0x53) && cmd2 === 0x6f && data === 0x6e) currentStatus = 1 // 동작중
   else if ((cmd1 === 0x73 || cmd1 === 0x53) && cmd2 === 0x68 && data === 0x21) currentStatus = 2 // 금지
-  else if ((cmd1 === 0x73 || cmd1 === 0x53) && cmd2 === 0x6f) { // 완료
+  else if ((cmd1 === 0x73 || cmd1 === 0x53) && data === 0x6f) { // 정상 종료: s <count> o
     currentStatus = 3
-    dispensedCount = data
-  } else if ((cmd1 === 0x73 || cmd1 === 0x53) && cmd2 === 0x65) lastErrorCode = data // 에러
+    dispensedCount = cmd2
+  } else if ((cmd1 === 0x73 || cmd1 === 0x53) && data === 0x6e) { // 비정상 종료: s <count> n
+    currentStatus = 4
+    dispensedCount = cmd2
+  } else if ((cmd1 === 0x73 || cmd1 === 0x53) && cmd2 === 0x65) {
+    currentStatus = 4
+    lastErrorCode = data
+  }
 }
 
-async function sendCommand(packet: Uint8Array, expectedCmd1: number, expectedCmd2: number, timeoutMs = 1000): Promise<Uint8Array | null> {
+async function sendCommand(packet: Uint8Array, expectedCmd1: number, expectedCmd2?: number, timeoutMs = 1000): Promise<Uint8Array | null> {
   const api = typeof window !== "undefined" ? window.electronAPI : undefined
   if (!api) return null
-  const responseKey = `${expectedCmd1.toString(16).padStart(2, "0")}-${expectedCmd2.toString(16).padStart(2, "0")}`
+  const responseKey = expectedCmd1.toString(16).padStart(2, "0") +
+    (expectedCmd2 === undefined ? "" : `-${expectedCmd2.toString(16).padStart(2, "0")}`)
   if (pendingCommands.has(responseKey)) return null
   const entry: (typeof commandLog)[number] = { command: responseKey, bytes: Array.from(packet), timestamp: new Date().toISOString() }
   commandLog.push(entry)
@@ -196,19 +206,13 @@ export async function dispenseBills(count: number): Promise<boolean> {
 }
 
 export async function getDispenserStatus(): Promise<number> {
-  // Command: $ S t ? (Check Status)
-  const packet = createPacket(0x53, 0x74, 0x3f)
-  const res = await sendCommand(packet, 0x73, 0x74) // Expect: $ s t [status]
-
-  if (res) {
-    // Status Byte (res[3]):
-    // 0x62 ('b') = Idle / Ready
-    // 0x6f ('o') = Busy / Dispensing
-    // 0x65 ('e') = Error
-    // 0x21 ('!') = Inhibited / Stop
-    return res[3]
-  }
-  return -1 // Unknown
+  const res = await sendCommand(createPacket(0x53, 0, 0), 0x73)
+  if (!res) return -1
+  if ((res[2] === 0x74 && res[3] === 0x62) || res[3] === 0x6f) return 0x62
+  if (res[2] === 0x6f && res[3] === 0x6e) return 0x6f
+  if (res[2] === 0x68 && res[3] === 0x21) return 0x21
+  if (res[3] === 0x6e || res[2] === 0x65) return 0x65
+  return -1
 }
 
 export function isBillDispenserConnected(): boolean {
