@@ -96,6 +96,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getHardwareStatus: () => ipcRenderer.invoke("get-hardware-status"),
   cashAvailable: () => ipcRenderer.invoke('cash:available'),
   reportDeviceFault: key => ipcRenderer.send('device-recovery:fault', key),
+  reportDeviceReady: key => ipcRenderer.send('device-recovery:ready', key),
   cashDiagnostics: {
     read: password => ipcRenderer.invoke('cash-diagnostics:read', password),
     run: input => ipcRenderer.invoke('cash-diagnostics:run', input),
@@ -105,7 +106,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     read: password => ipcRenderer.invoke("device-settings:read", password),
     save: input => ipcRenderer.invoke("device-settings:save", input),
   },
-  sendToBillAcceptor: (command) => ipcRenderer.invoke("send-to-bill-acceptor", command),
+  sendToBillAcceptor: (command, requiredAmount) => ipcRenderer.invoke("send-to-bill-acceptor", command, requiredAmount),
 
   // 프린터 (Bixolon)
   printToBixolon: (text, options = {}) => ipcRenderer.invoke("print-to-bixolon", text, options),

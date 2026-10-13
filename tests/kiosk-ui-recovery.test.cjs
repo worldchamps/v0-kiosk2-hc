@@ -42,6 +42,7 @@ function load(file, extra = {}, globals = {}) {
     button(label) { const matches = nodes(tree).filter(n => n.type === 'button' && (n.props['aria-label'] || text(n).trim()) === label); assert.equal(matches.length, 1, `Button ${label}; actual ${text(tree)}`); return matches[0].props; },
     component(type) { return nodes(tree).find(n => n.type === type); },
     visible(value) { return text(tree).includes(value); },
+    get tree() { return tree; },
   };
 }
 function storage(seed) {
@@ -456,7 +457,7 @@ async function cashScreen(amount, dispenseResult, acceptor = {}, dispenser = {})
     '@/contexts/payment-context': { usePayment: () => payment }, '@/components/toss-front-card-payment': { default: 'Front' },
     '@/lib/bill-acceptor-utils': { initializeDevice: async () => true, setEventCallback() {}, setConfig: async () => true, isBillAcceptorConnected: () => true,
       connectBillAcceptor: async () => true, enableAcceptance: async () => true, getBillData: async () => 0x32, getStatus: async () => 0x01, ...acceptor },
-    '@/lib/bill-dispenser-utils': { dispenseBills: async n => { calls.dispense.push(n); return dispenseResult; }, connectBillDispenser: async () => true, isBillDispenserConnected: () => true, getDispenserStatus: async () => 0x62, ...dispenser },
+    '@/lib/bill-dispenser-utils': { dispenseBills: async n => { calls.dispense.push(n); return dispenseResult; }, connectBillDispenser: async () => true, isBillDispenserConnected: () => true, getDispenserStatus: async () => 0x62, getCashPayoutValue: async () => 10000, ...dispenser },
     '@/lib/printer-utils': { printReceipt() {} },
   }, { window: {}, setTimeout: fn => { fn(); return 1; }, clearInterval() {}, setInterval() { calls.polling++; return 1; } });
   const props = { cardAmount: 30000, cashAmount: 30000, onCancel: () => calls.cancelled++, onPaymentComplete: () => calls.complete++, onUnavailable: message => calls.unavailable = message };
@@ -604,11 +605,63 @@ for (const action of ['completion', 'cancellation']) {
   });
 }
 
-test('first screen removes cash from payment methods and announces cash unavailable', async () => {
+test('a real cash block shows one full-width banner outside the account grid; normal cash shows no banner', async () => {
   const h = await onsite('shortStay', { cashAvailable: false, cardAvailable: true })
   assert(h.visible('현재 현금 결제를 이용하실 수 없습니다.'))
   assert.equal(h.visible('카드 · 현금'), false)
   assert.equal(h.session.isActive, false)
+  const notice = nodes(h.tree).find(n => n.props?.className === 'kiosk-payment-notice')
+  assert(!text(notice).includes('현재 현금 결제'))
+  const content = nodes(h.tree).find(n => n.props?.className === 'kiosk-stay-type-content')
+  const banners = nodes(content).filter(n => n.props?.role === 'status' && text(n).includes('현재 현금 결제'))
+  assert.equal(banners.length, 1)
+  assert.equal(banners[0].props.className, 'kiosk-stay-status')
+  assert.equal(banners[0].props.children.type, 'p')
+  const css = fs.readFileSync(path.join(__dirname, '../app/globals.css'), 'utf8')
+  const rule = css.match(/\.kiosk-stay-status\s*\{([^}]+)\}/)[1]
+  assert.match(rule, /width:\s*100%/)
+  assert.match(rule, /display:\s*flex/)
+  const healthy = await onsite()
+  assert(healthy.visible('카드 · 현금'))
+  assert(!healthy.visible('현재 현금 결제를 이용하실 수 없습니다.'))
+})
+
+test('payment selection uses the same full-width cash block banner', () => {
+  const h = load('components/payment-screen.tsx', {
+    '@/contexts/payment-context': { usePayment: () => ({ paymentSession: {}, cashAvailable: false, cardAvailable: true }) },
+    '@/components/toss-front-card-payment': { default: 'Front' },
+    '@/lib/bill-acceptor-utils': {}, '@/lib/bill-dispenser-utils': {}, '@/lib/printer-utils': {},
+  }, { window: {} })
+  h.render({ cardAmount: 30000, cashAmount: 30000 })
+  const banner = nodes(h.tree).find(n => n.props?.role === 'status')
+  assert.equal(banner.props.className, 'kiosk-stay-status')
+  assert.equal(text(banner), '현재 현금 결제를 이용하실 수 없습니다.')
+  assert.equal(h.button('현금 결제 이용 불가').disabled, true)
+})
+
+test('native needs_attention remains visible as cash on home and payment; only the actual cash block disables it', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8')
+  for (const blocked of [false, true]) {
+    let cashAvailable
+    vm.runInNewContext(source.slice(source.indexOf("ipcMain.handle('cash:available'"), source.indexOf('const cashDiagnostics =')), {
+      ipcMain: { handle: (_name, handler) => { cashAvailable = handler } }, global: { kioskCashBlocked: blocked },
+      deviceRecovery: { hardware: { acceptor: { state: 'needs_attention' }, dispenser: { state: 'needs_attention' } } },
+    })
+    const context = await paymentContext(null, { cashAvailable,
+      tossFront: { getStatus: async () => ({ configured: true, connected: true, authenticated: true }), onStatus: () => () => {} },
+    }, { setInterval: () => 1, clearInterval() {} })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(context.value.cashAvailable, !blocked)
+    const home = await onsite('shortStay', context.value)
+    assert.equal(home.visible('카드 · 현금'), !blocked)
+    const screen = load('components/payment-screen.tsx', {
+      '@/contexts/payment-context': { usePayment: () => context.value },
+      '@/components/toss-front-card-payment': { default: 'Front' },
+      '@/lib/bill-acceptor-utils': {}, '@/lib/bill-dispenser-utils': {}, '@/lib/printer-utils': {},
+    }, { window: {} })
+    screen.render({ cardAmount: 30000, cashAmount: 30000 })
+    assert.equal(screen.button(blocked ? '현금 결제 이용 불가' : '현금 결제 30,000원').disabled, blocked)
+  }
 })
 
 async function onsite(stay = 'shortStay', scenario = {}) {

@@ -21,9 +21,11 @@ sys.modules["serial"] = serial
 from serial_manager import SerialDevice
 from acceptor import OnePlusAcceptor
 from bac2400 import Bac2400
+from multi3400 import Multi3400
 from printer import BixolonPrinter
 from test_bac2400 import Bac2400Test, multi_frame
 from test_card_dispenser import CardDispenserContracts
+from test_multi3400 import Multi3400Test, status_frame
 
 spec = importlib.util.spec_from_file_location("qa_hardware_main", root / "hardware_server/main.py")
 server = importlib.util.module_from_spec(spec)
@@ -70,7 +72,10 @@ class HardwareContracts(unittest.IsolatedAsyncioTestCase):
                 isolated = importlib.util.module_from_spec(spec)
                 with patch("builtins.open", side_effect=FileNotFoundError), patch.dict("os.environ", env, clear=True):
                     spec.loader.exec_module(isolated)
-                self.assertEqual(isolated.USE_BAC2400, integrated)
+                self.assertEqual(isolated.USE_BAC2400, env["KIOSK_PROPERTY_ID"] == "property4")
+                self.assertEqual(isolated.USE_MULTI3400, env["KIOSK_PROPERTY_ID"] == "property3" and env.get("KIOSK_BUILDING") == "B")
+                if integrated:
+                    self.assertIsInstance(isolated.bac2400, Multi3400 if isolated.USE_MULTI3400 else Bac2400)
                 self.assertEqual(isolated.bac2400.port if isolated.bac2400 else None, port)
                 self.assertEqual(isolated.acceptor is None, integrated)
                 self.assertEqual(isolated.dispenser is None, integrated)
@@ -94,17 +99,31 @@ class HardwareContracts(unittest.IsolatedAsyncioTestCase):
             for target in ("acceptor", "dispenser"):
                 client = FakeClient([json.dumps({"type": "cash_board_recover", "requestId": "qa-" + target, "target": target})])
                 await isolated.handle_client(client)
-                if target == "acceptor":
+                if isolated.USE_MULTI3400:
+                    before = status_frame(3)
+                    after = status_frame()
+                elif target == "acceptor":
                     before = multi_frame((0x18, [0] * 4), (0x1B, [1, 0, 0x12]))
                     after = multi_frame((0x18, [0] * 4), (0x1B, [0, 0, 0x12]))
                 else:
                     before = after = multi_frame((0x15, [0] * 4), (0x16, [0] * 4), (0x17, [0]))
                 isolated.bac2400.process_incoming(before)
+                if isolated.USE_MULTI3400:
+                    isolated.bac2400.process_incoming(b"\x11")
                 isolated.bac2400.advance_recovery()
                 result = isolated.bac2400.process_incoming(after)
+                if isolated.USE_MULTI3400:
+                    isolated.bac2400.process_incoming(b"\x11")
+                    isolated.bac2400.advance_recovery()
+                    result = isolated.bac2400.process_incoming(after)
                 self.assertTrue(next(m for m in result if m["type"] == "cash_board_result")["verified"])
-            self.assertEqual(sent, [bytes.fromhex(h) for h in (
-                "59 A6", "5B A4 03 10 00 00 13", "59 A6", "71 8E", "73 8C 05 01 00 00 01 00 05", "71 8E")])
+            if isolated.USE_MULTI3400:
+                self.assertEqual(sum(p[2] == 0x12 for p in sent), 0)
+                self.assertTrue(all(len(p) == 14 and p[0] == 0xFE for p in sent))
+                self.assertEqual(sum(p[2] == 0x10 and p[4] == 2 for p in sent), 2)
+            else:
+                self.assertEqual(sent, [bytes.fromhex(h) for h in (
+                    "59 A6", "5B A4 03 10 00 00 13", "59 A6", "71 8E", "73 8C 05 01 00 00 01 00 05", "71 8E")])
             self.assertIsNone(isolated.bac2400.pending_payout)
         serial.Serial.assert_not_called()
 

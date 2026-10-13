@@ -17,7 +17,7 @@ import {
   setEventCallback,
   initializeDevice,
 } from "@/lib/bill-acceptor-utils"
-import { dispenseBills, connectBillDispenser, isBillDispenserConnected, getDispenserStatus } from "@/lib/bill-dispenser-utils"
+import { dispenseBills, connectBillDispenser, isBillDispenserConnected, getDispenserStatus, getCashPayoutValue } from "@/lib/bill-dispenser-utils"
 import { printReceipt } from "@/lib/printer-utils"
 
 interface PaymentScreenProps {
@@ -48,6 +48,7 @@ export default function PaymentScreen({
   const [error, setError] = useState<string>("")
   const [statusMessage, setStatusMessage] = useState<string>("현금 결제를 준비하고 있습니다...")
   const [largeBillsOnly, setLargeBillsOnly] = useState(false)
+  const [multi3400, setMulti3400] = useState(false)
   const paymentCompleteRef = useRef(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const cancellingRef = useRef(false)
@@ -65,6 +66,7 @@ export default function PaymentScreen({
   useEffect(() => {
     window.electronAPI?.getHardwareStatus?.().then(status => {
       setLargeBillsOnly(status.cashBackend === "bac2400")
+      setMulti3400(status.cashBackend === "multi3400")
     }).catch(() => {})
   }, [])
 
@@ -108,13 +110,14 @@ export default function PaymentScreen({
       setStatusMessage(`거스름돈 ${overpayment.toLocaleString()}원 반환 중...`)
 
       try {
-        if (overpayment % 10000 !== 0) {
+        const payoutValue = await getCashPayoutValue()
+        if (overpayment % payoutValue !== 0) {
           requireRecovery(`거스름돈 ${overpayment.toLocaleString()}원을 자동 반환할 수 없습니다. 관리자에게 문의해주세요.`)
           return
         }
-        const billCount = overpayment / 10000
+        const billCount = overpayment / payoutValue
         if (billCount > 0) {
-          console.log(`[v0] Dispensing change: ${billCount} x 10,000`)
+          console.log(`[v0] Dispensing change: ${billCount} x ${payoutValue}`)
 
           // Ensure dispenser is connected before trying
           if (!isBillDispenserConnected()) {
@@ -134,7 +137,7 @@ export default function PaymentScreen({
             return
           }
         } else {
-          console.warn("[v0] Change amount less than 1 bill unit (10,000)")
+          console.warn("[v0] Change amount less than 1 bill unit")
           requireRecovery(`거스름돈 ${overpayment.toLocaleString()}원을 자동 반환할 수 없습니다. 관리자에게 문의해주세요.`)
           return
         }
@@ -173,46 +176,53 @@ export default function PaymentScreen({
           setStatusMessage("지폐 확인 중...")
 
           await new Promise((resolve) => setTimeout(resolve, 500))
-          const billData = await getBillData()
-          console.log("[v0] Polling: Bill Data Response:", billData?.toString(16))
+          // Freeze MULTI3400 counters before draining: another note must not arrive after completion.
+          const stopped = !multi3400 || await setConfig(0x1c)
+          let newTotal = latestSession.current.acceptedAmount
+          do {
+            const billData = await getBillData()
+            if (multi3400 && billData === 0) break // Drain all already stacked notes before completion.
+            console.log("[v0] Polling: Bill Data Response:", billData?.toString(16))
 
-          if (billData !== null) {
-            let amount = 0
-            switch (billData) {
-              case 0x0a: amount = 10000; break
-              case 0x32: amount = 50000; break
-              case 0x01: amount = 1000; break
-              case 0x05: amount = 5000; break
-              default:
-                console.warn("[v0] Polling: Unknown bill code:", billData.toString(16))
-                requireRecovery("투입된 지폐 금액을 확인하지 못했습니다. 추가 투입하지 말고 관리자에게 문의해주세요.")
+            if (billData !== null) {
+              let amount = 0
+              switch (billData) {
+                case 0x0a: amount = 10000; break
+                case 0x32: amount = 50000; break
+                case 0x01: amount = 1000; break
+                case 0x05: amount = 5000; break
+                default:
+                  console.warn("[v0] Polling: Unknown bill code:", billData.toString(16))
+                  requireRecovery("투입된 지폐 금액을 확인하지 못했습니다. 추가 투입하지 말고 관리자에게 문의해주세요.")
+                  return
+              }
+
+              if (largeBillsOnly && amount < 10000) {
+                requireRecovery("지원하지 않는 지폐가 수납되었습니다. 추가 투입하지 말고 관리자에게 문의해주세요.")
                 return
-            }
+              }
 
-            if (largeBillsOnly && amount < 10000) {
-              requireRecovery("지원하지 않는 지폐가 수납되었습니다. 추가 투입하지 말고 관리자에게 문의해주세요.")
+              if (amount > 0) {
+                console.log(`[v0] Polling: Adding bill ${amount}`)
+                newTotal += amount
+                addBill(amount)
+                setStatusMessage(`${amount.toLocaleString()}원 투입됨`)
+              }
+            } else {
+              console.error("[v0] Polling: Failed to get bill data (Response null)")
+              requireRecovery("투입된 지폐 금액을 확인하지 못했습니다. 추가 투입하지 말고 관리자에게 문의해주세요.")
               return
             }
-
-            if (amount > 0) {
-              console.log(`[v0] Polling: Adding bill ${amount}`)
-              const newTotal = latestSession.current.acceptedAmount + amount
-              addBill(amount)
-              setStatusMessage(`${amount.toLocaleString()}원 투입됨`)
-
-              if (newTotal >= requiredAmount) {
-                return handlePaymentCompletion(newTotal)
-              }
-            }
-          } else {
-            console.error("[v0] Polling: Failed to get bill data (Response null)")
-            requireRecovery("투입된 지폐 금액을 확인하지 못했습니다. 추가 투입하지 말고 관리자에게 문의해주세요.")
+          } while (multi3400)
+          if (!stopped) {
+            requireRecovery("수납액은 기록했으나 지폐 투입 중지를 확인하지 못했습니다. 추가 현금을 넣지 마세요.")
             return
           }
+          if (newTotal >= requiredAmount) return handlePaymentCompletion(newTotal)
 
           console.log("[v0] Polling: Re-enabling acceptance for next bill...")
           await new Promise((resolve) => setTimeout(resolve, 500))
-          if (!await enableAcceptance()) throw new Error("Acceptor enable not confirmed")
+          if (!await enableAcceptance(requiredAmount)) throw new Error("Acceptor enable not confirmed")
           setStatusMessage(largeBillsOnly ? "1만원권 또는 5만원권을 추가로 투입해주세요..." : "추가 지폐를 투입해주세요...")
 
         }
@@ -223,7 +233,7 @@ export default function PaymentScreen({
         isPollingProcessingRef.current = false
       }
     },
-    [addBill, requiredAmount, handlePaymentCompletion, largeBillsOnly, requireRecovery],
+    [addBill, requiredAmount, handlePaymentCompletion, largeBillsOnly, multi3400, requireRecovery],
   )
 
   useEffect(() => {
@@ -258,7 +268,7 @@ export default function PaymentScreen({
         if (await getDispenserStatus() !== 0x62) throw new Error("Dispenser not ready")
         if (!isMounted || cancellingRef.current) return
         acceptanceAttemptedRef.current = true
-        if (!await enableAcceptance()) throw new Error("Acceptor enable not confirmed")
+        if (!await enableAcceptance(requiredAmount)) throw new Error("Acceptor enable not confirmed")
         // Cancellation drains this promise before stopping the acceptor. A late
         // enable acknowledgement must not start polling or reopen this flow.
         if (!isMounted || cancellingRef.current) return
@@ -344,12 +354,13 @@ export default function PaymentScreen({
       if (acceptedAmount > 0) {
         setStatusMessage(`${acceptedAmount.toLocaleString()}원 반환 중...`)
 
-        if (acceptedAmount % 10000 !== 0) {
+        const payoutValue = await getCashPayoutValue()
+        if (acceptedAmount % payoutValue !== 0) {
           requireRecovery(`${acceptedAmount.toLocaleString()}원을 자동 반환할 수 없습니다. 관리자에게 문의해주세요.`)
           return
         }
-        const billCount = acceptedAmount / 10000
-        console.log(`[v0] Refunding ${billCount} bills of 10,000 won`)
+        const billCount = acceptedAmount / payoutValue
+        console.log(`[v0] Refunding ${billCount} bills of ${payoutValue} won`)
 
         if (!isBillDispenserConnected() && !await connectBillDispenser()) throw new Error("Dispenser disconnected")
         const refunded = await dispenseBills(billCount)
@@ -445,8 +456,8 @@ export default function PaymentScreen({
               </button>
         </section>
 
-        {!cashAvailable && <p role="status">현재 현금 결제를 이용하실 수 없습니다.</p>}
-        {isStarting && <p role="status">장비를 준비하고 있습니다...</p>}
+        {!cashAvailable && <div className="kiosk-stay-status" role="status"><p>현재 현금 결제를 이용하실 수 없습니다.</p></div>}
+        {isStarting && <div className="kiosk-stay-status" role="status"><p>장비를 준비하고 있습니다...</p></div>}
         <button type="button" className="kiosk-payment-back" disabled={isStarting} onClick={onCancel}>
           이전 화면
         </button>

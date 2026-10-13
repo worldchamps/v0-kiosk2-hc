@@ -37,8 +37,9 @@ export default function CashDeviceDiagnostics() {
       if (!record.success) { setMessage(record.error || "통신 기록을 읽지 못했습니다."); return }
       setLogs(record.text || "아직 기록된 통신이 없습니다.")
       setPath(record.path || "")
-      setBoardDetails(record.cashBackend === "bac2400"
-        ? `BAC-2400 / 3400 통합 보드 · 펌웨어 버전 미확인 · 응답 필드 ${JSON.stringify(record.cashBoard?.responseFields || {})}` : "")
+      setBoardDetails(record.cashBackend === "multi3400"
+        ? `ONEPLUS MULTI3400 · IO 보드 ${record.cashBoard?.versionVerified ? record.cashBoard.version : "버전 미확인"} · 응답 필드 ${JSON.stringify(record.cashBoard?.responseFields || {})}`
+        : record.cashBackend === "bac2400" ? `BAC-2400 통합 보드 · 펌웨어 버전 미확인 · 응답 필드 ${JSON.stringify(record.cashBoard?.responseFields || {})}` : "")
       if (!command) setMessage("최근 통신 기록을 읽었습니다.")
     } catch { setMessage("다른 장비 작업 또는 업데이트 중입니다. 완료 후 다시 확인해주세요.") }
     finally { setBusy(false) }

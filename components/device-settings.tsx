@@ -97,7 +97,13 @@ export default function DeviceSettings() {
       </div>
       {current.property === "property4" || current.property === "property3" && current.building === "B" ? <div className="rounded border p-4 space-y-4">
         <h3 className="text-xl font-semibold">현금 통합 보드 · {current.property === "property4" ? "SAM4S" : "WOOSIM"} 프린터</h3>
-        {portInput("bac2400Port", "BAC-2400 / 3400 통합 보드", "지폐 인식기와 방출기가 공유하는 보드 COM 포트입니다. 기본값은 COM5입니다.")}
+        {portInput("bac2400Port", current.property === "property4" ? "BAC-2400 통합 보드" : "ONEPLUS MULTI3400 통합 보드", "지폐 인식기와 방출기가 공유하는 보드 COM 포트입니다. 기본값은 COM5입니다.")}
+        {current.property === "property3" && <label className="block space-y-1">MULTI3400 BD1 지폐 단가 (원)
+          <select className="block rounded border p-2" value={values.multi3400Bd1Value} onChange={event => set("multi3400Bd1Value", event.target.value)}>
+            {[1000, 5000, 10000, 50000].map(value => <option key={value} value={value}>{value.toLocaleString()}원</option>)}
+          </select>
+          <span className="block text-sm text-gray-600">BD1에 실제로 넣은 지폐와 같은 권종을 선택하세요. 거스름돈과 취소 반환에 적용됩니다.</span>
+        </label>}
         <label className="block space-y-1">Windows에 설치된 {current.property === "property4" ? "SAM4S" : "WOOSIM WSP-CP383"} 프린터 이름
           <Input list="kiosk-device-printers" value={current.property === "property4" ? values.sam4sPrinterName : values.woosimPrinterName}
             onChange={event => set(current.property === "property4" ? "sam4sPrinterName" : "woosimPrinterName", event.target.value)}

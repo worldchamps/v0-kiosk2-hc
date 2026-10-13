@@ -4,7 +4,9 @@ const { usesIntegratedCash } = require('./cash-device-profile')
 const clean = value => String(value || 'reset_failed').replace(/[^a-z0-9_:-]/gi, '_').slice(0, 80)
 
 function createDeviceRecovery({ configured, bridgeDevices = configured.filter(key => key !== 'cardTerminal'), property, building, bridge, cardKey, terminal, printer, restartServer, isIdle, canRestartServer = isIdle, onRecovered = () => {}, onBusy = () => {}, now = Date.now, sleep = wait, setTimeout: scheduleTimeout = setTimeout, clearTimeout: cancelTimeout = clearTimeout, commandTimeoutMs = 3000 }) {
-  const hardware = Object.fromEntries(configured.map(key => [key, { state: 'recovering', reason: 'startup', lastResetAt: null, lastResetResult: null }]))
+  const isCash = key => key === 'acceptor' || key === 'dispenser'
+  const cashFaults = new Set()
+  const hardware = Object.fromEntries(configured.map(key => [key, { state: 'recovering', reason: isCash(key) ? 'awaiting_observation' : 'startup', lastResetAt: null, lastResetResult: null }]))
   let busy = false, serverFailures = 0, nextServerAttempt = 0, lastPing = 0, unresponsiveSince = 0
   let yieldRequested = false, integratedRequest = null, wakeYield = null
   const checkIdle = () => { if (yieldRequested || !isIdle()) throw Error('recovery_yielded') }
@@ -123,6 +125,7 @@ function createDeviceRecovery({ configured, bridgeDevices = configured.filter(ke
         if (!result.success) throw Error(result.reason || 'card_recovery_failed')
       }
       update(key, 'ok', null, 'ok')
+      cashFaults.delete(key)
       onRecovered(key)
     } catch (error) {
       const reason = clean(error.message)
@@ -170,7 +173,7 @@ function createDeviceRecovery({ configured, bridgeDevices = configured.filter(ke
         try { await ping(); unresponsiveSince = 0 } catch { unresponsiveSince ||= now() }
       }
       if (unresponsiveSince) for (const key of bridgeDevices) {
-        if (hardware[key]) hardware[key] = { ...hardware[key], state: 'needs_attention', reason: 'bridge_unresponsive' }
+        if (hardware[key] && !isCash(key)) hardware[key] = { ...hardware[key], state: 'needs_attention', reason: 'bridge_unresponsive' }
       }
       if (yieldRequested) return
       if (unresponsiveSince && now() - unresponsiveSince >= 30000 && now() >= nextServerAttempt && canRestartServer()) {
@@ -185,6 +188,8 @@ function createDeviceRecovery({ configured, bridgeDevices = configured.filter(ke
       if (unresponsiveSince || !isIdle()) return
       for (const [key, state] of Object.entries(hardware)) {
         if (yieldRequested || !isIdle()) break
+        // Startup and bridge probes are not evidence of a cash device fault.
+        if (isCash(key) && !cashFaults.has(key)) continue
         if (state.state !== 'ok' && now() - lastAttempt[key] >= 60000) {
           try { await resetOne(key) } catch { /* Keep the failed device scoped and retry at the next idle interval. */ }
         }
@@ -197,9 +202,17 @@ function createDeviceRecovery({ configured, bridgeDevices = configured.filter(ke
       wakeYield?.()
       if (integratedRequest && bridge.isConnected) bridge.send({ type: 'cash_board_yield', requestId: integratedRequest })
     },
-    ready(key) { if (hardware[key]) update(key, 'ok', null, 'ok') },
+    ready(key) {
+      if (hardware[key]) {
+        hardware[key] = { ...hardware[key], state: 'ok', reason: null }
+        cashFaults.delete(key)
+      }
+    },
     fault(key, reason = 'device_error') {
-      if (hardware[key]) hardware[key] = { ...hardware[key], state: 'needs_attention', reason: clean(reason) }
+      if (hardware[key]) {
+        hardware[key] = { ...hardware[key], state: 'needs_attention', reason: clean(reason) }
+        if (isCash(key)) cashFaults.add(key)
+      }
     },
   }
 }

@@ -138,10 +138,24 @@ async function sendCommand(packet: Uint8Array, expectedCmd1: number, expectedCmd
   const response = await responsePromise
   if (response) entry.response = Array.from(response)
   else entry.error ||= "장치 응답 시간 초과"
+  if (response && ((response[1] === 0x6d && response[2] === 0x65) || response[1] === 0x64 ||
+      (response[1] === 0x73 && response[2] === 0x74 && response[3] === 0x62))) {
+    try { api.reportDeviceReady?.("dispenser") } catch { /* Health reporting must not interrupt payment. */ }
+  }
   return response
 }
 
 // --- 공용 API ---
+
+export async function getCashPayoutValue(): Promise<number> {
+  const api = typeof window !== "undefined" ? window.electronAPI : undefined
+  if (!api) throw new Error("Cash profile unavailable")
+  const status = await hardwareCallWithin(() => api.getHardwareStatus(), 1000)
+  if (!status) throw new Error("Cash profile unavailable")
+  if (status.cashBackend !== "multi3400") return 10000
+  if (![1000, 5000, 10000, 50000].includes(status.cashPayoutValue || 0)) throw new Error("Invalid BD1 value")
+  return status.cashPayoutValue!
+}
 
 export async function connectBillDispenser(): Promise<boolean> {
   logConnection("CONNECT_ATTEMPT", "하드웨어 서버 연결 상태 확인")

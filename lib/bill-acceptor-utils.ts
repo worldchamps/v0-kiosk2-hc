@@ -173,7 +173,7 @@ function handleEventMessage(packet: Uint8Array): void {
 }
 
 // 명령어 전송 및 응답 대기
-async function sendCommand(packet: Uint8Array, expectedCmd1: number, expectedCmd2: number, timeoutMs = 3000): Promise<Uint8Array | null> {
+async function sendCommand(packet: Uint8Array, expectedCmd1: number, expectedCmd2: number, timeoutMs = 3000, requiredAmount?: number): Promise<Uint8Array | null> {
   const api = typeof window !== "undefined" ? window.electronAPI : undefined
   const sentAt = Date.now()
   const bytes = Array.from(packet)
@@ -209,10 +209,15 @@ async function sendCommand(packet: Uint8Array, expectedCmd1: number, expectedCmd
   }
   try {
     // Do not await IPC before the response timer: a stalled main process must also time out.
-    Promise.resolve(api.sendToBillAcceptor(Array.from(packet))).then(result => { if (result?.success !== true) fail() }, fail)
+    Promise.resolve(requiredAmount === undefined ? api.sendToBillAcceptor(Array.from(packet)) : api.sendToBillAcceptor(Array.from(packet), requiredAmount)).then(result => { if (result?.success !== true) fail() }, fail)
   } catch { fail() }
   const response = await responsePromise
   finishLog(response ? (response[1] === 0x4e && response[2] === 0x47 ? "ng" : "ok") : failure, response)
+  if (response && ((response[1] === 0x4f && response[2] === 0x4b) ||
+      (response[1] === 0x6d && response[2] === 0x65) ||
+      (response[1] === 0x67 && response[2] === 0x61 && (response[3] === 1 || response[3] === 2)))) {
+    try { api.reportDeviceReady?.("acceptor") } catch { /* Health reporting must not interrupt payment. */ }
+  }
   return response
 }
 
@@ -281,9 +286,9 @@ export async function getBillData(): Promise<number | null> {
   return res ? res[3] : null
 }
 
-export async function enableAcceptance(): Promise<boolean> {
+export async function enableAcceptance(requiredAmount?: number): Promise<boolean> {
   const packet = createPacket(0x53, 0x41, 0x0d) // 'S' 'A' 0x0D
-  const res = await sendCommand(packet, 0x4f, 0x4b)
+  const res = await sendCommand(packet, 0x4f, 0x4b, 3000, requiredAmount)
   if (res && res[1] === 0x4f && res[2] === 0x4b) {
     isAcceptingBills = true
     return true

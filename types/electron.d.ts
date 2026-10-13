@@ -37,6 +37,7 @@ export interface KioskDeviceSettingsValues {
   acceptorPort: string
   dispenserPort: string
   bac2400Port: string
+  multi3400Bd1Value: string
   sam4sPrinterName: string
   woosimPrinterName: string
   cardDispenserPort: string
@@ -108,6 +109,7 @@ export interface ElectronAPI {
   getOverlayMode: () => Promise<boolean>
   cashAvailable?: () => Promise<boolean>
   reportDeviceFault?: (key: 'acceptor' | 'dispenser' | 'cardTerminal' | 'printer' | 'cardDispenser') => void
+  reportDeviceReady?: (key: 'acceptor' | 'dispenser') => void
   paymentRecovery: {
     waitForDeviceRecovery?: () => Promise<boolean>
     setDeviceRecoveryBlocked?: (blocked: boolean) => boolean
@@ -130,9 +132,9 @@ export interface ElectronAPI {
   }
 
   // 지폐 인식기
-  getHardwareStatus: () => Promise<{ connected: boolean | null; cashBackend?: "bac2400" | "oneplus"; cashBoard?: { version: string | null; versionVerified: boolean; responseFields: Record<string, string> } | null }>
+  getHardwareStatus: () => Promise<{ connected: boolean | null; cashBackend?: "bac2400" | "multi3400" | "oneplus"; cashPayoutValue?: number | null; cashBoard?: { version: string | null; versionVerified: boolean; responseFields: Record<string, string> } | null }>
   cashDiagnostics?: {
-    read: (password: string) => Promise<{ success: boolean; path?: string; text?: string; error?: string; cashBackend?: "bac2400" | "oneplus";
+    read: (password: string) => Promise<{ success: boolean; path?: string; text?: string; error?: string; cashBackend?: "bac2400" | "multi3400" | "oneplus";
       cashBoard?: { version: string | null; versionVerified: boolean; responseFields: Record<string, string>; protocol?: string } | null }>
     run: (input: { password: string; command: "reset" | "stop"; confirmed: boolean }) => Promise<{
       success: boolean; result?: string; elapsedMs?: number; logSaved?: boolean; error?: string
@@ -143,7 +145,7 @@ export interface ElectronAPI {
     read: (password: string) => Promise<KioskDeviceSettingsRead>
     save: (input: { password: string; values: KioskDeviceSettingsValues }) => Promise<{ success: boolean; restartRequired?: boolean; error?: string }>
   }
-  sendToBillAcceptor: (command: number[]) => Promise<{ success: boolean; error?: string }>
+  sendToBillAcceptor: (command: number[], requiredAmount?: number) => Promise<{ success: boolean; error?: string }>
   onBillAcceptorData: (callback: (data: { data: number[] }) => void) => void
   onBillAcceptorStatus: (callback: (status: { connected: boolean; error?: string }) => void) => void
   reconnectBillAcceptor: () => Promise<{ success: boolean }>

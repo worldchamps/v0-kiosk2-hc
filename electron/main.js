@@ -19,7 +19,7 @@ const { createPaymentRecovery } = require("./payment-recovery")
 const { createOperationsReporter, verifyRecoveryCommand } = require("./kiosk-operations")
 const { deviceFiles } = require("./device-setup")
 const { createDeviceSettings } = require("./device-settings")
-const { usesIntegratedCash } = require("./cash-device-profile")
+const { usesIntegratedCash, cashBackend, cashPayoutValue } = require("./cash-device-profile")
 const { createCardKeyStore } = require("./card-key-store")
 const { createCardKeyService, enabled: cardDispenserEnabled } = require("./card-key-service")
 const { createDeviceRecovery, runRemoteReset } = require("./device-recovery")
@@ -78,6 +78,12 @@ ipcMain.on('device-recovery:fault', (event, key) => {
       ['acceptor', 'dispenser', 'cardTerminal', 'printer', 'cardDispenser'].includes(key)) deviceRecovery?.fault(key)
   } catch { /* Ignore foreign frames. */ }
 })
+ipcMain.on('device-recovery:ready', (event, key) => {
+  try {
+    if (event.senderFrame === event.sender.mainFrame && new URL(event.senderFrame.url).origin === 'http://localhost:3000' &&
+      ['acceptor', 'dispenser'].includes(key)) deviceRecovery?.ready(key)
+  } catch { /* Ignore foreign frames. */ }
+})
 
 const paymentRecovery = createPaymentRecovery({
   app, safeStorage: require("electron").safeStorage,
@@ -115,8 +121,7 @@ ipcMain.handle("payment-recovery:report-cash", async (event, input) => {
   if (result.success) {
     if (result.cashStopped === false) {
       global.kioskCashBlocked = true
-      if (deviceRecovery?.hardware.acceptor) deviceRecovery.hardware.acceptor = {
-        ...deviceRecovery.hardware.acceptor, state: 'needs_attention', reason: 'acceptor_stop_unconfirmed' }
+      deviceRecovery?.fault('acceptor', 'acceptor_stop_unconfirmed')
     }
     await deliverCashIncidents()
     const receipt = path.join(app.getPath('userData'), 'payment-recovery-archive', result.archiveId + '.bin.sent')
@@ -124,8 +129,7 @@ ipcMain.handle("payment-recovery:report-cash", async (event, input) => {
   }
   return result
 })
-ipcMain.handle('cash:available', () => !global.kioskCashBlocked &&
-  ['acceptor', 'dispenser'].every(key => deviceRecovery?.hardware[key] && deviceRecovery.hardware[key].state !== 'needs_attention'))
+ipcMain.handle('cash:available', () => !global.kioskCashBlocked)
 
 const cashDiagnostics = createCashDiagnostics({
   authorize: (event, password) => paymentRecovery.authorize(event, password),
@@ -136,7 +140,7 @@ const cashDiagnostics = createCashDiagnostics({
   bridge: { get isConnected() { return hardwareBridge.isConnected }, subscribeMessage: hardwareBridge.subscribeMessage,
     send: message => { lastAcceptorCommand = Date.now(); return hardwareBridge.send(message) } },
   trace: cashTrace,
-  hardwareInfo: () => ({ cashBackend: usesIntegratedCash(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING) ? 'bac2400' : 'oneplus', cashBoard: cashBoardInfo }),
+  hardwareInfo: () => ({ cashBackend: cashBackend(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING), cashBoard: cashBoardInfo }),
 })
 ipcMain.handle('cash-diagnostics:read', (event, password) => cashDiagnostics.read(event, password))
 ipcMain.handle('cash-diagnostics:run', (event, input) => cashDiagnostics.run(event, input))
@@ -479,7 +483,7 @@ function createWindow() {
 
       // Hardware Server Bridge initialization
       hardwareBridge.onStatus((status) => {
-        if (!status.connected) for (const key of ['acceptor', 'dispenser', 'cardDispenser', ...(usesWoosim() || KIOSK_PROPERTY_ID === 'property4' ? [] : ['printer'])]) deviceRecovery?.fault(key, 'bridge_disconnected')
+        if (!status.connected) for (const key of ['cardDispenser', ...(usesWoosim() || KIOSK_PROPERTY_ID === 'property4' ? [] : ['printer'])]) deviceRecovery?.fault(key, 'bridge_disconnected')
         cashTrace.write('bridge', { event: status.connected ? 'connected' : 'disconnected' })
         if (mainWindow && mainWindow.webContents) {
           mainWindow.webContents.send("bill-acceptor-status", { connected: status.connected })
@@ -761,11 +765,14 @@ async function connectPrinter() {
   }
 }
 
-ipcMain.handle("send-to-bill-acceptor", async (event, command) => {
+ipcMain.handle("send-to-bill-acceptor", async (event, command, requiredAmount) => {
   if (global.kioskDeviceRecoveryActive) return { success: false }
   lastAcceptorCommand = Date.now()
   cashTrace.write('bridge', { event: 'send', bytes: Array.from(command) })
-  const success = hardwareBridge.send({ type: "raw_acceptor", data: Array.from(command) })
+  const multi3400 = cashBackend(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING) === 'multi3400'
+  if (multi3400 && requiredAmount !== undefined && (!Number.isSafeInteger(requiredAmount) || requiredAmount <= 0)) return { success: false }
+  const success = hardwareBridge.send({ type: "raw_acceptor", data: Array.from(command),
+    ...(multi3400 && requiredAmount !== undefined ? { requiredAmount } : {}) })
   return { success }
 })
 
@@ -1008,7 +1015,8 @@ ipcMain.handle("reconnect-printer", async () => {
 ipcMain.handle("get-hardware-status", async () => {
   return {
     connected: hardwareBridge.isConnected,
-    cashBackend: usesIntegratedCash(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING) ? 'bac2400' : 'oneplus',
+    cashBackend: cashBackend(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING),
+    cashPayoutValue: cashPayoutValue(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING, process.env),
     cashBoard: cashBoardInfo,
   }
 })

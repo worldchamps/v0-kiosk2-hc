@@ -128,3 +128,12 @@ test('IPC service requires administrator authorization and only writes after val
   assert.equal(writes, 1)
   assert.equal(stored.env.TOSS_FRONT_SERIAL_PATH, 'COM8')
 })
+
+test('MULTI3400 BD1 denomination is registered only for B and rejects an invalid note value', () => {
+  const original = config('property3')
+  assert.equal(view(original).values.multi3400Bd1Value, '10000')
+  const saved = updatedConfig(original, { ...view(original).values, multi3400Bd1Value: '5000' })
+  assert.equal(saved.env.MULTI3400_BD1_VALUE, '5000')
+  assert.throws(() => updatedConfig(original, { ...view(original).values, multi3400Bd1Value: '2000' }), /BD1/)
+  assert.equal(updatedConfig(config('property4'), { ...view(config('property4')).values, multi3400Bd1Value: '5000' }).env.MULTI3400_BD1_VALUE, undefined)
+})

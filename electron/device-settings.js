@@ -1,12 +1,13 @@
 const PORT = /^COM[1-9]\d{0,2}$/i
 const { supportsCardKey } = require('./card-key-service')
-const { usesIntegratedCash } = require('./cash-device-profile')
+const { usesIntegratedCash, cashBackend } = require('./cash-device-profile')
 const { enabled: tossFrontEnabled } = require('./toss-front-config')
 const FIELDS = [
   'tossEnabled',
   'tossTransport', 'tossSerialPath', 'tossSerialBaudRate', 'tossWsUrl', 'tossPairingKey',
   'printerPort', 'acceptorPort', 'dispenserPort', 'bac2400Port', 'sam4sPrinterName', 'woosimPrinterName',
   'cardDispenserPort', 'cardDispenserAddress', 'cardDispenserEnabled',
+  'multi3400Bd1Value',
 ]
 
 function view(config) {
@@ -26,6 +27,7 @@ function view(config) {
       acceptorPort: env.ACCEPTOR_PORT || 'COM4',
       dispenserPort: env.DISPENSER_PORT || 'COM5',
       bac2400Port: env.BAC2400_PORT || env.BOARD3400_PORT || 'COM5',
+      multi3400Bd1Value: env.MULTI3400_BD1_VALUE || '10000',
       sam4sPrinterName: env.SAM4S_PRINTER_NAME || '',
       woosimPrinterName: env.WOOSIM_PRINTER_NAME || '',
       cardDispenserPort: env.CARD_DISPENSER_PORT || '',
@@ -49,6 +51,10 @@ function updatedConfig(config, input) {
   if (cardSupported && !/^(?:0?[0-9]|1[0-5])$/.test(values.cardDispenserAddress)) throw new Error('카드 발급기 장비 주소는 제조사 데모의 Device Number와 같은 값(00~15)을 입력해주세요.')
   if (!['auto', 'serial', 'websocket'].includes(values.tossTransport)) throw new Error('토스 프론트 연결 방식을 확인해주세요.')
   const integratedCash = usesIntegratedCash(config.property, config.env?.KIOSK_BUILDING)
+  const multi3400 = cashBackend(config.property, config.env?.KIOSK_BUILDING) === 'multi3400'
+  if (multi3400 && !['1000', '5000', '10000', '50000'].includes(values.multi3400Bd1Value)) {
+    throw new Error('BD1 지폐 단가는 1000, 5000, 10000, 50000원 중 선택해주세요.')
+  }
   const portKeys = integratedCash ? ['bac2400Port']
     : config.property === 'property2' ? []
     : ['printerPort', 'acceptorPort', 'dispenserPort']
@@ -94,6 +100,7 @@ function updatedConfig(config, input) {
   }
   if (integratedCash) {
     env.BAC2400_PORT = values.bac2400Port
+    if (multi3400) env.MULTI3400_BD1_VALUE = values.multi3400Bd1Value
     if (config.property === 'property4') env.SAM4S_PRINTER_NAME = values.sam4sPrinterName
     else env.WOOSIM_PRINTER_NAME = values.woosimPrinterName
   } else if (config.property !== 'property2') {

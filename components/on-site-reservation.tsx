@@ -539,7 +539,6 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
         </header>
 
         <section className="kiosk-payment-notice" aria-label="결제 및 문의 안내">
-          {!cashAvailable && <p role="status">현재 현금 결제를 이용하실 수 없습니다.</p>}
           <div className="kiosk-payment-help-title">도움이 필요하세요?</div>
           <p>
             <Landmark aria-hidden="true" />
@@ -583,6 +582,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
         </nav>
 
         <div className="kiosk-stay-type-content">
+          {!cashAvailable && <div className="kiosk-stay-status" role="status"><p>현재 현금 결제를 이용하실 수 없습니다.</p></div>}
           {paymentNotice && <div className="kiosk-stay-status" role="alert"><p>{paymentNotice}</p></div>}
           {hasPaymentProblem && <div className="kiosk-stay-status" role="alert">
             <div>

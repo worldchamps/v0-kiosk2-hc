@@ -31,7 +31,7 @@ AGAIN Kiosk는 숙소별 키오스크에서 다음 기능을 제공합니다.
 │  └─ Firebase: 객실 상태·PMS 상태·PMS/인쇄 대기열
 ├─ 로컬 Python Hardware Server (ws://localhost:8082)
 │  ├─ property1, property3 A: Bixolon, ONEPLUS 개별 지폐 장비
-│  └─ property4, property3 B: BAC-2400/3400 통합 지폐 보드
+│  └─ property4: BAC-2400 / property3 B: ONEPLUS MULTI3400 통합 보드
 ├─ Windows 인쇄 시스템
 │  ├─ property4: SAM4S GCUBE 드라이버 인쇄
 │  └─ property3 B: WOOSIM WSP-CP383 Windows 큐 (이미지 + 커팅 1회 RAW 작업)
@@ -50,7 +50,7 @@ COM 포트를 두 프로세스가 동시에 사용해 충돌할 수 있습니다
 | `property1` | C동, D동 | 기존 PMS 위 Electron 오버레이 | Bixolon, Hardware Server | 개별 인식기·배출기 |
 | `property2` | Kariv | 기존 PMS 위 Electron 오버레이 | 현재 키오스크 출력 흐름에서 사용 안 함 | 개별 인식기·배출기 |
 | `property3` | A동 (`KIOSK_BUILDING=A`) | Electron 전체화면 | Bixolon, Hardware Server | ONEPLUS 개별 인식기·배출기 |
-| `property3` | B동 (`KIOSK_BUILDING=B`) | Electron 전체화면, 현장 PC ia32 | WOOSIM WSP-CP383, Windows 큐 | MULTI3400 통합 보드, BV1/BD1 경로 (현장 규약 미검증) |
+| `property3` | B동 (`KIOSK_BUILDING=B`) | Electron 전체화면, 현장 PC ia32 | WOOSIM WSP-CP383, Windows 큐 | ONEPLUS MULTI3400 HW v1.1, BV1+BV2/BD1, 9600 8N1 |
 | `property4` | CAMP | Electron 전체화면 | SAM4S GCUBE, Windows 드라이버 | BAC-2400 통합 보드 |
 
 소스에서 객실 구분은 `C/D → property1`, `KARIV → property2`, `A/B → property3`,
@@ -220,11 +220,13 @@ DISPENSER_PORT=COM5
 통합 보드는 **property4 또는 property3 + `KIOSK_BUILDING=B`**에서만 선택합니다.
 비치 A동, C·D동, 카리브의 개별 장비 경로는 이 선택 조건에 포함되지 않습니다.
 포트 우선순위는 `BAC2400_PORT` → `BOARD3400_PORT` → 기본 COM5입니다.
-현장 포트는 환경변수나 **외부기기 등록 → BAC-2400 / 3400 통합 보드**에서 지정합니다.
+현장 포트는 환경변수나 **외부기기 등록 → ONEPLUS MULTI3400 통합 보드**(B동),
+**BAC-2400 통합 보드**(캠프)에서 지정합니다.
 
 B동 현장 확인값(2026-10-13): `property3-kiosk-b-32`, Windows ia32, COM5,
 제조사 데모 MULTI3400 v1.1 / IO board 0x12(1.2), 방출기 ONEPLUS OBC-400 V1.2 SO DC24V.
-이 모델·버전 표시는 BAC-2400 V1.3의 프로토콜과 동일하다는 증거가 아닙니다.
+B동은 `hardware_server/multi3400.py`, 캠프는 기존 `hardware_server/bac2400.py`를 사용합니다.
+MULTI3400 V1_1·V1_5 제조사 데모의 FE 프레임은 BAC-2400 TLV와 호환되지 않습니다.
 
 ```env
 # 소스 실행형 B동 PC의 .env.local 또는 설치형 최초 등록 설정
@@ -232,6 +234,7 @@ KIOSK_PROPERTY_ID=property3
 KIOSK_BUILDING=B
 KIOSK_DEVICE_ID=property3-kiosk-b-32
 BAC2400_PORT=COM5
+MULTI3400_BD1_VALUE=10000
 # 자동 검색으로 찾지 못할 때만 Windows 큐의 정확한 이름 지정
 WOOSIM_PRINTER_NAME=WSP-CP383
 # 선택: 인쇄 끝에서 커터까지 공급할 길이 (0~30mm, 기본 12mm)
@@ -240,7 +243,10 @@ WOOSIM_CUT_FEED_MM=12
 
 B동에서는 `ACCEPTOR_PORT` / `DISPENSER_PORT`를 사용하지 않습니다. 설치형 앱은 기존
 암호화 장비 설정을 읽으므로 `.env.local`만 바꿔도 기존 설정은 바뀌지 않습니다.
-**외부기기 등록**에서 통합 보드 포트와 WOOSIM 프린터 이름을 저장하고 앱 재시작이 필요합니다.
+**외부기기 등록**에서 통합 보드 포트, BD1 지폐 단가, WOOSIM 프린터 이름을 저장하고 앱 재시작이 필요합니다.
+`MULTI3400_BD1_VALUE`는 BD1에 실제 넣은 지폐 권종(1000/5000/10000/50000원)이며 기본 10000원입니다.
+거스름돈·취소 반환은 이 단가의 정수 배수만 지급합니다. 나누어떨어지지 않으면 지급하지 않고
+기존 무인 장애 처리로 PMS에 현금 사고를 남기고 첫 화면으로 복귀합니다.
 `WOOSIM_CUT_FEED_MM`은 로컬 환경 설정값이며 외부기기 등록 화면의 항목은 아닙니다.
 
 캠프 설정:
@@ -260,14 +266,22 @@ SAM4S_OFFSET_Y_MM=0
 `BAC2400_PORT`를 사용합니다. SAM4S 드라이버가 사용하는 COM 포트는 Windows 프린터 속성에서
 설정하며, 앱이 그 COM 포트를 직접 열지 않습니다.
 
-두 통합 보드 경로는 현재 9600 8E1, BV1 권종 카운터 `0x18`, 상태 `0x1B`, BD1 인덱스 2를
-사용합니다. 1만원·5만원만 금액으로 인정하고 1천원·5천원 수납 흔적은 오류로 보존하여 투입을
-중지합니다. 소프트웨어의 중지가 물리적 권종 거부를 보장하지 않으므로 데모의 권종 설정과
-대조해야 합니다. 상태만 온 응답을 금액으로 환산하지 않습니다.
-부분 필드·알 수 없는 상태값·누적/회차별 지급 수량을 구분할 증거가 없는 응답은 성공이 아닙니다.
-`FE` 프레임을 사용하는 과거 3400 구현과 자동 교체하지 않으며, 이 프레임은 호환 미확인으로 기록합니다.
-펌웨어 조회 명령은 규격 미확보로 보내지 않습니다. 응답의 `0x14` / `0x1B` 필드는 로그·현금 통신 점검에
-원문으로 남기고 버전은 미확인으로 표시합니다. 데모 버전을 코드가 읽어 확인한 값으로 표시하지 않습니다.
+캠프는 기존 9600 8E1/TLV, BV1 권종 카운터 `0x18`, 상태 `0x1B`, BD1 인덱스 2를 유지합니다.
+1만원·5만원만 금액으로 인정하며 보드 펌웨어 버전은 미확인으로 표시합니다.
+B동은 9600 8N1, TX 14바이트/RX 상태 19바이트의 FE 프레임입니다. [1]은 전체 길이에서 1을 뺀
+13/18이며 마지막 바이트는 앞선 모든 바이트의 XOR입니다. V1_1·V1_5 모두 `WriteComm(pBuff,14)`를
+사용하므로 15바이트를 보내지 않습니다. 데모의 펌웨어 파일명 V1_5/V1_6은 TX 길이와 별개입니다.
+0x11/0x00 조회 응답 [17]의 IO 버전(현장 캡처 0x12)을 검증된 바이트 값으로 표시합니다.
+B동은 250ms 주기로 투입 매수를 조회하고 1천/5천/1만/5만원 증가분을 모두 결제액으로 기록합니다.
+동전 투입은 끄며, 최초 결제 허용 전에 정지 상태에서 투입 카운터를 Clear하고 0을 확인합니다.
+결제 중 재허용·종료·자동 복구에는 투입 카운터를 지우지 않습니다. 추가 투입을 중지한 뒤 수납된
+여러 장을 모두 기록하고 완료 판단합니다. 중지 실패 시에도 읽은 금액을 기록하고 사고로 처리합니다.
+알려진 권종을 보드에 반환/거부하는 명령은 보내지 않습니다.
+최대 투입금 [7]은 결제액을 천원 단위로 올림해 설정하며 255000원 초과는 표현 불가하여 0(무제한)과
+`input_limit_unavailable`을 기록합니다. 마지막 한 장의 과투입 방지 효과는 현장 확인 대상입니다.
+B동 BD1 성공은 지급 직전 새 카운터 대비 증가분이 요청 매수와 같고 방출중·오류·Empty가 모두
+해제된 새 상태에서만 확정합니다. ACK만으로 성공하지 않습니다. 부분 지급·오류·시간초과는
+`payout_uncertain`으로 잠그고 자동 지급/리셋을 금지합니다. 상세 명령은 [현금 진단](CASH_DIAGNOSTICS.md)을 따릅니다.
 
 ### 6.6 Toss Front 결제
 
@@ -509,7 +523,7 @@ python hardware_server\test_bixolon_korean.py --port COM2
 `[RESET]`은 초기화 응답 또는 준비 상태 미확인, `[STOP]`은 투입 중지 응답 미확인을 뜻합니다.
 
 - Electron이 Hardware Server를 자동 시작하고 `ws://localhost:8082`에 연결합니다.
-- property4와 property3 B동은 `BAC2400_PORT`의 통합 보드 경로로 BV1/BD1을 제어합니다. MULTI3400 v1.1 호환은 현장 검증 대상입니다.
+- property4는 `BAC2400_PORT`의 BAC-2400 BV1/BD1, property3 B동은 같은 포트 설정의 MULTI3400 BV1+BV2/BD1을 제어합니다. 실제 현금 수납·배출은 현장 검증 대상입니다.
 - 다른 property는 `ACCEPTOR_PORT`와 `DISPENSER_PORT`를 각각 사용합니다.
 - property4에서는 Hardware Server가 SAM4S를 열지 않으며 프린터는 Windows 드라이버가 담당합니다.
 
