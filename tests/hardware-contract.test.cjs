@@ -37,12 +37,9 @@ function device(kind, runtime = {}) {
   let onData, onStatus
   let response = () => packet(0x6d, 0x65, 0x13)
   let result = { success: true }, sends = 0
-  const traces = [], ready = []
   let hardwareStatus = async () => ({ connected: true })
   let reconnect = async () => ({ success: true })
   const ipc = {
-    reportDeviceReady: key => ready.push(key),
-    cashDiagnostics: { trace: value => traces.push(value) },
     getHardwareStatus: () => hardwareStatus(),
     ["onBill" + suffix + "Data"]: callback => { onData = callback },
     ["onBill" + suffix + "Status"]: callback => { onStatus = callback },
@@ -61,6 +58,7 @@ function device(kind, runtime = {}) {
   return {
     ...loaded,
     connect: () => loaded.api["connectBill" + suffix](),
+    disconnect: () => loaded.api["disconnectBill" + suffix](),
     connected: () => loaded.api["isBill" + suffix + "Connected"](),
     serverStatus: status => onStatus?.(status),
     respond: next => { response = next },
@@ -68,8 +66,6 @@ function device(kind, runtime = {}) {
     hardwareStatus: next => { hardwareStatus = next },
     reconnect: next => { reconnect = next },
     sends: () => sends,
-    traces,
-    ready,
   }
 }
 
@@ -78,7 +74,7 @@ for (const kind of ["acceptor", "dispenser"]) {
     const h = device(kind)
     assert.equal(h.connected(), false)
     assert.equal(await h.connect(), true)
-    h.serverStatus({ connected: false })
+    await h.disconnect()
     h.serverStatus({ connected: true })
     assert.equal(h.connected(), false)
     assert.equal(await h.api.checkConnection(), true)
@@ -135,54 +131,19 @@ for (const kind of ["acceptor", "dispenser"]) {
   })
 }
 
-for (const kind of ['acceptor', 'dispenser']) {
-  test(`${kind}: only verified normal command replies clear health faults`, async () => {
-    const h = device(kind)
-    await h.connect(); assert.deepEqual(h.ready, [kind])
-    h.ready.length = 0
-    h.result({ success: false }); assert.equal(await h.api.checkConnection(), false)
-    h.result({ success: true }); h.respond(() => [36, 109, 101, 19, 0])
-    assert.equal(await h.api.checkConnection(), false)
-    assert.deepEqual(h.ready, [])
-    if (kind === 'acceptor') {
-      h.respond(() => packet(0x4e, 0x47, 0)); assert.equal(await h.api.setConfig(0x1c), false)
-      h.respond(() => packet(0x67, 0x61, 0x0c)); assert.equal(await h.api.getStatus(), 0x0c)
-      assert.deepEqual(h.ready, [])
-      h.respond(() => packet(0x4f, 0x4b, 0)); assert.equal(await h.api.setConfig(0x1c), true)
-      h.respond(() => packet(0x67, 0x61, 1)); assert.equal(await h.api.getStatus(), 1)
-    } else {
-      h.respond(() => packet(0x73, 0x74, 0x65)); assert.equal(await h.api.getDispenserStatus(), 0x65)
-      assert.deepEqual(h.ready, [])
-      h.respond(() => packet(0x73, 0x74, 0x62)); assert.equal(await h.api.getDispenserStatus(), 0x62)
-      h.respond(() => packet(0x64, 1, 0)); assert.equal(await h.api.dispenseBills(1), true)
-    }
-    assert.deepEqual(h.ready, [kind, kind])
-    assert.equal(h.timers.size, 0)
-  })
-}
-
-test('BD1 payout denomination requires a valid native profile and bounds a stalled IPC', async () => {
-  for (const [cashBackend, cashPayoutValue, expected] of [
-    ['multi3400', 5000, 5000], ['multi3400', 10000, 10000], ['bac2400', 5000, 10000], ['oneplus', undefined, 10000],
-  ]) {
-    const h = load('lib/bill-dispenser-utils.ts', { getHardwareStatus: async () => ({ cashBackend, cashPayoutValue }) })
-    assert.equal(await h.api.getCashPayoutValue(), expected)
-    assert.equal(h.timers.size, 0)
-  }
-  for (const status of [async () => ({ cashBackend: 'multi3400', cashPayoutValue: null }), () => new Promise(() => {})]) {
-    const h = load('lib/bill-dispenser-utils.ts', { getHardwareStatus: status })
-    await assert.rejects(h.api.getCashPayoutValue(), /profile|BD1/)
-    assert.equal(h.timers.size, 0)
-  }
-})
-
-test("acceptor: NG cannot confirm the payment STOP command", async () => {
+test("acceptor: NG cannot confirm disable and unknown configuration is not fabricated", async () => {
   const h = device("acceptor")
   await h.connect()
+  assert.equal(await h.api.getConfig(), null)
+  assert.equal(await h.api.getErrorCode(), null)
   h.respond(() => packet(0x4e, 0x47, 0))
-  assert.equal(await h.api.setConfig(0x1c), false)
+  assert.equal(await h.api.disableAcceptance(), false)
   h.respond(() => packet(0x4f, 0x4b, 0))
-  assert.equal(await h.api.setConfig(0x1c), true)
+  assert.equal(await h.api.disableAcceptance(), true)
+  assert.equal(await h.api.setConfig(0x3c), true)
+  assert.equal(await h.api.getConfig(), 0x3c)
+  h.serverStatus({ connected: false })
+  assert.equal(await h.api.getConfig(), null)
 })
 
 test('acceptor records NG, timeout and transport failure outcomes', async () => {
@@ -190,13 +151,13 @@ test('acceptor records NG, timeout and transport failure outcomes', async () => 
   await h.connect()
   h.respond(() => packet(0x4e, 0x47, 0))
   assert.equal(await h.api.initializeDevice(), false)
-  assert.equal(h.traces.at(-1).result, 'ng')
+  assert.equal(h.api.getBillAcceptorCommandLog().at(-1).error, 'ng')
   h.respond(() => null)
   assert.equal(await h.api.setConfig(0x1c), false)
-  assert.equal(h.traces.at(-1).result, 'timeout')
+  assert.equal(h.api.getBillAcceptorCommandLog().at(-1).error, 'timeout')
   h.result({ success: false })
   assert.equal(await h.api.setConfig(0x1c), false)
-  assert.equal(h.traces.at(-1).result, 'send_failed')
+  assert.equal(h.api.getBillAcceptorCommandLog().at(-1).error, 'send_failed')
   assert.equal(h.timers.size, 0)
 })
 
@@ -287,6 +248,9 @@ test("dispenser: integer count and the existing response command/count must matc
   assert.equal(await h.api.dispenseBills(2), false)
   h.respond(command => packet(0x64, command[2], 0x53))
   assert.equal(await h.api.dispenseBills(2), true)
+  assert.equal(h.api.getBillDispenserStatus().dispensedCount, 2)
+  assert.equal(await h.api.getTotalDispensedCount(), null)
+  await assert.rejects(h.api.clearTotalDispensedCount(), /지원하지 않습니다/)
 })
 
 test("missing Electron fails closed without accessing a browser device API", async () => {

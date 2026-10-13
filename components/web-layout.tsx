@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import RoomInfo from "@/components/room-info"
 import PrinterTest from "@/components/printer-test"
+import BillAcceptorTest from "@/components/bill-acceptor-test"
+import BillDispenserTest from "@/components/bill-dispenser-test"
 import RoomTypeSettings from "@/components/room-type-settings"
 import DeviceStatus from "@/components/device-status"
 import DeviceSettings from "@/components/device-settings"
@@ -46,8 +48,10 @@ function AdminWorkspace({ onChangeMode }: { onChangeMode: () => void }) {
           <TabsList>
             <TabsTrigger value="roomInfo">객실 정보</TabsTrigger>
             <TabsTrigger value="printer">프린터 테스트</TabsTrigger>
+            <TabsTrigger value="billAcceptor">지폐 인식기</TabsTrigger>
             <TabsTrigger value="cashDiagnostics">현금 통신 점검</TabsTrigger>
             {cardAvailable && <TabsTrigger value="cardKeys">카드키</TabsTrigger>}
+            <TabsTrigger value="billDispenser">지폐 방출기</TabsTrigger>
             <TabsTrigger value="roomTypeSettings">객실 타입 설정</TabsTrigger>
             <TabsTrigger value="pmsRates">PMS 요금 관리</TabsTrigger>
             <TabsTrigger value="deviceStatus">기기 연결 상태</TabsTrigger>
@@ -60,8 +64,14 @@ function AdminWorkspace({ onChangeMode }: { onChangeMode: () => void }) {
           <TabsContent value="printer">
             <PrinterTest />
           </TabsContent>
+          <TabsContent value="billAcceptor">
+            <BillAcceptorTest />
+          </TabsContent>
           <TabsContent value="cashDiagnostics"><CashDeviceDiagnostics /></TabsContent>
           {cardAvailable && <TabsContent value="cardKeys"><CardKeyAdmin onBusy={setCardBusy} /></TabsContent>}
+          <TabsContent value="billDispenser">
+            <BillDispenserTest />
+          </TabsContent>
           <TabsContent value="roomTypeSettings">
             <RoomTypeSettings />
           </TabsContent>

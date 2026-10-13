@@ -9,43 +9,6 @@ const config = property => ({
     TOSS_FRONT_PAIRING_KEY: 'existing-pairing-key' },
 })
 
-test('legacy configured terminal is shown enabled and saving records an explicit choice', () => {
-  const original = config('property3')
-  original.env.TOSS_FRONT_WS_URL = 'ws://192.0.2.10:9000/kiosk'
-  assert.equal(view(original).values.tossEnabled, 'true')
-  assert.equal(Object.hasOwn(original.env, 'TOSS_FRONT_ENABLED'), false)
-  const saved = updatedConfig(original, view(original).values)
-  assert.equal(saved.env.TOSS_FRONT_ENABLED, 'true')
-  const disabled = updatedConfig(saved, { ...view(saved).values, tossEnabled: 'false' })
-  assert.equal(disabled.env.TOSS_FRONT_ENABLED, 'false')
-  assert.equal(disabled.env.TOSS_FRONT_PAIRING_KEY, original.env.TOSS_FRONT_PAIRING_KEY)
-  assert.equal(disabled.env.TOSS_FRONT_WS_URL, original.env.TOSS_FRONT_WS_URL)
-  assert.equal(view(disabled).values.tossEnabled, 'false')
-  assert.equal(view(updatedConfig(disabled, { ...view(disabled).values, tossEnabled: 'true' })).values.tossEnabled, 'true')
-})
-
-test('registration reads the legacy effective state across properties and both transports without changing saved settings', () => {
-  for (const property of ['property1', 'property2', 'property3', 'property4']) {
-    for (const enabled of [undefined, '', 'true', 'false']) {
-      for (const transport of ['serial', 'websocket']) {
-        const original = config(property)
-        Object.assign(original.env, { TOSS_FRONT_TRANSPORT: transport,
-          [transport === 'serial' ? 'TOSS_FRONT_SERIAL_PATH' : 'TOSS_FRONT_WS_URL']: transport === 'serial' ? 'COM8' : 'ws://192.0.2.10:9000/kiosk' })
-        if (enabled !== undefined) original.env.TOSS_FRONT_ENABLED = enabled
-        const before = JSON.stringify(original)
-        const shown = view(original)
-        assert.equal(shown.values.tossEnabled, String(enabled !== 'false'))
-        assert.equal(JSON.stringify(original), before)
-        assert.equal(updatedConfig(original, shown.values).env.TOSS_FRONT_ENABLED, shown.values.tossEnabled)
-        if (enabled !== 'true') {
-          assert.equal(view({ ...original, env: { ...original.env, TOSS_FRONT_PAIRING_KEY: '   ' } }).values.tossEnabled, 'false')
-          assert.equal(view({ ...original, env: { ...original.env, TOSS_FRONT_WS_URL: '', TOSS_FRONT_SERIAL_PATH: '' } }).values.tossEnabled, 'false')
-        }
-      }
-    }
-  }
-})
-
 test('only Camp and property3 B use one configurable cash board port; individual device settings are preserved', () => {
   for (const [property, building, integrated] of [
     ['property1', 'C', false], ['property1', 'B', false], ['property2', 'B', false],
@@ -76,7 +39,7 @@ test('registration view hides pairing key and preserves device identity when sav
     assert.equal(shown.pairingKeySet, true)
     assert.equal(shown.values.tossPairingKey, '')
     assert.equal(JSON.stringify(shown).includes('existing-pairing-key'), false)
-    const values = { ...shown.values, tossEnabled: 'true', tossTransport: 'serial', tossSerialPath: 'com8',
+    const values = { ...shown.values, tossTransport: 'serial', tossSerialPath: 'com8',
       tossSerialBaudRate: '115200', tossPairingKey: '' }
     if (property === 'property4') values.bac2400Port = 'com5'
     else Object.assign(values, { printerPort: 'com2', acceptorPort: 'com4', dispenserPort: 'com5' })
@@ -96,7 +59,7 @@ test('registration view hides pairing key and preserves device identity when sav
 
 test('rejects duplicate ports, malformed settings and incomplete serial pairing', () => {
   const original = config('property4')
-  const valid = { ...view(original).values, tossEnabled: 'true', tossTransport: 'serial', tossSerialPath: 'COM8' }
+  const valid = { ...view(original).values, tossTransport: 'serial', tossSerialPath: 'COM8' }
   assert.throws(() => updatedConfig(original, { ...valid, bac2400Port: 'com8' }), /동일한 COM/)
   assert.throws(() => updatedConfig(original, { ...valid, tossSerialPath: 'COM0' }), /COM 포트/)
   assert.throws(() => updatedConfig(original, { ...valid, KIOSK_PROPERTY_ID: 'property1' }), /형식/)
@@ -120,20 +83,11 @@ test('IPC service requires administrator authorization and only writes after val
   assert.equal((await service.read({}, 'wrong')).success, false)
   assert.equal((await service.read({}, 'correct')).values.tossPairingKey, '')
   assert.equal((await service.read({}, 'correct')).serialPorts[0].path, 'COM8')
-  const values = { ...view(stored).values, tossEnabled: 'true', tossTransport: 'serial', tossSerialPath: 'COM8' }
+  const values = { ...view(stored).values, tossTransport: 'serial', tossSerialPath: 'COM8' }
   assert.equal(service.save({}, { password: 'wrong', values }).success, false)
   assert.equal(service.save({}, { password: 'correct', values: { ...values, bac2400Port: 'COM8' } }).success, false)
   assert.equal(writes, 0)
   assert.equal(service.save({}, { password: 'correct', values }).success, true)
   assert.equal(writes, 1)
   assert.equal(stored.env.TOSS_FRONT_SERIAL_PATH, 'COM8')
-})
-
-test('MULTI3400 BD1 denomination is registered only for B and rejects an invalid note value', () => {
-  const original = config('property3')
-  assert.equal(view(original).values.multi3400Bd1Value, '10000')
-  const saved = updatedConfig(original, { ...view(original).values, multi3400Bd1Value: '5000' })
-  assert.equal(saved.env.MULTI3400_BD1_VALUE, '5000')
-  assert.throws(() => updatedConfig(original, { ...view(original).values, multi3400Bd1Value: '2000' }), /BD1/)
-  assert.equal(updatedConfig(config('property4'), { ...view(config('property4')).values, multi3400Bd1Value: '5000' }).env.MULTI3400_BD1_VALUE, undefined)
 })

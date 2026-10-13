@@ -3,7 +3,6 @@ const { randomUUID } = require("crypto")
 
 const port = 19000
 const pairingKey = "test-pairing-key-123456789"
-process.env.TOSS_FRONT_ENABLED = 'true'
 process.env.TOSS_FRONT_WS_URL = `ws://127.0.0.1:${port}/kiosk`
 process.env.TOSS_FRONT_PAIRING_KEY = pairingKey
 

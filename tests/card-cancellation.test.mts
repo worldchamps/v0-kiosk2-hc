@@ -22,7 +22,6 @@ function load(file: string, dependencies: Record<string, unknown>) {
 async function cancellationFixture() {
   const bridge = load("../electron/toss-front-bridge.js", {
     crypto, events, serialport: { SerialPort: class {} }, ws: class {},
-    "./toss-front-config": load("../electron/toss-front-config.js", {}),
   })
   const payment = bridge.signPayment({ paymentKey: "test-payment", amount: 11000, tax: 1000, supplyValue: 10000,
     paymentMethod: "CARD", tid: "test", approvalNumber: "APPROVAL", timestamp: Date.now(), installment: 0 })

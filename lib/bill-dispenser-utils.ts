@@ -15,6 +15,7 @@ const pendingCommands = new Map<string, { resolve: (response: Uint8Array | null)
 let currentStatus: number | null = null // Unknown until the device replies.
 let lastErrorCode: number | null = null
 let dispensedCount = 0
+let isOldProtocol = true
 
 // Debug logging
 const ENABLE_DEBUG_LOGGING = true
@@ -138,24 +139,10 @@ async function sendCommand(packet: Uint8Array, expectedCmd1: number, expectedCmd
   const response = await responsePromise
   if (response) entry.response = Array.from(response)
   else entry.error ||= "장치 응답 시간 초과"
-  if (response && ((response[1] === 0x6d && response[2] === 0x65) || response[1] === 0x64 ||
-      (response[1] === 0x73 && response[2] === 0x74 && response[3] === 0x62))) {
-    try { api.reportDeviceReady?.("dispenser") } catch { /* Health reporting must not interrupt payment. */ }
-  }
   return response
 }
 
 // --- 공용 API ---
-
-export async function getCashPayoutValue(): Promise<number> {
-  const api = typeof window !== "undefined" ? window.electronAPI : undefined
-  if (!api) throw new Error("Cash profile unavailable")
-  const status = await hardwareCallWithin(() => api.getHardwareStatus(), 1000)
-  if (!status) throw new Error("Cash profile unavailable")
-  if (status.cashBackend !== "multi3400") return 10000
-  if (![1000, 5000, 10000, 50000].includes(status.cashPayoutValue || 0)) throw new Error("Invalid BD1 value")
-  return status.cashPayoutValue!
-}
 
 export async function connectBillDispenser(): Promise<boolean> {
   logConnection("CONNECT_ATTEMPT", "하드웨어 서버 연결 상태 확인")
@@ -193,6 +180,11 @@ export async function connectBillDispenser(): Promise<boolean> {
   return true
 }
 
+export async function disconnectBillDispenser(): Promise<void> {
+  isConnected = false
+  currentStatus = null
+}
+
 export async function checkConnection(timeoutMs = 1000): Promise<boolean> {
   const packet = new Uint8Array([0x24, 0x48, 0x49, 0x3f, 0xd0]) // '$HI?'
   const res = await sendCommand(packet, 0x6d, 0x65, timeoutMs) // 'me'
@@ -225,6 +217,47 @@ export async function getDispenserStatus(): Promise<number> {
   return -1 // Unknown
 }
 
+export async function resetDispenser(): Promise<boolean> {
+  const cmd1 = isOldProtocol ? 0x49 : 0x69
+  const packet = createPacket(cmd1, 0x00, 0x00)
+  const expectedCmd1 = isOldProtocol ? 0x69 : 0x49
+  const res = await sendCommand(packet, expectedCmd1, 0x00)
+  return !!res
+}
+
+export async function enableDispenser(): Promise<boolean> {
+  const cmd1 = isOldProtocol ? 0x48 : 0x68
+  const cmd2 = isOldProtocol ? 0x43 : 0x63
+  const packet = createPacket(cmd1, cmd2, 0x3f)
+  const expectedCmd1 = isOldProtocol ? 0x68 : 0x48
+  const expectedCmd2 = isOldProtocol ? 0x63 : 0x43
+  const res = await sendCommand(packet, expectedCmd1, expectedCmd2)
+  return !!res
+}
+
 export function isBillDispenserConnected(): boolean {
   return isConnected
 }
+
+export function getBillDispenserStatus() {
+  return { currentStatus, lastErrorCode, dispensedCount, totalDispensedCount: null, isOldProtocol }
+}
+export function getBillDispenserCommandLog() { return commandLog }
+export function clearBillDispenserCommandLog(): void { commandLog.length = 0 }
+export function setProtocolVersion(old: boolean): void { isOldProtocol = old }
+export function getStatusString(status: number | null): string {
+  if (status === null) return "상태 미확인"
+  return ({ 0: "대기", 1: "동작 중", 2: "금지", 3: "완료" } as Record<number, string>)[status] || `장치 상태 0x${status.toString(16)}`
+}
+export async function getStatus(): Promise<string | null> {
+  const status = await getDispenserStatus()
+  if (status < 0) return null
+  return `장치 응답: 0x${status.toString(16)}`
+}
+export async function getErrorCode(): Promise<{ code: number; description: string } | null> {
+  return lastErrorCode === null ? null : { code: lastErrorCode, description: "장치가 보고한 오류 코드 (장치 설명서 확인)" }
+}
+export async function getTotalDispensedCount(): Promise<number | null> { return null }
+export async function disableDispenser(): Promise<boolean> { throw new Error("현재 브리지는 방출 금지 명령을 지원하지 않습니다.") }
+export async function clearDispensedCount(): Promise<boolean> { throw new Error("장치 배출 수량 초기화는 현재 브리지에서 지원하지 않습니다.") }
+export async function clearTotalDispensedCount(): Promise<boolean> { throw new Error("장치 누적 배출 수량 초기화는 현재 브리지에서 지원하지 않습니다.") }

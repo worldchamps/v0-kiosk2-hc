@@ -92,10 +92,6 @@ class Bac2400(SerialDevice):
     def dispense(self, count):
         if type(count) is not int or count < 1 or count > 250 or self.pending_payout or self.dispenser_running or \
                 self.payout_uncertain or self.pending_recovery or self.pending_acceptor_control:
-            reason = "payout_uncertain" if self.payout_uncertain else "pending_payout" if self.pending_payout else \
-                "pending_recovery" if self.pending_recovery else "pending_acceptor_control" if self.pending_acceptor_control else \
-                "dispenser_running" if self.dispenser_running else "invalid_payout_count"
-            self._failure_reason("dispenser", reason)
             return False
         self.pending_payout = {
             "count": count,
@@ -115,7 +111,6 @@ class Bac2400(SerialDevice):
         # The renderer waits 10 seconds, including preflight. Never issue money after that waiter ends.
         if time.monotonic() - self.pending_payout["started"] > 9:
             logger.error("BD1 payout timed out")
-            self._failure_reason("dispenser", "payout_timeout")
             self.payout_uncertain |= self.pending_payout["phase"] == "dispensing"
             self.pending_payout = None
             return False
@@ -127,10 +122,7 @@ class Bac2400(SerialDevice):
 
     @locked
     def handle_acceptor_command(self, packet):
-        if not self.valid_legacy_packet(packet):
-            return []
-        if self.pending_recovery:
-            self._failure_reason("acceptor", "pending_recovery")
+        if not self.valid_legacy_packet(packet) or self.pending_recovery:
             return []
         command1, command2, data = packet[1:4]
 
@@ -146,7 +138,6 @@ class Bac2400(SerialDevice):
             return [self._legacy_message("acceptor", 0x67, 0x62, bill_code)]
 
         if self.pending_acceptor_control:
-            self._failure_reason("acceptor", "pending_acceptor_control")
             return []
         enabled, clear = None, False
         if (command1, command2, data) == (0x53, 0x41, 0x0D):
@@ -155,29 +146,26 @@ class Bac2400(SerialDevice):
             enabled = False
         elif (command1, command2) == (0x53, 0x43):
             if data not in (0x1C, 0x3C):
-                return [self._acceptor_ng("unsupported_config")]
+                return [self._legacy_message("acceptor", 0x4E, 0x47, 0)]
             enabled, clear = data != 0x1C, data != 0x1C
         elif (command1, command2, data) == (0x52, 0x53, 0x54):
             enabled, clear = False, True
         # The board stacks automatically; a return/unknown SA is never a synthetic OK.
         if enabled is None:
-            return [self._acceptor_ng("unsupported_command")]
+            return [self._legacy_message("acceptor", 0x4E, 0x47, 0)]
         if enabled and (self.pending_payout or self.payout_uncertain):
-            return [self._acceptor_ng("payout_uncertain" if self.payout_uncertain else "pending_payout")]
+            return [self._legacy_message("acceptor", 0x4E, 0x47, 0)]
         if clear and self.bill_codes:
-            return [self._acceptor_ng("queued_bills")]
+            return [self._legacy_message("acceptor", 0x4E, 0x47, 0)]
         self.pending_acceptor_control = {"enabled": enabled, "clear": clear, "started": time.monotonic()}
         if not self.control_acceptor(enabled, clear) or not self.query_acceptor():
             self.pending_acceptor_control = None
-            return [self._acceptor_ng("send_failed")]
+            return [self._legacy_message("acceptor", 0x4E, 0x47, 0)]
         return []
 
     @locked
     def handle_dispenser_command(self, packet):
-        if not self.valid_legacy_packet(packet):
-            return []
-        if self.pending_recovery:
-            self._failure_reason("dispenser", "pending_recovery")
+        if not self.valid_legacy_packet(packet) or self.pending_recovery:
             return []
         command1, command2, data = packet[1:4]
 
@@ -192,69 +180,37 @@ class Bac2400(SerialDevice):
             return []
         if command1 in (0x49, 0x69) and command2 == 0 and data == 0:
             return self.recover("dispenser", "legacy-init", legacy=command1 ^ 0x20)
-        self._failure_reason("dispenser", "unsupported_command")
         return []
 
     @locked
     def recover(self, target, request_id, legacy=False):
-        self.payout_in_progress
         if target not in ("acceptor", "dispenser") or not isinstance(request_id, str) or not 1 <= len(request_id) <= 80:
             return []
         operation = {"target": target, "requestId": request_id, "legacy": legacy,
                      "phase": "checking", "started": time.monotonic()}
         if self.pending_recovery or self.pending_acceptor_control or self.pending_payout or self.payout_uncertain:
-            reason = "payout_uncertain" if self.payout_uncertain else "pending_payout" if self.pending_payout else \
-                "pending_acceptor_control" if self.pending_acceptor_control else "pending_recovery"
-            return [self._recovery_result(operation, False, reason)]
+            return [self._recovery_result(operation, False)]
         self.pending_recovery = operation
         if not (self.query_acceptor() if target == "acceptor" else self.query_dispenser()):
             self.pending_recovery = None
-            return [self._recovery_result(operation, False, "send_failed")]
+            return [self._recovery_result(operation, False)]
         return []
 
-    @locked
-    def yield_recovery(self, request_id):
-        if self.pending_recovery and self.pending_recovery["requestId"] == request_id:
-            self.pending_recovery["yield"] = True
-        return []  # Wait for the outstanding command's response; never release the guard early.
-
-    @locked
-    def advance_recovery(self):
-        operation = self.pending_recovery
-        if not operation or not operation.get("queryNeeded") or operation.get("yield"):
-            return []
-        operation["queryNeeded"] = False
-        if not (self.query_acceptor() if operation["target"] == "acceptor" else self.query_dispenser()):
-            self.pending_recovery = None
-            return [self._recovery_result(operation, False, "send_failed")]
-        return []
-
-    @staticmethod
-    def _failure_reason(target, reason, source="adapter"):
-        logger.warning("Cash adapter outcome: source=%s target=%s reason=%s", source, target, reason)
-
-    def _acceptor_ng(self, reason, source="adapter"):
-        self._failure_reason("acceptor", reason, source)
-        return {**self._legacy_message("acceptor", 0x4E, 0x47, 0), "source": source, "reason": reason}
-
-    def _recovery_result(self, operation, success, reason=None, source="adapter"):
-        if not success:
-            self._failure_reason(operation["target"], reason or "unverified", source)
+    def _recovery_result(self, operation, success):
         if operation["legacy"]:
             return self._legacy_message("dispenser", operation["legacy"], 0, 0) if success \
                 else self._legacy_message("dispenser", 0x73, 0x74, 0x65)
         return {"type": "cash_board_result", "requestId": operation["requestId"],
-                "target": operation["target"], "success": success, "verified": success,
-                "source": source, "reason": reason}
+                "target": operation["target"], "success": success, "verified": success}
 
     @locked
     def expire_operations(self):
         messages = []
         if self.pending_acceptor_control and time.monotonic() - self.pending_acceptor_control["started"] > 3:
             self.pending_acceptor_control = None
-            messages.append(self._acceptor_ng("control_timeout"))
+            messages.append(self._legacy_message("acceptor", 0x4E, 0x47, 0))
         if self.pending_recovery and time.monotonic() - self.pending_recovery["started"] > 6:
-            messages.append(self._recovery_result(self.pending_recovery, False, "recovery_timeout"))
+            messages.append(self._recovery_result(self.pending_recovery, False))
             self.pending_recovery = None
         return messages
 
@@ -406,7 +362,7 @@ class Bac2400(SerialDevice):
                 messages.append(self._legacy_message("acceptor", 0x4F, 0x4B, 0))
                 self.pending_acceptor_control = None
         elif control and validator is not None:
-            messages.append(self._acceptor_ng("invalid_validator"))
+            messages.append(self._legacy_message("acceptor", 0x4E, 0x47, 0))
             self.pending_acceptor_control = None
 
         payout_counts = tlvs.get(0x15)
@@ -434,33 +390,20 @@ class Bac2400(SerialDevice):
             relevant = 0x1B in tlvs if operation["target"] == "acceptor" else any(key in tlvs for key in (0x15, 0x16, 0x17))
             idle = acceptor_idle if operation["target"] == "acceptor" else dispenser_idle
             if relevant and not idle:
-                source = "adapter"
-                if operation["target"] == "acceptor":
-                    reason = "queued_bills" if self.bill_codes else "unsupported_bill_latched" if self.unsupported_bill_detected else \
-                        "invalid_validator" if not valid_validator or not valid_counts else "acceptor_board_error" if validator[0] & 4 else "acceptor_processing"
-                    if reason in ("acceptor_board_error", "acceptor_processing"): source = "board_status"
-                else:
-                    reason = "incomplete_dispenser_status" if not complete_dispenser else \
-                        "dispenser_board_error" if statuses[self.BD1] else "dispenser_running"
-                    if complete_dispenser: source = "board_status"
-                messages.append(self._recovery_result(operation, False, reason, source))
-                self.pending_recovery = None
-            elif relevant and operation.get("yield"):
-                messages.append(self._recovery_result(operation, False, "recovery_yielded"))
+                messages.append(self._recovery_result(operation, False))
                 self.pending_recovery = None
             elif idle and operation["phase"] == "checking":
                 # No acceptance enable, input-counter clear, payout or return in unattended recovery.
                 success = self.control_acceptor(False) if operation["target"] == "acceptor" else self.reset_dispenser()
                 if success:
                     operation["phase"] = "verifying"
-                    # Let the server handle a queued yield before the next serial command.
-                    operation["queryNeeded"] = True
+                    success = self.query_acceptor() if operation["target"] == "acceptor" else self.query_dispenser()
                 if not success:
-                    messages.append(self._recovery_result(operation, False, "send_failed"))
+                    messages.append(self._recovery_result(operation, False))
                     self.pending_recovery = None
             elif idle and operation["phase"] == "verifying":
                 verified = validator[0] == 0 if operation["target"] == "acceptor" else payout_counts[self.BD1] == 0
-                messages.append(self._recovery_result(operation, verified, None if verified else "verification_failed", "board_status"))
+                messages.append(self._recovery_result(operation, verified))
                 self.pending_recovery = None
 
         if self.pending_payout and complete_dispenser:

@@ -13,13 +13,12 @@ function nativeOperations({ overlay = true, property = 'property2' } = {}) {
   let popup = null, answer = { raw: null, memory: 'null' }, resets = 0, reloads = 0
   const events = new Map()
   const context = { global: {}, OVERLAY_MODE: overlay, KIOSK_PROPERTY_ID: property, mainWindow: null,
-    lastOperationsSnapshot: null, lastPrinterResult: null, deviceRecovery: null, cardRendererIdle: false,
-    paymentDeviceRecoveryBlocked: false, lastAcceptorCommand: 0,
+    lastOperationsSnapshot: null, lastPrinterResult: null, deviceRecovery: null, cardRendererIdle: false, lastAcceptorCommand: 0,
     pendingOperations: new Map(), URL, Date: { now: () => 100000 }, require,
     process: { env: { FIREBASE_PRIVATE_KEY: 'test-key' } },
-    ipcMain: { handle: (name, listener) => events.set(name, listener), on: (name, listener) => events.set(name, listener) },
+    ipcMain: { on: (name, listener) => events.set(name, listener) },
     setTimeout: callback => setTimeout(callback, 5), clearTimeout, overlayButtonModule: { getKioskPopup: () => popup },
-    hardwareBridge: {}, tossFrontBridge: { configured: true, pending: new Map() }, cardKey: { isBusy: () => false, status: () => ({}) },
+    hardwareBridge: {}, tossFrontBridge: { configured: true, pending: new Map() }, cardKey: { isBusy: () => false },
     cardDispenserEnabled: () => false, usesWoosim: () => property === 'property3',
     createDeviceRecovery: require('../electron/device-recovery').createDeviceRecovery,
     operationsIdentity: () => ({ deviceId: 'property2-kariv-kiosk-01', property, building: '', version: 'QA' }),
@@ -27,7 +26,7 @@ function nativeOperations({ overlay = true, property = 'property2' } = {}) {
     runRemoteReset: async (_request, _store, _recovery, idle) => { assert(idle()); resets++ },
   }
   vm.runInNewContext(source.slice(source.indexOf('function getOperationsWindow()'), source.indexOf("ipcMain.handle('printer:report-result'")) +
-    source.slice(source.indexOf('const deviceCommandsIdle ='), source.indexOf('const cardStore =')) +
+    source.slice(source.indexOf('const cardAutoIdle ='), source.indexOf('const cardStore =')) +
     source.slice(source.indexOf('  const karivOverlay ='), source.indexOf('  setInterval(() => void deviceRecovery.tick()')) +
     source.slice(source.indexOf('  const operations = createOperationsReporter'), source.indexOf('  setInterval(() => void operations.tick()')) +
     '\nglobal.operations = operations; global.cardAutoIdle = cardAutoIdle', context)
@@ -38,7 +37,7 @@ function nativeOperations({ overlay = true, property = 'property2' } = {}) {
       events.get('operations:response')({ sender: window.webContents, senderFrame: window.webContents.mainFrame },
         { id: input.id, result: input.kind === 'recover' ? { success: true } : answer })
     } } }
-  return { options: context.global.operations, context, events, window, popup: open => { popup = open ? window : null },
+  return { options: context.global.operations, context, popup: open => { popup = open ? window : null },
     answer: value => { answer = value }, get resets() { return resets }, get reloads() { return reloads } }
 }
 test('device recovery reports omit personal data and do not label an active payment as a lock', () => {
@@ -50,25 +49,6 @@ test('device recovery reports omit personal data and do not label an active paym
   assert(!JSON.stringify(recoverySummary(raw)).includes('private'))
   assert.equal(recoverySummary('broken').amount, null)
   assert.equal(recoverySummary('broken', JSON.stringify({ isActive: false }), '저장 기록 확인 실패').reason, '저장 기록 확인 실패')
-})
-
-test('native payment handoff authenticates the renderer and bounds recovery wait at three seconds', async () => {
-  const h = nativeOperations()
-  h.popup(true)
-  const event = { sender: h.window.webContents, senderFrame: h.window.webContents.mainFrame }
-  h.context.global.kioskDeviceRecoveryActive = true
-  h.events.get('payment-recovery:device-blocked')(event, true)
-  assert.equal(event.returnValue, false)
-  assert.equal(h.context.paymentDeviceRecoveryBlocked, true)
-  const waiting = h.events.get('payment-recovery:wait-for-device')(event)
-  h.context.global.kioskDeviceRecoveryActive = false
-  assert.equal(await waiting, true)
-  assert.equal(await h.events.get('payment-recovery:wait-for-device')({ ...event, sender: {} }), false)
-  let clock = 100000
-  h.context.Date.now = () => clock += 250
-  h.context.global.kioskDeviceRecoveryActive = true
-  assert.equal(await h.events.get('payment-recovery:wait-for-device')(event), false)
-  assert(clock >= 103000)
 })
 
 test('Kariv idle overlay reports a signed no-payment state without phantom devices or a main window', async () => {

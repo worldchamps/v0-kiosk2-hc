@@ -42,7 +42,6 @@ function load(file, extra = {}, globals = {}) {
     button(label) { const matches = nodes(tree).filter(n => n.type === 'button' && (n.props['aria-label'] || text(n).trim()) === label); assert.equal(matches.length, 1, `Button ${label}; actual ${text(tree)}`); return matches[0].props; },
     component(type) { return nodes(tree).find(n => n.type === type); },
     visible(value) { return text(tree).includes(value); },
-    get tree() { return tree; },
   };
 }
 function storage(seed) {
@@ -50,9 +49,9 @@ function storage(seed) {
   return { map, break() { broken = true; }, getItem: k => map.get(k) || null,
     setItem(k, v) { if (broken) throw new Error('disk full'); map.set(k, v); }, removeItem(k) { if (broken) throw new Error('disk full'); map.delete(k); } };
 }
-async function paymentContext(saved, electronAPI, globals = {}) {
+async function paymentContext(saved, electronAPI) {
   const localStorage = storage(saved ? { 'kiosk-payment-recovery-v1': saved } : {});
-  const h = load('contexts/payment-context.tsx', {}, { window: { localStorage, electronAPI }, ...globals });
+  const h = load('contexts/payment-context.tsx', {}, { window: { localStorage, electronAPI } });
   const render = () => h.render({ children: null }, 'PaymentProvider').props.value;
   render(); for (const effect of h.effects) await effect();
   return { localStorage, render, activateOperations: () => { render(); return h.renderEffects.at(-1)(); }, get value() { return render(); } };
@@ -166,138 +165,6 @@ for (const failure of [409, 400, 503, 'network']) {
   })
 }
 
-test('main recovery guard is set before storage changes and retained after a failed write', async () => {
-  const guards = []
-  let h
-  h = await paymentContext(null, { paymentRecovery: { setDeviceRecoveryBlocked: blocked => {
-    guards.push({ blocked, raw: h?.localStorage.getItem('kiosk-payment-recovery-v1') }); return true
-  } } })
-  assert.equal(guards[0].blocked, false)
-  assert.equal(await h.value.startPayment(10000, {}, 'cash'), true)
-  assert.equal(guards[1].blocked, true); assert.equal(guards[1].raw, null)
-  assert.equal(guards.at(-1).blocked, true)
-  h.localStorage.break(); assert.equal(await h.value.cancelPayment(0), false)
-  assert.equal(guards.at(-1).blocked, true)
-  assert.equal(h.value.paymentSession.isActive, true)
-})
-
-test('saved and malformed journals block server restart, and an active native recovery denies new payment', async () => {
-  for (const saved of ['{broken', JSON.stringify({ isActive: true, acceptedAmount: 0, requiredAmount: 10000, acceptedBills: [] })]) {
-    const guards = [], h = await paymentContext(saved, { paymentRecovery: { setDeviceRecoveryBlocked: blocked => { guards.push(blocked); return true } } })
-    assert(guards.length && guards.every(Boolean)); assert.equal(h.localStorage.getItem('kiosk-payment-recovery-v1'), saved)
-  }
-  const guards = [], h = await paymentContext(null, { paymentRecovery: { setDeviceRecoveryBlocked: blocked => { guards.push(blocked); return !blocked } } })
-  assert.equal(await h.value.startPayment(10000), false); assert.equal(guards.at(-1), false)
-  assert.equal(h.value.storageError, ''); assert.equal(h.value.paymentSession.isActive, false)
-  assert.equal(h.localStorage.getItem('kiosk-payment-recovery-v1'), null)
-})
-
-test('payment waits for recovery yield with no journal or incident, then starts only once', async () => {
-  let busy = true, release, waits = 0
-  const h = await paymentContext(null, { paymentRecovery: {
-    setDeviceRecoveryBlocked: () => !busy,
-    waitForDeviceRecovery: () => { waits++; return new Promise(resolve => { release = resolve }) },
-  } })
-  const starting = h.value.startPayment(60000, { roomNumber: 'B321' }, 'cash')
-  assert.equal(h.localStorage.getItem('kiosk-payment-recovery-v1'), null)
-  assert.equal(h.value.paymentSession.isActive, false)
-  const { recoverySummary } = require('../electron/kiosk-operations')
-  assert.equal(recoverySummary(null, JSON.stringify(h.value.paymentSession), h.value.storageError), null)
-  assert.equal(await h.value.startPayment(60000), false, 'duplicate click cannot start another session')
-  assert.equal(waits, 1)
-  busy = false; release(true)
-  assert.equal(await starting, true)
-  assert.equal(h.value.paymentSession.method, 'cash')
-  assert.equal(JSON.parse(h.localStorage.getItem('kiosk-payment-recovery-v1')).requiredAmount, 60000)
-  assert.equal(recoverySummary(h.localStorage.getItem('kiosk-payment-recovery-v1'), JSON.stringify(h.value.paymentSession), h.value.storageError), null)
-})
-
-test('recovery wait timeout stays clean and allows a later payment; a real storage failure still locks', async () => {
-  let busy = true
-  const guards = []
-  const h = await paymentContext(null, { paymentRecovery: {
-    setDeviceRecoveryBlocked: blocked => { guards.push(blocked); return !busy },
-    waitForDeviceRecovery: async () => false,
-  } })
-  assert.equal(await h.value.startPayment(50000), false)
-  assert.equal(h.value.paymentSession.isActive, false)
-  assert.equal(h.value.storageError, '')
-  assert.equal(h.localStorage.getItem('kiosk-payment-recovery-v1'), null)
-  assert.equal(guards.at(-1), false)
-  assert.match(h.value.paymentStartError, /잠시 후/)
-  busy = false
-  assert.equal(await h.value.startPayment(50000), true)
-  assert.equal(await h.value.cancelPayment(), true)
-  h.localStorage.break()
-  assert.equal(await h.value.startPayment(50000), false)
-  assert(h.value.storageError)
-  assert.match(h.value.paymentSession.recoveryRequired, /결제 기록 저장 오류/)
-  assert.equal(guards.at(-1), true)
-})
-
-test('cash faults and an unconfigured terminal disable methods; polling restores only available equipment', async () => {
-  let cash = false, configured = false, poll, statusChanged
-  const h = await paymentContext(null, {
-    cashAvailable: async () => cash,
-    tossFront: { getStatus: async () => ({ configured, connected: true, authenticated: true }),
-      onStatus: listener => { statusChanged = listener; return () => {} } },
-  }, { setInterval: listener => { poll = listener; return 1 }, clearInterval() {} })
-  await new Promise(resolve => setImmediate(resolve))
-  assert.equal(h.value.cashAvailable, false)
-  assert.equal(h.value.cardAvailable, false)
-  cash = true; configured = true; await poll()
-  await new Promise(resolve => setImmediate(resolve))
-  assert.equal(h.value.cashAvailable, true)
-  assert.equal(h.value.cardAvailable, true)
-  statusChanged({ configured: false, connected: true, authenticated: true })
-  assert.equal(h.value.cardAvailable, false)
-})
-
-test('payment method buttons disable missing equipment and a failed handoff returns home before money commands', async () => {
-  for (const method of ['cash', 'card']) {
-    let starts = 0, cancelled = 0, notice
-    const payment = { paymentSession: {}, startPayment: async () => { starts++; return false },
-      cancelPayment: async () => { cancelled++; return true }, cashAvailable: method !== 'cash', cardAvailable: method !== 'card' }
-    const h = load('components/payment-screen.tsx', {
-      '@/contexts/payment-context': { usePayment: () => payment }, '@/components/toss-front-card-payment': { default: 'Front' },
-      '@/lib/bill-acceptor-utils': {}, '@/lib/bill-dispenser-utils': {}, '@/lib/printer-utils': {},
-    }, { window: {} })
-    h.render({ cardAmount: 30000, cashAmount: 30000, onUnavailable: value => { notice = value } })
-    const unavailable = h.button(method === 'cash' ? '현금 결제 이용 불가' : '카드 결제 이용 불가')
-    assert.equal(unavailable.disabled, true)
-    await unavailable.onClick()
-    assert.equal(starts, 0)
-    await h.button(method === 'cash' ? '카드 결제 30,000원' : '현금 결제 30,000원').onClick()
-    assert.equal(starts, 1); assert.equal(cancelled, 1)
-    assert.match(notice, /잠시 후 다시/)
-    assert.equal(h.component('Front'), undefined)
-  }
-})
-
-test('screen exception returns to kiosk entry after ten seconds without touching any stored records', () => {
-  for (const href of ['http://localhost:3000?mode=web', 'http://localhost:3000/kiosk/D',
-    'http://localhost:3000?mode=kiosk&popup=true&direct=payment']) {
-    let callback, cancelled, delay
-    const destinations = [], localStorage = storage({ 'kiosk-payment-recovery-v1': '{original}', 'device-setting': 'keep' })
-    const h = load('components/kiosk-error-recovery.tsx', {}, { URL,
-      window: { localStorage, location: { href, replace: url => destinations.push(url) } },
-      setTimeout: (fn, ms) => { callback = fn; delay = ms; return 7 }, clearTimeout: id => cancelled = id })
-    assert.equal(text(h.render()).trim(), '잠시 후 처음 화면으로 돌아갑니다')
-    const cleanup = h.effects[0](); assert.equal(delay, 10000); assert.equal(destinations.length, 0)
-    callback(); const target = new URL(destinations[0])
-    assert.equal(target.pathname, '/'); assert.equal(target.searchParams.get('mode'), 'kiosk')
-    assert.equal(target.searchParams.has('direct'), false)
-    assert.equal(target.searchParams.get('popup') === 'true', href.includes('popup=true'))
-    assert.equal(localStorage.getItem('kiosk-payment-recovery-v1'), '{original}')
-    assert.equal(localStorage.getItem('device-setting'), 'keep')
-    cleanup(); assert.equal(cancelled, 7)
-    const deps = { '@/components/kiosk-error-recovery': { default: h.exports.default } }
-    assert.equal(load('app/error.tsx', deps).exports.default, h.exports.default)
-    const globalTree = load('app/global-error.tsx', deps).render()
-    assert.equal(globalTree.type, 'html'); assert.equal(globalTree.props.lang, 'ko')
-  }
-})
-
 test('remote overlay starts after claim, releases busy after parent becomes non-idle, and never starts if idle is lost during claim', async () => {
   for (const loseIdle of [false, true]) {
     let resolveClaim, resolvePrinter
@@ -377,23 +244,23 @@ test('cash recovery panel automatically records and returns home without complet
   assert.equal(records, 1); assert.equal(returned, 1);
 });
 test('payment session persists cash and refuses navigation cancellation or another sale before full refund', async () => {
-  const h = await paymentContext(); assert(await h.value.startPayment(30000, {}, 'cash'));
+  const h = await paymentContext(); assert(h.value.startPayment(30000, {}, 'cash'));
   h.value.addBill(10000); assert.equal(await h.value.cancelPayment(), false);
-  assert.equal(await h.value.startPayment(30000), false); assert.equal(h.value.paymentSession.acceptedAmount, 10000);
+  assert.equal(h.value.startPayment(30000), false); assert.equal(h.value.paymentSession.acceptedAmount, 10000);
   h.value.recordCashReturned(10000); assert.equal(await h.value.cancelPayment(), true);
   assert.equal(h.localStorage.map.size, 0);
 });
 test('restart preserves cash and pending body, requires recovery, and malformed storage blocks payment', async () => {
-  const h = await paymentContext(); await h.value.startPayment(30000, {}, 'card'); h.value.setCardInFlight(true);
+  const h = await paymentContext(); h.value.startPayment(30000, {}, 'card'); h.value.setCardInFlight(true);
   const requestId = randomUUID(), booking = { requestId, body: JSON.stringify({ requestId, payment: { method: 'CARD' } }) };
   h.value.savePendingBooking(booking);
   const restored = await paymentContext(h.localStorage.map.get('kiosk-payment-recovery-v1'));
   assert.equal(restored.value.paymentSession.pendingBooking.body, booking.body); assert(restored.value.paymentSession.recoveryRequired);
-  assert.equal(await restored.value.startPayment(30000), false);
-  const malformed = await paymentContext('{bad'); assert(malformed.value.storageError); assert.equal(await malformed.value.startPayment(30000), false);
+  assert.equal(restored.value.startPayment(30000), false);
+  const malformed = await paymentContext('{bad'); assert(malformed.value.storageError); assert.equal(malformed.value.startPayment(30000), false);
 });
 test('storage failure when clearing a session preserves its cash evidence and prevents completion', async () => {
-  const h = await paymentContext(); await h.value.startPayment(30000, {}, 'cash'); h.value.addBill(10000); h.localStorage.break();
+  const h = await paymentContext(); h.value.startPayment(30000, {}, 'cash'); h.value.addBill(10000); h.localStorage.break();
   assert.equal(h.value.completePayment(), false); assert.equal(h.value.paymentSession.acceptedAmount, 10000); assert(h.value.storageError);
 });
 
@@ -440,14 +307,14 @@ test('admin recovery duplicate clicks share one archive and corrupted evidence r
   assert.equal(h.value.paymentSession.isActive, false);
 });
 test('mismatched approval evidence survives restart and cannot be cleared by navigation cancellation', async () => {
-  const h = await paymentContext(); await h.value.startPayment(30000, {}, 'card'); h.value.setCardInFlight(true);
+  const h = await paymentContext(); h.value.startPayment(30000, {}, 'card'); h.value.setCardInFlight(true);
   const evidence = { expectedAmount: 30000, payment: { method: 'CARD', provider: 'TOSS_FRONT', front: { amount: 40000, paymentKey: 'test', signature: 'signed-test' } } };
   h.value.requireRecovery('Approval amount mismatch', evidence);
   const restored = await paymentContext(h.localStorage.map.get('kiosk-payment-recovery-v1'));
   assert.equal(JSON.stringify(restored.value.paymentSession.recoveryEvidence), JSON.stringify(evidence));
-  assert.equal(await restored.value.cancelPayment(), false); assert.equal(await restored.value.startPayment(30000), false);
+  assert.equal(await restored.value.cancelPayment(), false); assert.equal(restored.value.startPayment(30000), false);
 });
-async function cashScreen(amount, dispenseResult, acceptor = {}, dispenser = {}) {
+function cashScreen(amount, dispenseResult, acceptor = {}, dispenser = {}) {
   const calls = { dispense: [], cancelled: 0, complete: 0, recovery: '', returned: 0, polling: 0 };
   const paymentSession = { isActive: true, acceptedAmount: amount, acceptedBills: amount ? [amount] : [], requiredAmount: 30000, overpaymentAmount: Math.max(0, amount - 30000) };
   const payment = { paymentSession, startPayment: () => true, addBill() {}, isPaymentComplete: () => amount >= 30000,
@@ -457,34 +324,34 @@ async function cashScreen(amount, dispenseResult, acceptor = {}, dispenser = {})
     '@/contexts/payment-context': { usePayment: () => payment }, '@/components/toss-front-card-payment': { default: 'Front' },
     '@/lib/bill-acceptor-utils': { initializeDevice: async () => true, setEventCallback() {}, setConfig: async () => true, isBillAcceptorConnected: () => true,
       connectBillAcceptor: async () => true, enableAcceptance: async () => true, getBillData: async () => 0x32, getStatus: async () => 0x01, ...acceptor },
-    '@/lib/bill-dispenser-utils': { dispenseBills: async n => { calls.dispense.push(n); return dispenseResult; }, connectBillDispenser: async () => true, isBillDispenserConnected: () => true, getDispenserStatus: async () => 0x62, getCashPayoutValue: async () => 10000, ...dispenser },
+    '@/lib/bill-dispenser-utils': { dispenseBills: async n => { calls.dispense.push(n); return dispenseResult; }, connectBillDispenser: async () => true, isBillDispenserConnected: () => true, getDispenserStatus: async () => 0x62, ...dispenser },
     '@/lib/printer-utils': { printReceipt() {} },
   }, { window: {}, setTimeout: fn => { fn(); return 1; }, clearInterval() {}, setInterval() { calls.polling++; return 1; } });
   const props = { cardAmount: 30000, cashAmount: 30000, onCancel: () => calls.cancelled++, onPaymentComplete: () => calls.complete++, onUnavailable: message => calls.unavailable = message };
   const render = () => h.render(props);
-  render(); await h.button('현금 결제 30,000원').onClick(); render();
+  render(); h.button('현금 결제 30,000원').onClick(); render();
   return { ...h, calls, paymentSession, render };
 }
 for (const [amount, result] of [[10000, false], [15000, true], [5000, true]]) {
   test(`cash cancellation ${amount}/${result} preserves unresolved funds`, async () => {
-    const h = await cashScreen(amount, result); await h.button('취소').onClick();
+    const h = cashScreen(amount, result); await h.button('취소').onClick();
     assert(h.calls.recovery); assert.equal(h.calls.cancelled, 0); assert.equal(h.calls.returned, 0);
     if (amount % 10000) assert.deepEqual(h.calls.dispense, []);
   });
 }
 test('exact cash refund is verified before cancellation and records the returned amount', async () => {
-  const h = await cashScreen(10000, true); await h.button('취소').onClick();
+  const h = cashScreen(10000, true); await h.button('취소').onClick();
   assert.deepEqual(h.calls.dispense, [1]); assert.equal(h.calls.returned, 10000); assert.equal(h.calls.cancelled, 2);
 });
 test('zero cash before any acceptor enable attempt can cancel without a hardware refund', async () => {
-  const h = await cashScreen(0, false); await h.button('취소').onClick();
+  const h = cashScreen(0, false); await h.button('취소').onClick();
   assert.deepEqual(h.calls.dispense, []); assert.equal(h.calls.cancelled, 2); assert.equal(h.calls.recovery, '');
 });
 
 for (const action of ['취소', '결제수단 변경']) {
   test(`zero-cash ${action} waits for the in-flight enable acknowledgement before stopping`, async () => {
     let releaseEnable, enabling = false, stops = 0;
-    const h = await cashScreen(0, false, {
+    const h = cashScreen(0, false, {
       enableAcceptance: () => { enabling = true; return new Promise(resolve => { releaseEnable = () => { enabling = false; resolve(true); }; }); },
       // The real acceptor has one outstanding OK response slot. A stop sent
       // while enable is pending is rejected locally, not a physical refund failure.
@@ -508,7 +375,7 @@ for (const action of ['취소', '결제수단 변경']) {
 
 test('cancel during acceptor connection never enables cash acceptance after navigation', async () => {
   let releaseConnection, enables = 0;
-  const h = await cashScreen(0, false, {
+  const h = cashScreen(0, false, {
     isBillAcceptorConnected: () => false,
     connectBillAcceptor: () => new Promise(resolve => { releaseConnection = resolve; }),
     enableAcceptance: async () => { enables++; return true; },
@@ -524,7 +391,7 @@ test('cancel during acceptor connection never enables cash acceptance after navi
 
 test('confirmed zero-cash cancellation does not send a duplicate stop on unmount', async () => {
   let stops = 0;
-  const h = await cashScreen(0, false, { setConfig: async () => { stops++; return true; } });
+  const h = cashScreen(0, false, { setConfig: async () => { stops++; return true; } });
   const cleanup = h.renderEffects.at(-1)();
   await Promise.resolve();
   await h.button('취소').onClick();
@@ -536,7 +403,7 @@ test('confirmed zero-cash cancellation does not send a duplicate stop on unmount
 
 test('zero-cash cancellation still blocks when acceptor shutdown is not confirmed', async () => {
   let resets = 0;
-  const h = await cashScreen(0, false, { initializeDevice: async () => ++resets === 1 });
+  const h = cashScreen(0, false, { initializeDevice: async () => ++resets === 1 });
   h.renderEffects.at(-1)(); await new Promise(resolve => setImmediate(resolve));
   await h.button('취소').onClick();
   assert(h.calls.recovery); assert.equal(h.calls.cancelled, 0);
@@ -546,7 +413,7 @@ test('zero-cash cancellation still blocks when acceptor shutdown is not confirme
 for (const stage of ['acceptor', 'reset', 'stop', 'dispenser']) {
   test(`cash ${stage} preflight failure returns home before accepting money`, async () => {
     let enables = 0;
-    const h = await cashScreen(0, false, {
+    const h = cashScreen(0, false, {
       getStatus: async () => stage === 'acceptor' ? null : 1,
       initializeDevice: async () => stage !== 'reset',
       setConfig: async () => stage !== 'stop',
@@ -560,7 +427,7 @@ for (const stage of ['acceptor', 'reset', 'stop', 'dispenser']) {
 }
 for (const [amount, result] of [[35000, true], [50000, false]]) {
   test(`cash completion ${amount}/${result} cannot complete with unreturned change`, async () => {
-    const h = await cashScreen(amount, result); await h.callbacks[0](amount);
+    const h = cashScreen(amount, result); await h.callbacks[0](amount);
     assert(h.calls.recovery); assert.equal(h.calls.complete, 0); assert.equal(h.calls.returned, 0);
     if (amount === 35000) assert.deepEqual(h.calls.dispense, []);
   });
@@ -568,7 +435,7 @@ for (const [amount, result] of [[35000, true], [50000, false]]) {
 for (const stage of ['RESET', 'STOP']) {
   test(`exact cash payment identifies ${stage} failure without booking or refund`, async () => {
     let configCalls = 0;
-    const h = await cashScreen(30000, true, {
+    const h = cashScreen(30000, true, {
       initializeDevice: async () => stage !== 'RESET',
       setConfig: async () => { configCalls++; return false; },
     });
@@ -582,14 +449,14 @@ for (const stage of ['RESET', 'STOP']) {
 }
 
 test('successful exact change is recorded before completing cash payment', async () => {
-  const h = await cashScreen(40000, true); await h.callbacks[0](40000);
+  const h = cashScreen(40000, true); await h.callbacks[0](40000);
   assert.deepEqual(h.calls.dispense, [1]); assert.equal(h.calls.returned, 10000); assert.equal(h.calls.complete, 1);
 });
 
 for (const action of ['completion', 'cancellation']) {
   test(`cash ${action} waits for reset readiness and STOP before booking or returning money`, async () => {
     let ready, stopped, stopCalls = 0;
-    const h = await cashScreen(30000, true, {
+    const h = cashScreen(30000, true, {
       initializeDevice: () => new Promise(resolve => { ready = resolve; }),
       setConfig: () => { stopCalls++; return new Promise(resolve => { stopped = resolve; }); },
     });
@@ -605,71 +472,11 @@ for (const action of ['completion', 'cancellation']) {
   });
 }
 
-test('a real cash block shows one full-width banner outside the account grid; normal cash shows no banner', async () => {
-  const h = await onsite('shortStay', { cashAvailable: false, cardAvailable: true })
-  assert(h.visible('현재 현금 결제를 이용하실 수 없습니다.'))
-  assert.equal(h.visible('카드 · 현금'), false)
-  assert.equal(h.session.isActive, false)
-  const notice = nodes(h.tree).find(n => n.props?.className === 'kiosk-payment-notice')
-  assert(!text(notice).includes('현재 현금 결제'))
-  const content = nodes(h.tree).find(n => n.props?.className === 'kiosk-stay-type-content')
-  const banners = nodes(content).filter(n => n.props?.role === 'status' && text(n).includes('현재 현금 결제'))
-  assert.equal(banners.length, 1)
-  assert.equal(banners[0].props.className, 'kiosk-stay-status')
-  assert.equal(banners[0].props.children.type, 'p')
-  const css = fs.readFileSync(path.join(__dirname, '../app/globals.css'), 'utf8')
-  const rule = css.match(/\.kiosk-stay-status\s*\{([^}]+)\}/)[1]
-  assert.match(rule, /width:\s*100%/)
-  assert.match(rule, /display:\s*flex/)
-  const healthy = await onsite()
-  assert(healthy.visible('카드 · 현금'))
-  assert(!healthy.visible('현재 현금 결제를 이용하실 수 없습니다.'))
-})
-
-test('payment selection uses the same full-width cash block banner', () => {
-  const h = load('components/payment-screen.tsx', {
-    '@/contexts/payment-context': { usePayment: () => ({ paymentSession: {}, cashAvailable: false, cardAvailable: true }) },
-    '@/components/toss-front-card-payment': { default: 'Front' },
-    '@/lib/bill-acceptor-utils': {}, '@/lib/bill-dispenser-utils': {}, '@/lib/printer-utils': {},
-  }, { window: {} })
-  h.render({ cardAmount: 30000, cashAmount: 30000 })
-  const banner = nodes(h.tree).find(n => n.props?.role === 'status')
-  assert.equal(banner.props.className, 'kiosk-stay-status')
-  assert.equal(text(banner), '현재 현금 결제를 이용하실 수 없습니다.')
-  assert.equal(h.button('현금 결제 이용 불가').disabled, true)
-})
-
-test('native needs_attention remains visible as cash on home and payment; only the actual cash block disables it', async () => {
-  const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8')
-  for (const blocked of [false, true]) {
-    let cashAvailable
-    vm.runInNewContext(source.slice(source.indexOf("ipcMain.handle('cash:available'"), source.indexOf('const cashDiagnostics =')), {
-      ipcMain: { handle: (_name, handler) => { cashAvailable = handler } }, global: { kioskCashBlocked: blocked },
-      deviceRecovery: { hardware: { acceptor: { state: 'needs_attention' }, dispenser: { state: 'needs_attention' } } },
-    })
-    const context = await paymentContext(null, { cashAvailable,
-      tossFront: { getStatus: async () => ({ configured: true, connected: true, authenticated: true }), onStatus: () => () => {} },
-    }, { setInterval: () => 1, clearInterval() {} })
-    await new Promise(resolve => setImmediate(resolve))
-    assert.equal(context.value.cashAvailable, !blocked)
-    const home = await onsite('shortStay', context.value)
-    assert.equal(home.visible('카드 · 현금'), !blocked)
-    const screen = load('components/payment-screen.tsx', {
-      '@/contexts/payment-context': { usePayment: () => context.value },
-      '@/components/toss-front-card-payment': { default: 'Front' },
-      '@/lib/bill-acceptor-utils': {}, '@/lib/bill-dispenser-utils': {}, '@/lib/printer-utils': {},
-    }, { window: {} })
-    screen.render({ cardAmount: 30000, cashAmount: 30000 })
-    assert.equal(screen.button(blocked ? '현금 결제 이용 불가' : '현금 결제 30,000원').disabled, blocked)
-  }
-})
-
 async function onsite(stay = 'shortStay', scenario = {}) {
   let idle, responseMode = 'success', release, roomLookupFails = false, roomPayload; const posts = [], intervals = [], timers = [];
   const session = { isActive: false, acceptedAmount: 0 };
   const observed = { cancelledApprovals: 0, completed: 0 };
   const payment = { paymentSession: session, ready: true, storageError: '',
-    cashAvailable: scenario.cashAvailable ?? true, cardAvailable: scenario.cardAvailable ?? true,
     startPayment: (_amount, reservationData) => { session.isActive = true; session.reservationData = reservationData; return true; },
     cancelPayment: async () => { if (session.acceptedAmount || session.pendingBooking || session.recoveryRequired) return false; session.isActive = false; return true; },
     completePayment: () => { session.isActive = false; session.pendingBooking = undefined; session.recoveryRequired = undefined; observed.completed++; return true; },
@@ -949,7 +756,7 @@ test('existing reservation check-in 202 retains its screen and keys stay hidden 
 });
 test('inactive-looking persisted card evidence is corruption, not permission for a new sale', async () => {
   const saved = { isActive: false, acceptedAmount: 0, requiredAmount: 30000, acceptedBills: [], sessionStartTime: 0, overpaymentAmount: 0, cardInFlight: true };
-  const h = await paymentContext(JSON.stringify(saved)); assert(h.value.storageError); assert.equal(await h.value.startPayment(30000), false);
+  const h = await paymentContext(JSON.stringify(saved)); assert(h.value.storageError); assert.equal(h.value.startPayment(30000), false);
 });
 test('QR scan holds navigation and shares the synchronous duplicate guard with name lookup', async () => {
   let scanCalls = 0, release;
@@ -983,8 +790,8 @@ test('missing completion key field keeps pending evidence; explicit empty server
 });
 test('invalid price or cash-return amount cannot create or rewrite a monetary session', async () => {
   const h = await paymentContext();
-  for (const amount of [NaN, Infinity, -1, 0, 1.5]) assert.equal(await h.value.startPayment(amount), false, String(amount));
-  assert(await h.value.startPayment(30000)); h.value.addBill(10000);
+  for (const amount of [NaN, Infinity, -1, 0, 1.5]) assert.equal(h.value.startPayment(amount), false, String(amount));
+  assert(h.value.startPayment(30000)); h.value.addBill(10000);
   for (const amount of [NaN, Infinity, -10000, 0, 10001, 1.5]) {
     h.value.recordCashReturned(amount); assert.equal(h.value.paymentSession.acceptedAmount, 10000, String(amount));
   }
@@ -1023,11 +830,11 @@ test('name lookup timeout releases duplicate guard for a later retry and uses co
   await h.component('reservation-confirm').props.onCheckReservation('QA'); await h.settle(); assert.equal(calls, 2);
 });
 test('cash/card method switching before hardware enable neither completes nor refunds and keeps the current amount', async () => {
-  const h = await cashScreen(0, true);
+  const h = cashScreen(0, true);
   for (let i = 0; i < 3; i++) {
-    await h.button('결제수단 변경').onClick(); h.render(); await h.button('카드 결제 30,000원').onClick(); h.render();
+    await h.button('결제수단 변경').onClick(); h.render(); h.button('카드 결제 30,000원').onClick(); h.render();
     assert.equal(h.component('Front').props.requiredAmount, 30000);
-    h.component('Front').props.onBack(); h.render(); await h.button('현금 결제 30,000원').onClick(); h.render();
+    h.component('Front').props.onBack(); h.render(); h.button('현금 결제 30,000원').onClick(); h.render();
   }
   assert.equal(h.calls.complete, 0); assert.equal(h.calls.cancelled, 0); assert.deepEqual(h.calls.dispense, []);
 });
@@ -1040,7 +847,7 @@ for (const payload of [{}, { roomsByType: { Standard: null } }, { roomsByType: {
   });
 }
 test('cash-return validation rejects all invalid values without losing the original liability', async () => {
-  const h = await paymentContext(); await h.value.startPayment(30000); h.value.addBill(10000);
+  const h = await paymentContext(); h.value.startPayment(30000); h.value.addBill(10000);
   for (const amount of [NaN, Infinity, -10000, 0, 10001, 1.5]) {
     h.value.recordCashReturned(amount); assert.equal(h.value.paymentSession.acceptedAmount, 10000, String(amount));
   }
@@ -1052,7 +859,7 @@ for (const extra of [
 ]) {
   test('corrupted saved payment fails closed: ' + JSON.stringify(extra), async () => {
     const h = await paymentContext(JSON.stringify({ isActive: true, requiredAmount: 30000, acceptedAmount: 0, acceptedBills: [], ...extra }));
-    assert(h.value.storageError); assert.equal(await h.value.startPayment(30000), false);
+    assert(h.value.storageError); assert.equal(h.value.startPayment(30000), false);
   });
 }
 async function cancellationPanel(scenario = {}, localStorage = storage()) {
@@ -1210,7 +1017,7 @@ test('direct administrator URL gates all tabs and exiting clears the shared cred
   let password = '', requests = 0, locks = 0, exits = 0;
   const deps = { '@/contexts/admin-context': { useAdmin: () => ({ password, authenticate: async () => { requests++; return false; }, lock() { locks++; password = ''; } }) },
     '@/components/ui/tabs': {} };
-  for (const file of ['room-info', 'printer-test', 'room-type-settings', 'device-status', 'device-settings',
+  for (const file of ['room-info', 'printer-test', 'bill-acceptor-test', 'bill-dispenser-test', 'room-type-settings', 'device-status', 'device-settings',
     'pms-rate-settings', 'card-payment-cancel', 'cash-device-diagnostics', 'card-key-admin']) deps['@/components/' + file] = { default: file };
   const h = load('components/web-layout.tsx', deps);
   const props = { onChangeMode() { exits++; } };

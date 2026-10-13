@@ -128,59 +128,12 @@ class Bac2400Test(unittest.TestCase):
                     before = after = multi_frame((0x15, [0] * 4), (0x16, [0] * 4), (0x17, [0]))
                     expected = [bytes.fromhex(h) for h in ("71 8E", "73 8C 05 01 00 00 01 00 05", "71 8E")]
                 board.process_incoming(before)
-                board.advance_recovery()
                 result = board.process_incoming(after)
                 self.assertEqual(sent, expected)
                 self.assertEqual(next(m for m in result if m["type"] == "cash_board_result"),
                                  {"type": "cash_board_result", "requestId": "qa-request", "target": target,
-                                  "success": True, "verified": True, "source": "board_status", "reason": None})
+                                  "success": True, "verified": True})
                 self.assertIsNone(board.pending_payout)
-
-    def test_recovery_yields_after_only_the_outstanding_query_and_never_resets_or_moves_money(self):
-        for target, reply in [
-            ("acceptor", multi_frame((0x18, [0]*4), (0x1B, [0, 0, 0x12]))),
-            ("dispenser", multi_frame((0x15, [0]*4), (0x16, [0]*4), (0x17, [0]))),
-        ]:
-            board, sent = Bac2400("NO-REAL-COM"), []
-            board.send = lambda p: sent.append(p) or True
-            board.recover(target, "payment-start")
-            self.assertEqual(board.yield_recovery("other-request"), [])
-            self.assertNotIn("yield", board.pending_recovery)
-            board.yield_recovery("payment-start")
-            self.assertIsNotNone(board.pending_recovery, "Do not release before the outstanding response")
-            result = next(m for m in board.process_incoming(reply) if m["type"] == "cash_board_result")
-            self.assertEqual((result["success"], result["source"], result["reason"]), (False, "adapter", "recovery_yielded"))
-            self.assertEqual(len(sent), 1)
-            self.assertIsNone(board.pending_recovery)
-            self.assertIsNone(board.pending_payout)
-
-    def test_recovery_reasons_distinguish_adapter_rejections_from_board_status(self):
-        self.board.payout_uncertain = True
-        blocked = self.board.recover("dispenser", "uncertain")[0]
-        self.assertEqual((blocked["source"], blocked["reason"]), ("adapter", "payout_uncertain"))
-        self.assertTrue(self.board.payout_uncertain, "Uncertain payouts must never be auto-cleared")
-        board = Bac2400("NO-REAL-COM")
-        board.send = lambda p: True
-        board.recover("dispenser", "hardware-error")
-        reply = multi_frame((0x15, [0]*4), (0x16, [0, 0, 3, 0]), (0x17, [0]))
-        failed = next(m for m in board.process_incoming(reply) if m["type"] == "cash_board_result")
-        self.assertEqual((failed["source"], failed["reason"]), ("board_status", "dispenser_board_error"))
-        self.board.payout_uncertain = False
-        self.board.bill_codes.append(0x0A)
-        failed = self.board.handle_acceptor_command(legacy_packet(0x52, 0x53, 0x54))[0]
-        self.assertEqual((failed["source"], failed["reason"]), ("adapter", "queued_bills"))
-        self.assertEqual(list(self.board.bill_codes), [0x0A])
-
-    def test_yield_between_reset_and_verification_stops_before_the_next_serial_command(self):
-        self.board.recover("dispenser", "yield-after-reset")
-        ready = multi_frame((0x15, [0]*4), (0x16, [0]*4), (0x17, [0]))
-        self.board.process_incoming(ready)
-        self.assertEqual(len(self.sent), 2, "Only the query and single reset have been sent")
-        self.board.yield_recovery("yield-after-reset")
-        self.assertEqual(self.board.advance_recovery(), [])
-        self.assertEqual(len(self.sent), 2, "Verification query yields to payment")
-        result = next(m for m in self.board.process_incoming(ready) if m["type"] == "cash_board_result")
-        self.assertEqual(result["reason"], "recovery_yielded")
 
     def test_recovery_refuses_processing_unknown_partial_and_money_evidence(self):
         for target, response in [

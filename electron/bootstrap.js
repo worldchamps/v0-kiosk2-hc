@@ -21,7 +21,6 @@ if (!app.isPackaged) {
     Object.assign(process.env, config.env, {
       NODE_ENV: "production", KIOSK_PROPERTY_ID: config.property, KIOSK_DEVICE_ID: config.deviceId,
       NEXT_PUBLIC_KIOSK_PROPERTY_ID: config.property, OVERLAY_MODE: String(overlayMode),
-      CARD_DISPENSER_ENABLED: String(config.env?.CARD_DISPENSER_ENABLED === 'true'),
     })
     app.setLoginItemSettings({ openAtLogin: true, path: app.getPath("exe") })
     let heartbeat = { safe: false, at: 0, lastActivity: Date.now() }, locked = false, renderer = null, ack = null

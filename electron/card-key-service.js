@@ -93,25 +93,20 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, isAutoIdl
     isBusy() { return busy },
     status() { return health },
     needsRecovery() { initialize(); return unresolved || health.state === 'needs_attention' || health.state === 'recovering' },
-    async autoRecover(canContinue = () => true) {
+    async autoRecover() {
       initialize()
       if (!enabled(env)) return { success: false, reason: 'disabled', state: 'disabled' }
       if (busy || !isAutoIdle()) return { success: false, reason: 'busy', state: health.state }
       busy = true; setBusy(true)
       const autoRecovery = { attempts: health.autoRecovery.attempts + 1, lastAt: new Date().toISOString(), lastResult: null }
-      const previousHealth = { state: health.state, reason: health.reason }
       publish({ state: 'recovering', autoRecovery })
       let result
-      const next = async command => {
-        if (!canContinue()) throw Error('recovery_yielded')
-        return hardware(command, {}, null)
-      }
       try {
-        result = await next('status')
-        if (result.success && !result.moving && result.sensors) result = await next('capture')
+        result = await hardware('status', {}, null)
+        if (result.success && !result.moving && result.sensors) result = await hardware('capture', {}, null)
         if (result.success && !result.moving && !result.sensors && result.reason && !result.empty && !result.captureFull && !result.hopperFull)
-          result = await next('reset')
-        if (result.success) result = await next('status')
+          result = await hardware('reset', {}, null)
+        if (result.success) result = await hardware('status', {}, null)
         const recovered = result.success && !result.reason && !result.sensors && !result.moving && !result.empty && !result.captureFull && !result.hopperFull
         if (recovered) {
           const active = store.read('active-check-in')
@@ -125,11 +120,7 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, isAutoIdl
         observe({ ...result, success: recovered, reason: recovered ? null : result.reason || 'card_present' }, true)
         publish({ autoRecovery: { ...autoRecovery, lastResult: recovered ? 'recovered' : health.reason } })
         return { success: recovered, state: health.state, reason: health.reason }
-      } catch (error) {
-        if (error.message === 'recovery_yielded') {
-          publish({ ...previousHealth, autoRecovery: { ...autoRecovery, lastResult: 'recovery_yielded' } })
-          return { success: false, reason: 'recovery_yielded' }
-        }
+      } catch {
         observe({ success: false, reason: 'card_operation_failed' }, true)
         publish({ autoRecovery: { ...autoRecovery, lastResult: health.reason } })
         return { success: false, state: health.state, reason: health.reason }

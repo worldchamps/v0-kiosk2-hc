@@ -1,11 +1,12 @@
 param([string]$PrinterName = "", [switch]$CheckOnly)
 
-$ErrorActionPreference = "Stop"
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$OutputEncoding = [Console]::OutputEncoding
-Add-Type -TypeDefinition @'
+# Share Korean GDI drawing only. SAM4S's PrintDocument/driver path remains separate.
+. (Join-Path $PSScriptRoot "sam4s-print.ps1") -FunctionsOnly -CheckOnly:$CheckOnly -PrinterName $PrinterName
+Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Drawing;
 using System.Runtime.InteropServices;
 public static class WoosimRaw {
   [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -25,6 +26,31 @@ public static class WoosimRaw {
   [DllImport("winspool.drv", SetLastError=true)] static extern bool AbortPrinter(IntPtr printer);
   [DllImport("winspool.drv", SetLastError=true)] static extern bool ClosePrinter(IntPtr printer);
   static void Check(bool ok) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
+  public static int BlackPixels;
+  public static byte[] Build(Bitmap image, int feedDots) {
+    if (image.Width != 576 || image.Height < 1 || image.Height > 8000 || feedDots < 0 || feedDots > 240)
+      throw new ArgumentException("Invalid Woosim receipt dimensions/feed");
+    var job = new List<byte>();
+    job.AddRange(new byte[] {0x1b, 0x40, 0x1b, 0x33, 24}); // Init; 24-dot line spacing.
+    BlackPixels = 0;
+    for (int y = 0; y < image.Height; y += 24) {
+      job.AddRange(new byte[] {0x1b, 0x2a, 33, 0x40, 0x02}); // ESC *: 576 columns, 24-dot double density.
+      for (int x = 0; x < 576; x++) for (int octet = 0; octet < 3; octet++) {
+        byte value = 0;
+        for (int bit = 0; bit < 8; bit++) {
+          int row = y + octet * 8 + bit;
+          if (row < image.Height && image.GetPixel(x, row).R < 128) {
+            value |= (byte)(0x80 >> bit); BlackPixels++;
+          }
+        }
+        job.Add(value);
+      }
+      job.Add(0x0a);
+    }
+    if (feedDots > 0) job.AddRange(new byte[] {0x1b, 0x4a, (byte)feedDots});
+    job.AddRange(new byte[] {0x1d, 0x56, 0x00}); // Full cut once; never a separate auto-retried job.
+    return job.ToArray();
+  }
   public static void Send(string name, byte[] bytes) {
     IntPtr printer; Check(OpenPrinter(name, out printer, IntPtr.Zero));
     bool started = false, completed = false;
@@ -42,98 +68,59 @@ public static class WoosimRaw {
 }
 '@
 
-
-# Woosim Command Manual v2.6 pp.11-12: ESC t 255 selects the installed DBCS font.
-# https://woosim.com/upload/catalog_20151030173214_949835.pdf
-# Korean firmware must have the KS C 5601 font installed. Never silently replace glyphs.
-$encoding = [System.Text.Encoding]::GetEncoding(949, [System.Text.EncoderFallback]::ExceptionFallback, [System.Text.DecoderFallback]::ExceptionFallback)
-$job = [System.Collections.Generic.List[byte]]::new()
-$job.AddRange([byte[]]@(0x1b, 0x40, 0x1b, 0x74, 255, 0x1b, 0x21, 0))
-
-function Add-Feed([double]$Mm) {
-  if ([double]::IsNaN($Mm) -or [double]::IsInfinity($Mm) -or $Mm -lt 0 -or $Mm -gt 30) { throw "Invalid receipt spacing." }
-  $dots = [int][Math]::Round($Mm * 8)
-  if ($dots -gt 0) { $job.AddRange([byte[]]@(0x1b, 0x4a, $dots)) }
-}
-
-function Wrap-Text([string]$Text, [int]$Columns) {
-  if ($Text -match '[\x00-\x09\x0b-\x1f\x7f]') { throw "Control character in receipt text." }
-  $line = ""; $width = 0
-  foreach ($character in $Text.ToCharArray()) {
-    $count = $encoding.GetByteCount([string]$character)
-    if ($width + $count -gt $Columns) { $line; $line = ""; $width = 0 }
-    $line += $character; $width += $count
-  }
-  $line
-}
-
-function Add-Line([string]$Text, [int]$Align, [int]$Scale, [bool]$Bold, [bool]$Underline) {
-  # ESC a / E / - / 3, GS ! apply to the native text; 24-dot Korean and 12-dot ASCII.
-  $job.AddRange([byte[]]@(0x1b, 0x61, $Align, 0x1b, 0x45, [int]$Bold, 0x1b, 0x2d, [int]$Underline,
-    0x1d, 0x21, (($Scale-1)*17), 0x1b, 0x33, (24*$Scale+4)))
-  $job.AddRange($encoding.GetBytes($Text))
-  $job.Add(10)
-}
-
-$payload = if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd().Trim() } else { "" }
-if ($payload) {
-  $parsed = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload)) | ConvertFrom-Json
-  $commands = @($parsed | ForEach-Object { $_ })
-} elseif ($CheckOnly) {
+if ($CheckOnly) {
   $commands = @(
     [pscustomobject]@{text = ([string][char]0xD55C) + ([string][char]0xAE00) + " B101"; size = 22; bold = $true; align = "center"},
     [pscustomobject]@{kind = "columns"; left = "ROOM"; right = "B 101"; size = 11}
   )
-} else { throw "Receipt payload is empty." }
-if ($commands.Count -eq 0 -or $commands.Count -gt 200) { throw "Invalid receipt command count." }
-Add-Feed 4
-foreach ($line in $commands) {
-  if ($null -ne $line.gapBefore) { Add-Feed ([double]$line.gapBefore) }
-  if ($line.kind -eq "separator") {
-    Add-Line ("-" * 48) 0 1 $false $false
-  } else {
-    $size = if ($null -eq $line.size) { 10.5 } else { [double]$line.size }
-    if ([double]::IsNaN($size) -or [double]::IsInfinity($size) -or $size -lt 1 -or $size -gt 40) { throw "Invalid text size." }
-    $scale = [int][Math]::Max(1, [Math]::Min(4, [Math]::Round($size * 203 / 72 / 24)))
-    $columns = [int][Math]::Floor(48 / $scale)
-    $align = if ($line.align -eq "center") { 1 } elseif ($line.align -eq "right") { 2 } else { 0 }
-    if ($line.kind -eq "columns") {
-      $left = [string]$line.left; $right = [string]$line.right
-      $leftWidth = $encoding.GetByteCount($left)
-      if ($leftWidth -ge $columns - 2 -or $left -match '[\x00-\x1f\x7f]' -or $right -match '[\x00-\x1f\x7f]') { throw "Invalid receipt columns." }
-      $first = $true
-      foreach ($part in @(Wrap-Text $right ($columns-$leftWidth-2))) {
-        $label = if ($first) { $left } else { "" }
-        $padding = $columns-$encoding.GetByteCount($label)-$encoding.GetByteCount($part)
-        Add-Line ($label + (" " * $padding) + $part) 0 $scale ([bool]$line.bold) ([bool]$line.underline)
-        $first = $false
-      }
-    } else {
-      foreach ($paragraph in ([string]$line.text).Replace("`r`n", "`n").Split([char]10)) {
-        foreach ($part in @(Wrap-Text $paragraph $columns)) { Add-Line $part $align $scale ([bool]$line.bold) ([bool]$line.underline) }
-      }
-    }
-  }
-  if ($null -ne $line.gapAfter) { Add-Feed ([double]$line.gapAfter) }
+} else {
+  if ([string]::IsNullOrWhiteSpace($PrinterName)) { throw "PrinterName is required." }
+  $commands = @(Convert-ReceiptCommands ([Console]::In.ReadToEnd().Trim()))
+  if ($commands.Count -eq 0) { throw "Receipt commands are empty." }
 }
 $feedMm = if ([string]::IsNullOrWhiteSpace($env:WOOSIM_CUT_FEED_MM)) { 12.0 } else {
   [double]::Parse($env:WOOSIM_CUT_FEED_MM, [System.Globalization.CultureInfo]::InvariantCulture)
 }
-Add-Feed $feedMm
-$job.AddRange([byte[]]@(0x1d, 0x56, 0)) # GS V 0: one full cut in the same RAW job, manual p.60.
-$bytes = $job.ToArray()
-if ($CheckOnly) {
-  $korean = $encoding.GetBytes(([string][char]0xD55C)+([string][char]0xAE00))
-  if ([BitConverter]::ToString($korean) -ne 'C7-D1-B1-DB') { throw "CP949 encoding failed." }
-  $cuts = 0
-  for ($i=0; $i -lt $bytes.Length-2; $i++) {
-    if ($bytes[$i] -eq 29 -and $bytes[$i+1] -eq 86 -and $bytes[$i+2] -eq 0) { $cuts++ }
+if ([double]::IsNaN($feedMm) -or $feedMm -lt 0 -or $feedMm -gt 30) { throw "WOOSIM_CUT_FEED_MM must be 0..30." }
+# Measure content first; never use a driver's default A4 page length.
+$measure = [System.Drawing.Bitmap]::new(576, 1)
+$measure.SetResolution(203, 203)
+$graphics = [System.Drawing.Graphics]::FromImage($measure)
+try { $heightMm = Draw-Receipt $graphics $commands 0 0 64 }
+finally { $graphics.Dispose(); $measure.Dispose() }
+$height = [int][Math]::Ceiling(($heightMm + 2) * 203 / 25.4)
+if ($height -lt 1 -or $height -gt 8000) { throw "Woosim receipt is too long." }
+$bitmap = [System.Drawing.Bitmap]::new(576, $height)
+$bitmap.SetResolution(203, 203)
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+try {
+  $graphics.Clear([System.Drawing.Color]::White)
+  $null = Draw-Receipt $graphics $commands 0 0 64
+  $job = [WoosimRaw]::Build($bitmap, [int][Math]::Round($feedMm * 203 / 25.4))
+  if ($CheckOnly) {
+    $bands = [int][Math]::Ceiling($height / 24.0)
+    $index = 5
+    for ($band = 0; $band -lt $bands; $band++) {
+      if ($job[$index] -ne 0x1b -or $job[$index+1] -ne 0x2a -or $job[$index+2] -ne 33 -or
+          $job[$index+3] -ne 0x40 -or $job[$index+4] -ne 2 -or $job[$index+1733] -ne 10) { throw "Invalid image band." }
+      $index += 1734
+    }
+    if ($feedMm -gt 0) { $index += 3 }
+    if ($job.Length -ne $index + 3 -or $job[$index] -ne 0x1d -or $job[$index+1] -ne 0x56 -or $job[$index+2] -ne 0 -or
+        [WoosimRaw]::BlackPixels -lt 100) { throw "Blank image or missing single cut." }
+    # Exercise orientation, band boundaries and white padding with known pixels.
+    $tiny = [System.Drawing.Bitmap]::new(576, 25)
+    $tinyGraphics = [System.Drawing.Graphics]::FromImage($tiny)
+    try {
+      $tinyGraphics.Clear([System.Drawing.Color]::White)
+      foreach ($row in @(0, 7, 8, 23, 24)) { $tiny.SetPixel(0, $row, [System.Drawing.Color]::Black) }
+      $known = [WoosimRaw]::Build($tiny, 0)
+      if ($known[10] -ne 129 -or $known[11] -ne 128 -or $known[12] -ne 1 -or
+          $known[1744] -ne 128 -or $known[1745] -ne 0 -or $known.Length -ne 3476) { throw "Bit-image orientation failed." }
+    } finally { $tinyGraphics.Dispose(); $tiny.Dispose() }
+    [Console]::Out.WriteLine("WOOSIM RAW self-check passed: bands=$bands bytes=$($job.Length) cut=1 (no printer opened)")
+  } else {
+    [WoosimRaw]::Send($PrinterName, $job)
+    [Console]::Out.WriteLine("WOOSIM image + single cut queued as one RAW job (physical output unverified)")
   }
-  if ($cuts -ne 1) { throw "Receipt must cut exactly once." }
-  [Console]::Out.WriteLine("WOOSIM RAW self-check passed: bytes=$($bytes.Length) cut=1 cp949=C7-D1-B1-DB (no printer opened)")
-  [Console]::Out.WriteLine([Convert]::ToBase64String($bytes))
-} else {
-  if ([string]::IsNullOrWhiteSpace($PrinterName)) { throw "PrinterName is required." }
-  [WoosimRaw]::Send($PrinterName, $bytes)
-  [Console]::Out.WriteLine("WOOSIM CP949 text + single cut queued as one RAW job (physical output unverified)")
-}
+} finally { $graphics.Dispose(); $bitmap.Dispose() }

@@ -80,20 +80,6 @@ test('persistent trace keeps protocol only, rotates, and retains the latest fail
   for (const name of fs.readdirSync(h.dir)) assert.doesNotMatch(fs.readFileSync(path.join(h.dir, name), 'utf8'), /secret|private-guest|password/)
 })
 
-test('adapter rejection codes reach cash-device trace without request IDs or personal fields', async t => {
-  const h = fixture(t), stream = new PassThrough()
-  h.trace.capture(stream)
-  stream.end('2026-10-13 19:10:00,000 - BAC2400 - WARNING - Cash adapter outcome: source=adapter target=acceptor reason=payout_uncertain\n')
-  await new Promise(resolve => setImmediate(resolve))
-  h.trace.write('bridge', { event: 'result', result: 'ng', source: 'board_status', target: 'dispenser',
-    reason: 'dispenser_board_error', requestId: 'private-request', maskedCardNumber: 'private-card' })
-  const rows = h.trace.read().text.split('\n').map(JSON.parse)
-  assert.equal(rows[0].reason, 'payout_uncertain')
-  assert.equal(rows[0].source, 'adapter')
-  assert.equal(rows[1].source, 'board_status')
-  assert.doesNotMatch(h.trace.read().text, /private|requestId|CardNumber/)
-})
-
 test('hardware capture records real serial bytes and fixed error codes, excludes unrelated output', async t => {
   const h = fixture(t), stream = new PassThrough()
   h.trace.capture(stream)
@@ -135,22 +121,4 @@ test('logging storage failure does not throw and blocks a diagnostic that cannot
   assert.equal((await service.run({}, { command: 'stop', confirmed: true })).success, false)
   assert.equal(h.sent.length, 0)
   assert.equal(fs.readFileSync(file, 'utf8'), 'keep')
-})
-
-test('MULTI3400 TX RX, board version and failure source survive the cash trace allowlist', async t => {
-  const h = fixture(t), stream = new PassThrough()
-  h.trace.capture(stream)
-  stream.end('2026-10-13 21:00:00,000 - SerialManager - INFO - [MULTI3400] Sent: FE0D1100000000000000000000E2\n' +
-    '2026-10-13 21:00:00,001 - SerialManager - INFO - [MULTI3400] Received: FE1213471100000000000100000000000012BA\n' +
-    '2026-10-13 21:00:00,002 - MULTI3400 - WARNING - Cash adapter outcome: source=board_ng target=dispenser reason=board_nak\n')
-  h.trace.write('bridge', { event: 'board_info', protocol: 'multi3400-fe', version: '0x12', versionVerified: true,
-    responseFields: { '0x13': '47110000000000010000000000000012', secret: 'guest' } })
-  await new Promise(resolve => setImmediate(resolve))
-  const rows = h.trace.read().text.split('\n').map(JSON.parse)
-  assert.equal(rows.find(row => row.event === 'board_info').version, '0x12')
-  assert.equal(rows.find(row => row.event === 'board_info').versionVerified, true)
-  assert.equal(rows.find(row => row.event === 'send').bytes.length, 14)
-  assert.equal(rows.find(row => row.event === 'receive').bytes.length, 19)
-  assert.equal(rows.find(row => row.reason === 'board_nak').source, 'board_ng')
-  assert.doesNotMatch(h.trace.read().text, /guest|secret/)
 })

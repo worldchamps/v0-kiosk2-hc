@@ -1,7 +1,6 @@
 const { app, BrowserWindow, ipcMain, screen } = require("electron")
 const fs = require("node:fs")
 const path = require("path")
-const { attachRendererRecovery } = require("./renderer-recovery")
 
 let overlayButton = null
 let kioskPopup = null
@@ -204,7 +203,6 @@ function createKioskPopup() {
   })
 
   const startUrl = "http://localhost:3000?mode=kiosk&popup=true&direct=reservationConfirm"
-  attachRendererRecovery(kioskPopup, { startUrl, onFault: code => logPopup(`[UI_RECOVERY] ${code}`) })
 
   logPopup(`[OVERLAY_POPUP] loading ${startUrl}`)
   kioskPopup.webContents.on("did-finish-load", () => logPopup("[OVERLAY_POPUP] page loaded"))

@@ -164,8 +164,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
   const [reservationData, setReservationData] = useState<any>(null)
   const [roomsError, setRoomsError] = useState("")
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-  const { paymentSession, startPayment, completePayment, cancelPayment, ready, storageError, requireRecovery, savePendingBooking,
-    cashAvailable = true, cardAvailable = true } = usePayment()
+  const { paymentSession, startPayment, completePayment, cancelPayment, ready, storageError, requireRecovery, savePendingBooking } = usePayment()
   const submittingRef = useRef(false)
   const requestIdRef = useRef("")
   const [bookingError, setBookingError] = useState("")
@@ -348,14 +347,8 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
     }
 
     requestIdRef.current = window.crypto.randomUUID()
-    checkingCardRef.current = true; setCheckingCard(true)
-    try {
-      if (!await startPayment(roomRates?.cash || roomRates?.card || 0, reservationInfo)) {
-        cardPreflightFailure(new Error("장비를 준비하고 있습니다. 잠시 후 다시 시도해주세요.")); return
-      }
-      if (!mountedRef.current) { await cancelPayment(); return }
-      setStep("payment")
-    } finally { checkingCardRef.current = false; setCheckingCard(false) }
+    if (startPayment(roomRates?.cash || roomRates?.card || 0, reservationInfo) === false) return
+    setStep("payment")
   }
 
   const handleRoomSelect = (room: AvailableRoom) => {
@@ -401,14 +394,8 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
     }
 
     requestIdRef.current = window.crypto.randomUUID()
-    checkingCardRef.current = true; setCheckingCard(true)
-    try {
-      if (!await startPayment(roomRates?.cash || roomRates?.card || 0, reservationInfo)) {
-        cardPreflightFailure(new Error("장비를 준비하고 있습니다. 잠시 후 다시 시도해주세요.")); return
-      }
-      if (!mountedRef.current) { await cancelPayment(); return }
-      setStep("payment")
-    } finally { checkingCardRef.current = false; setCheckingCard(false) }
+    if (startPayment(roomRates?.cash || roomRates?.card || 0, reservationInfo) === false) return
+    setStep("payment")
   }
 
   const submitPendingBooking = async (booking: PendingBooking, queryOnly = false) => {
@@ -533,7 +520,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
             <CreditCard aria-hidden="true" />
             <span>
               <small>결제 방법</small>
-              <strong>{[cardAvailable && "카드", cashAvailable && "현금"].filter(Boolean).join(" · ") || "현재 이용 불가"}</strong>
+              <strong>카드 · 현금</strong>
             </span>
           </div>
         </header>
@@ -582,7 +569,6 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
         </nav>
 
         <div className="kiosk-stay-type-content">
-          {!cashAvailable && <div className="kiosk-stay-status" role="status"><p>현재 현금 결제를 이용하실 수 없습니다.</p></div>}
           {paymentNotice && <div className="kiosk-stay-status" role="alert"><p>{paymentNotice}</p></div>}
           {hasPaymentProblem && <div className="kiosk-stay-status" role="alert">
             <div>

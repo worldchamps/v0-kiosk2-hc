@@ -10,7 +10,6 @@ import websockets
 
 from acceptor import OnePlusAcceptor
 from bac2400 import Bac2400
-from multi3400 import Multi3400
 from dispenser import OnePlusDispenser
 from printer import BixolonPrinter
 from card_dispenser import CardDispenser, card_enabled
@@ -37,7 +36,6 @@ def load_local_hardware_env():
     wanted = {
         "KIOSK_PROPERTY_ID", "KIOSK_PROPERTY", "NEXT_PUBLIC_KIOSK_PROPERTY_ID",
         "BAC2400_PORT", "BOARD3400_PORT", "PRINTER_PORT", "DISPENSER_PORT", "ACCEPTOR_PORT",
-        "MULTI3400_BD1_VALUE",
         "KIOSK_BUILDING", "CARD_DISPENSER_ENABLED", "CARD_DISPENSER_PORT", "CARD_DISPENSER_ADDRESS",
     }
     try:
@@ -62,14 +60,13 @@ PROPERTY_ID = (
     or "property3"
 ).lower()
 USE_WOOSIM = PROPERTY_ID == "property3" and os.environ.get("KIOSK_BUILDING") == "B"
-USE_MULTI3400 = USE_WOOSIM
-USE_BAC2400 = PROPERTY_ID == "property4"
+USE_BAC2400 = PROPERTY_ID == "property4" or USE_WOOSIM
 
-cash_port = os.environ.get("BAC2400_PORT") or os.environ.get("BOARD3400_PORT") or "COM5"
-bac2400 = Multi3400(cash_port, int(os.environ.get("MULTI3400_BD1_VALUE", "10000"))) if USE_MULTI3400 else \
-    Bac2400(cash_port) if USE_BAC2400 else None
-dispenser = None if bac2400 else OnePlusDispenser(DISPENSER_PORT)
-acceptor = None if bac2400 else OnePlusAcceptor(ACCEPTOR_PORT)
+bac2400 = Bac2400(
+    os.environ.get("BAC2400_PORT") or os.environ.get("BOARD3400_PORT") or "COM5"
+) if USE_BAC2400 else None
+dispenser = None if USE_BAC2400 else OnePlusDispenser(DISPENSER_PORT)
+acceptor = None if USE_BAC2400 else OnePlusAcceptor(ACCEPTOR_PORT)
 printer = None if USE_BAC2400 or USE_WOOSIM else BixolonPrinter(PRINTER_PORT, baud_rate=115200)
 
 # Only Electron creates this per-launch secret. Card contents are never broadcast.
@@ -158,11 +155,7 @@ def handle_bac2400_message(message):
     command_type = message.get("type")
     if command_type == "cash_board_recover":
         return bac2400.recover(message.get("target"), message.get("requestId"))
-    if command_type == "cash_board_yield":
-        return bac2400.yield_recovery(message.get("requestId"))
     if command_type == "raw_acceptor":
-        if USE_MULTI3400 and "requiredAmount" in message and not bac2400.set_payment_amount(message["requiredAmount"]):
-            return [bac2400._acceptor_ng("invalid_payment_amount")]
         return bac2400.handle_acceptor_command(bytes(message.get("data", [])))
     if command_type == "raw_dispenser":
         return bac2400.handle_dispenser_command(bytes(message.get("data", [])))
@@ -192,9 +185,7 @@ async def poll_bac2400_payout():
     while True:
         for response in bac2400.expire_operations():
             await broadcast(response)
-        for response in bac2400.advance_recovery():
-            await broadcast(response)
-        if not USE_MULTI3400 and bac2400.payout_in_progress:
+        if bac2400.payout_in_progress:
             bac2400.query_dispenser()
         await asyncio.sleep(0.25)
 
@@ -302,8 +293,8 @@ async def main():
         card_dispenser.connect()
 
     if bac2400:
-        logger.info("%s building=%s: using %s adapter on %s",
-                    PROPERTY_ID, os.environ.get("KIOSK_BUILDING", ""), bac2400.name, bac2400.port)
+        logger.info("%s building=%s: using BAC-2400/3400 adapter (BV1/BD1) on %s; firmware unverified",
+                    PROPERTY_ID, os.environ.get("KIOSK_BUILDING", ""), bac2400.port)
         bac2400.connect()
         bac2400.start(bac2400_callback)
         asyncio.create_task(poll_bac2400_payout())

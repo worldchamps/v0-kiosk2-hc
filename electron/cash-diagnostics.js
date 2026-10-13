@@ -20,18 +20,12 @@ function createCashTrace(directory, maxBytes = 5 * 1024 * 1024) {
     if (validBytes(input.response)) row.response = input.response
     if (input.event === 'board_info') {
       row.version = null; row.versionVerified = false
-      if (['bac2400-tlv', 'unsupported-fe', 'multi3400-fe'].includes(input.protocol)) row.protocol = input.protocol
-      if (input.protocol === 'multi3400-fe' && input.versionVerified === true && /^0x[A-F0-9]{2}$/.test(input.version)) {
-        row.version = input.version; row.versionVerified = true
-      }
-      row.responseFields = Object.fromEntries((input.protocol === 'multi3400-fe' ? ['0x13'] : ['0x14', '0x1B']).filter(key =>
+      if (['bac2400-tlv', 'unsupported-fe'].includes(input.protocol)) row.protocol = input.protocol
+      row.responseFields = Object.fromEntries(['0x14', '0x1B'].filter(key =>
         typeof input.responseFields?.[key] === 'string' && /^(?:[A-F0-9]{2}){0,64}$/.test(input.responseFields[key]))
         .map(key => [key, input.responseFields[key]]))
     }
     if (['ok', 'ng', 'timeout', 'late_ok', 'late_ng', 'send_failed', 'busy', 'unavailable'].includes(input.result)) row.result = input.result
-    if (['adapter', 'board_status', 'board_ng'].includes(input.source)) row.source = input.source
-    if (['acceptor', 'dispenser'].includes(input.target)) row.target = input.target
-    if (typeof input.reason === 'string' && /^[a-z][a-z0-9_]{0,79}$/.test(input.reason)) row.reason = input.reason
     if (Number.isFinite(input.elapsedMs)) row.elapsedMs = Math.max(0, Math.min(60000, input.elapsedMs))
     if (Number.isFinite(input.sentAt)) row.sentAt = input.sentAt
     if (typeof input.serialAt === 'string' && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3}$/.test(input.serialAt)) row.serialAt = input.serialAt
@@ -64,17 +58,12 @@ function createCashTrace(directory, maxBytes = 5 * 1024 * 1024) {
     if (!stream) return
     const lines = readline.createInterface({ input: stream })
     lines.on('line', line => {
-      const outcome = line.match(/(?:BAC2400|MULTI3400) - WARNING - Cash adapter outcome: source=(adapter|board_status|board_ng) target=(acceptor|dispenser) reason=([a-z][a-z0-9_]{0,79})$/)
-      if (outcome) {
-        write('serial', { event: 'result', result: 'ng', source: outcome[1], target: outcome[2], reason: outcome[3] })
-        return
-      }
-      const bytes = line.match(/SerialManager - INFO - \[(?:Acceptor|BAC2400|MULTI3400)\] (Sent|Received): ([A-F0-9]{2,1024})$/)
+      const bytes = line.match(/SerialManager - INFO - \[(?:Acceptor|BAC2400)\] (Sent|Received): ([A-F0-9]{2,1024})$/)
       if (bytes) {
         write('serial', { event: bytes[1] === 'Sent' ? 'send' : 'receive', bytes: Array.from(Buffer.from(bytes[2], 'hex')), serialAt: line.slice(0, 23) })
         return
       }
-      const event = line.includes('SerialManager -') && /\[(?:Acceptor|BAC2400|MULTI3400)\]/.test(line)
+      const event = line.includes('SerialManager -') && /\[(?:Acceptor|BAC2400)\]/.test(line)
         ? line.includes('Read error:') ? 'read_error' : line.includes('Write error:') || line.includes('Incomplete serial write') ? 'write_error'
           : line.includes('Failed to connect') ? 'connect_error' : line.includes('Attempting to reconnect') ? 'disconnected'
             : line.includes('Connected to') ? 'connected' : ''

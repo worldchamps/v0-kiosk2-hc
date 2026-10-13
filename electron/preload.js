@@ -47,8 +47,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getPropertyId: () => ipcRenderer.invoke("get-property-id"),
   getOverlayMode: () => ipcRenderer.invoke("get-overlay-mode"),
   paymentRecovery: {
-    waitForDeviceRecovery: () => ipcRenderer.invoke('payment-recovery:wait-for-device'),
-    setDeviceRecoveryBlocked: blocked => ipcRenderer.sendSync('payment-recovery:device-blocked', blocked),
     onOperationsRequest: callback => {
       const listener = async (_event, request) => {
         let result
@@ -96,7 +94,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getHardwareStatus: () => ipcRenderer.invoke("get-hardware-status"),
   cashAvailable: () => ipcRenderer.invoke('cash:available'),
   reportDeviceFault: key => ipcRenderer.send('device-recovery:fault', key),
-  reportDeviceReady: key => ipcRenderer.send('device-recovery:ready', key),
   cashDiagnostics: {
     read: password => ipcRenderer.invoke('cash-diagnostics:read', password),
     run: input => ipcRenderer.invoke('cash-diagnostics:run', input),
@@ -106,7 +103,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     read: password => ipcRenderer.invoke("device-settings:read", password),
     save: input => ipcRenderer.invoke("device-settings:save", input),
   },
-  sendToBillAcceptor: (command, requiredAmount) => ipcRenderer.invoke("send-to-bill-acceptor", command, requiredAmount),
+  sendToBillAcceptor: (command) => ipcRenderer.invoke("send-to-bill-acceptor", command),
 
   // 프린터 (Bixolon)
   printToBixolon: (text, options = {}) => ipcRenderer.invoke("print-to-bixolon", text, options),
