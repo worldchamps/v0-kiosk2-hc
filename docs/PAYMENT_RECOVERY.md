@@ -7,6 +7,7 @@
 - 진행 중인 결제·예약·카드 발급이 없어야 하며, 기존 복구 절차로 지폐 투입구 정지와 원본 암호화 보관·재읽기를 확인한 뒤 해당 결제 저장 키만 제거하고 화면을 다시 연다. 환불·재결제·예약 생성·키 배출은 실행하지 않는다.
 - PMS의 과거 **현금·잔돈 확인**은 확인 이력을 저장한다. 현재 장비 잠금 해제와는 별도이며 접수·장비 완료·실패·응답 없는 만료를 구분한다. 이전 앱은 이 기능의 상태를 보고하지 않으므로 업데이트가 필요하다.
 - 같은 `kiosk_operations/commands/{deviceId}` 슬롯에 `pms-recovery-v1:`로 서명한 `reset_device`를 보낼 수 있다. 필드 순서는 `id,action,device,deviceId,property,building,createdAt,expiresAt`이며 유효시간은 정확히 2분이다. `device`는 장비 키, `all`, `hardwareServer` 중 하나다. 거래·장비 명령 중에는 기다리며 만료 시 `failed/busy`로 응답한다. 동일 ID는 재실행하지 않는다.
+- Firebase에서 읽은 명령은 추가·누락 필드를 거부하고 PMS 서명 순서로 재구성하여 검증한다. `archive_payment` 순서는 `id,action,deviceId,property,building,fingerprint,confirmed,createdAt,expiresAt`이며, `reset_device`도 저장소의 키 순서에 의존하지 않는다.
 - 장비 서버가 30초 이상 응답하지 않으면 idle에서 재시작한다. 서버는 시작 시 생성한 로컬 비밀값으로 인증한 종료 요청을 받아 COM·프린터 연결을 닫고 종료하며, 응답이 없을 때만 5초 후 프로세스를 종료한다. 실패 반복 간격은 1·2·5·10분이다.
 - 인쇄 실패 화면의 **안내지만 다시 인쇄**는 영수증만 재요청한다. 체크인·결제·카드 발급을 반복하지 않는다. 인쇄 명령 전달과 실제 종이 출력은 별도로 확인한다.
 

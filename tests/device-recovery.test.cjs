@@ -2,19 +2,42 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { createDeviceRecovery, runRemoteReset } = require('../electron/device-recovery')
 
-function fixture(configured = ['acceptor', 'dispenser', 'cardTerminal', 'printer', 'cardDispenser']) {
-  const calls = [], listeners = new Set(), busyChanges = []
-  let idle = true, now = 1000000, fault = null, restarts = 0
+function fixture(configured = ['acceptor', 'dispenser', 'cardTerminal', 'printer', 'cardDispenser'], profile = {}) {
+  const calls = [], listeners = new Set(), busyChanges = [], timers = new Map()
+  let idle = true, now = 1000000, fault = null, restarts = 0, timerId = 0
+  const scheduleTimeout = (callback, ms) => {
+    const id = ++timerId
+    timers.set(id, { at: now + ms, callback })
+    return id
+  }
+  async function run(operation) {
+    let settled = false
+    const result = operation().finally(() => { settled = true })
+    while (!settled) {
+      // Let promise continuations schedule the next exchange before advancing virtual time.
+      await Promise.resolve()
+      if (settled || !timers.size) continue
+      const [id, timer] = [...timers].sort(([, a], [, b]) => a.at - b.at)[0]
+      timers.delete(id)
+      now = Math.max(now, timer.at)
+      timer.callback()
+    }
+    assert.equal(timers.size, 0, 'recovery leaves no pending timers')
+    assert.equal(listeners.size, 0, 'recovery unsubscribes from bridge replies')
+    return result
+  }
   const bridge = { isConnected: true,
     subscribeMessage(listener) { listeners.add(listener); return () => listeners.delete(listener) },
     send(message) {
       calls.push(message)
       if (!bridge.isConnected) return false
-      setImmediate(() => {
+      scheduleTimeout(() => {
         if (fault === 'timeout') return
         const p = message.data
         let reply
         if (message.type === 'ping') reply = { type: 'pong' }
+        else if (message.type === 'cash_board_recover') reply = { type: 'cash_board_result', requestId: message.requestId,
+          target: message.target, success: fault !== 'ng', verified: fault !== 'unverified' && fault !== 'ng' }
         else if (message.type === 'printer_status') reply = { type: 'printer_status', ready: true }
         else if (message.type === 'raw_acceptor') reply = p[1] === 71
           ? { type: 'acceptor_raw', packet: [36, 103, 97, 1, 201] }
@@ -29,19 +52,21 @@ function fixture(configured = ['acceptor', 'dispenser', 'cardTerminal', 'printer
             listener({ type: 'dispenser_data', data: [...reply.data.slice(0, 4), 0] })
           else listener(reply)
         }
-      })
+      }, 0)
       return true
     },
   }
   const cardKey = { async autoRecover() { calls.push({ type: 'card_status_capture_reset_status' }); return { success: fault !== 'card_ng', reason: fault === 'card_ng' ? 'card_present' : null } } }
   const terminal = { status: { authenticated: false }, reconnect() { calls.push({ type: 'terminal_reconnect' }); this.status.authenticated = fault !== 'terminal_ng' } }
-  const recovery = createDeviceRecovery({ configured, bridge, cardKey, terminal, printer: async () => {
+  const recovery = createDeviceRecovery({ configured, ...profile, bridge, cardKey, terminal, printer: async () => {
     calls.push({ type: 'printer_status' }); if (fault === 'printer_ng') throw Error('printer_unavailable')
   },
     restartServer: async () => { restarts++; bridge.isConnected = true }, isIdle: () => idle,
     onBusy: value => busyChanges.push(value),
-    now: () => now, sleep: async ms => { now += ms }, commandTimeoutMs: 15 })
-  return { recovery, calls, bridge, busyChanges, setIdle(value) { idle = value }, setFault(value) { fault = value }, advance(ms) { now += ms }, get restarts() { return restarts } }
+    now: () => now, sleep: async ms => { now += ms }, setTimeout: scheduleTimeout,
+    clearTimeout: id => timers.delete(id), commandTimeoutMs: 15 })
+  return { recovery: { ...recovery, reset: target => run(() => recovery.reset(target)), tick: () => run(() => recovery.tick()) },
+    calls, bridge, busyChanges, now: () => now, setIdle(value) { idle = value }, setFault(value) { fault = value }, advance(ms) { now += ms }, get restarts() { return restarts } }
 }
 
 test('all configured devices reset in order after idle without a money, approval or card issue command', async () => {
@@ -62,6 +87,28 @@ test('all configured devices reset in order after idle without a money, approval
   assert(h.calls.every(value => !/^(?:dispense|acceptor_return|card_issue|payment|cancel)/.test(value.type)))
 })
 
+for (const profile of [{ property: 'property3', building: 'B' }, { property: 'property4', building: '' }]) {
+  test(`${profile.property}/${profile.building}: idle integrated board recovery never sends ONEPLUS, payout or return`, async () => {
+    const h = fixture(['acceptor', 'dispenser'], profile)
+    h.setIdle(false); await h.recovery.tick(); assert.equal(h.calls.length, 0)
+    h.setIdle(true); await h.recovery.tick()
+    assert.deepEqual(h.calls.map(c => c.type), ['ping', 'cash_board_recover', 'cash_board_recover'])
+    assert.deepEqual(h.calls.slice(1).map(c => c.target), ['acceptor', 'dispenser'])
+    assert.equal(new Set(h.calls.slice(1).map(c => c.requestId)).size, 2)
+    assert.deepEqual(Object.values(h.recovery.hardware).map(d => d.state), ['ok', 'ok'])
+    assert.equal(h.busyChanges.at(-1), false)
+    h.setFault('unverified'); await assert.rejects(h.recovery.reset('acceptor'), /device_ng/)
+    assert.equal(h.recovery.hardware.acceptor.state, 'needs_attention')
+    assert.equal(h.recovery.hardware.dispenser.state, 'ok')
+    h.setFault('timeout')
+    const startedAt = h.now()
+    await assert.rejects(h.recovery.reset('acceptor'), /timeout/)
+    assert.equal(h.now() - startedAt, 45)
+    assert.equal(h.busyChanges.at(-1), false)
+    assert(h.calls.every(c => ['ping', 'cash_board_recover'].includes(c.type)))
+  })
+}
+
 test('NG and timeout latch only the affected device, then idle retry restores it', async () => {
   const h = fixture(['acceptor'])
   h.setFault('ng')
@@ -78,18 +125,39 @@ test('NG and timeout latch only the affected device, then idle retry restores it
 test('dispenser accepts fragmented status frames but never a bad checksum', async () => {
   const h = fixture(['dispenser'])
   h.setFault('checksum')
+  const startedAt = h.now()
   await assert.rejects(h.recovery.reset('dispenser'), /timeout/)
+  assert.equal(h.now() - startedAt, 15)
   h.setFault('fragment')
   await h.recovery.reset('dispenser')
   assert.equal(h.recovery.hardware.dispenser.state, 'ok')
 })
+
+for (const building of ['C', 'D']) {
+  test(`property1/${building}: legacy ONEPLUS replies and a ready Bixolon restore idle recovery to ok`, async () => {
+    const h = fixture(['dispenser', 'printer'], { property: 'property1', building })
+    h.setFault('fragment')
+    await h.recovery.tick()
+    assert.deepEqual(h.calls.map(c => c.type), ['ping', 'raw_dispenser', 'raw_dispenser', 'raw_dispenser', 'printer_status'])
+    assert.deepEqual(h.calls.filter(c => c.type === 'raw_dispenser').map(c => c.data), [
+      [0x24, 0x53, 0x74, 0x3f, 0x06], // Existing renderer getDispenserStatus: $St?
+      [0x24, 0x49, 0x00, 0x00, 0x49], // Existing renderer resetDispenser: $I\0\0
+      [0x24, 0x53, 0x74, 0x3f, 0x06],
+    ])
+    assert.deepEqual(Object.values(h.recovery.hardware).map(d => d.state), ['ok', 'ok'])
+    assert.equal(h.busyChanges.at(-1), false)
+    assert.equal(h.restarts, 0)
+  })
+}
 
 for (const [key, failure] of [['dispenser', 'dispenser_ng'], ['cardTerminal', 'terminal_ng'],
   ['printer', 'printer_ng'], ['cardDispenser', 'card_ng']]) {
   test(`${key} failure disables that device until an idle reset succeeds`, async () => {
     const h = fixture([key])
     h.setFault(failure)
+    const startedAt = h.now()
     await assert.rejects(h.recovery.reset(key))
+    if (key === 'cardTerminal') assert.equal(h.now() - startedAt, 10000)
     assert.equal(h.recovery.hardware[key].state, 'needs_attention')
     h.setFault(null)
     await h.recovery.reset(key)
@@ -103,11 +171,22 @@ test('dead bridge restarts only after a sustained idle failure', async () => {
   h.bridge.isConnected = false
   await h.recovery.tick()
   assert.equal(h.restarts, 0)
-  h.setIdle(false); h.advance(30001); await h.recovery.tick()
+  h.advance(29999); await h.recovery.tick()
+  assert.equal(h.restarts, 0)
+  h.setIdle(false); h.advance(2); await h.recovery.tick()
   assert.equal(h.restarts, 0)
   h.setIdle(true); await h.recovery.tick()
   assert.equal(h.restarts, 1)
   assert.equal(h.recovery.hardware.acceptor.state, 'ok')
+})
+
+test('an overlay with no native devices never probes or restarts a phantom hardware server', async () => {
+  const h = fixture([])
+  h.bridge.isConnected = false
+  for (let i = 0; i < 6; i++) { h.advance(60000); await h.recovery.tick() }
+  assert.deepEqual(h.recovery.hardware, {})
+  assert.equal(h.calls.length, 0); assert.equal(h.restarts, 0)
+  await assert.rejects(h.recovery.reset('printer'), /device_unconfigured/)
 })
 
 test('remote reset waits for idle, expires busy, and executes a command ID once across restarts', async () => {

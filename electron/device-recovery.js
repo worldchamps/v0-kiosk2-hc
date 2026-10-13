@@ -1,8 +1,9 @@
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
-const { createHash } = require('node:crypto')
+const { createHash, randomUUID } = require('node:crypto')
+const { usesIntegratedCash } = require('./cash-device-profile')
 const clean = value => String(value || 'reset_failed').replace(/[^a-z0-9_:-]/gi, '_').slice(0, 80)
 
-function createDeviceRecovery({ configured, bridgeDevices = configured.filter(key => key !== 'cardTerminal'), bridge, cardKey, terminal, printer, restartServer, isIdle, onRecovered = () => {}, onBusy = () => {}, now = Date.now, sleep = wait, commandTimeoutMs = 3000 }) {
+function createDeviceRecovery({ configured, bridgeDevices = configured.filter(key => key !== 'cardTerminal'), property, building, bridge, cardKey, terminal, printer, restartServer, isIdle, onRecovered = () => {}, onBusy = () => {}, now = Date.now, sleep = wait, setTimeout: scheduleTimeout = setTimeout, clearTimeout: cancelTimeout = clearTimeout, commandTimeoutMs = 3000 }) {
   const hardware = Object.fromEntries(configured.map(key => [key, { state: 'recovering', reason: 'startup', lastResetAt: null, lastResetResult: null }]))
   let busy = false, serverFailures = 0, nextServerAttempt = 0, lastPing = 0, unresponsiveSince = 0
   const lastAttempt = Object.fromEntries(configured.map(key => [key, 0]))
@@ -25,23 +26,31 @@ function createDeviceRecovery({ configured, bridgeDevices = configured.filter(ke
       }
     }
   }
-  async function exchange(type, data, matches, timeout = commandTimeoutMs) {
+  async function exchange(type, data, matches, timeout = commandTimeoutMs, fields = {}) {
     if (!bridge.isConnected) throw Error('bridge_disconnected')
     return new Promise((resolve, reject) => {
       let unsubscribe = () => {}, done = false
       const finish = (error, value) => {
         if (done) return
-        done = true; clearTimeout(timer); unsubscribe()
+        done = true; cancelTimeout(timer); unsubscribe()
         if (error) reject(Error(error)); else resolve(value)
       }
-      const timer = setTimeout(() => finish('timeout'), timeout)
+      const timer = scheduleTimeout(() => finish('timeout'), timeout)
       unsubscribe = bridge.subscribeMessage(message => {
         const result = matches(message)
         if (result === false) finish('device_ng')
         else if (result !== undefined) finish(null, result)
       })
-      if (!bridge.send({ type, ...(data ? { data } : {}) })) finish('bridge_disconnected')
+      try { if (!bridge.send({ type, ...(data ? { data } : {}), ...fields })) finish('bridge_disconnected') }
+      catch { finish('bridge_disconnected') }
     })
+  }
+  async function integratedRecovery(target) {
+    const requestId = randomUUID()
+    await exchange('cash_board_recover', null, message => {
+      if (message.type !== 'cash_board_result' || message.requestId !== requestId || message.target !== target) return
+      return message.success === true && message.verified === true ? true : false
+    }, commandTimeoutMs * 3, { requestId, target })
   }
   async function acceptor() {
     const before = await exchange('raw_acceptor', packet(71, 65, 63), message => {
@@ -81,7 +90,8 @@ function createDeviceRecovery({ configured, bridgeDevices = configured.filter(ke
     lastAttempt[key] = now()
     hardware[key] = { ...hardware[key], state: 'recovering', reason: null }
     try {
-      if (key === 'acceptor') await acceptor()
+      if ((key === 'acceptor' || key === 'dispenser') && usesIntegratedCash(property, building)) await integratedRecovery(key)
+      else if (key === 'acceptor') await acceptor()
       else if (key === 'dispenser') await dispenser()
       else if (key === 'cardTerminal') {
         terminal.reconnect()
@@ -123,7 +133,7 @@ function createDeviceRecovery({ configured, bridgeDevices = configured.filter(ke
   }
   async function tick() {
     if (busy || !isIdle()) return
-    if (now() - lastPing >= 15000) {
+    if (bridgeDevices.length && now() - lastPing >= 15000) {
       lastPing = now()
       try { await ping(); unresponsiveSince = 0 } catch { unresponsiveSince ||= now() }
     }

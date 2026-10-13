@@ -59,11 +59,11 @@ PROPERTY_ID = (
     or os.environ.get("NEXT_PUBLIC_KIOSK_PROPERTY_ID")
     or "property3"
 ).lower()
-USE_BAC2400 = PROPERTY_ID == "property4"
 USE_WOOSIM = PROPERTY_ID == "property3" and os.environ.get("KIOSK_BUILDING") == "B"
+USE_BAC2400 = PROPERTY_ID == "property4" or USE_WOOSIM
 
 bac2400 = Bac2400(
-    os.environ.get("BAC2400_PORT") or os.environ.get("BOARD3400_PORT", "COM5")
+    os.environ.get("BAC2400_PORT") or os.environ.get("BOARD3400_PORT") or "COM5"
 ) if USE_BAC2400 else None
 dispenser = None if USE_BAC2400 else OnePlusDispenser(DISPENSER_PORT)
 acceptor = None if USE_BAC2400 else OnePlusAcceptor(ACCEPTOR_PORT)
@@ -153,6 +153,8 @@ def legacy_packet(command1, command2, data):
 
 def handle_bac2400_message(message):
     command_type = message.get("type")
+    if command_type == "cash_board_recover":
+        return bac2400.recover(message.get("target"), message.get("requestId"))
     if command_type == "raw_acceptor":
         return bac2400.handle_acceptor_command(bytes(message.get("data", [])))
     if command_type == "raw_dispenser":
@@ -181,6 +183,8 @@ def handle_bac2400_message(message):
 
 async def poll_bac2400_payout():
     while True:
+        for response in bac2400.expire_operations():
+            await broadcast(response)
         if bac2400.payout_in_progress:
             bac2400.query_dispenser()
         await asyncio.sleep(0.25)
@@ -289,7 +293,8 @@ async def main():
         card_dispenser.connect()
 
     if bac2400:
-        logger.info("Property4 selected: using BAC-2400 V1.3 (BV1/BD1) on %s", bac2400.port)
+        logger.info("%s building=%s: using BAC-2400/3400 adapter (BV1/BD1) on %s; firmware unverified",
+                    PROPERTY_ID, os.environ.get("KIOSK_BUILDING", ""), bac2400.port)
         bac2400.connect()
         bac2400.start(bac2400_callback)
         asyncio.create_task(poll_bac2400_payout())

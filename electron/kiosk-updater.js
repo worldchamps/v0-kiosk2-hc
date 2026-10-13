@@ -6,6 +6,7 @@ const safeError = (error) => String(error.message).replace(/https?:[\\/]+\S+/g, 
 function createKioskUpdater({ deviceId, publicKey, version, stateFile, pollStatus, createUpdater, prepare, resume, shutdown, ready, recover = () => {}, arch = process.arch }) {
   let running = false, exiting = false, shutdownStarted = false, downloaded = null, state = { state: "online" }
   let invalidHistory = false
+  let exitTimer = null
   try {
     if (fs.existsSync(stateFile)) {
       const saved = JSON.parse(fs.readFileSync(stateFile, "utf8"))
@@ -24,6 +25,15 @@ function createKioskUpdater({ deviceId, publicKey, version, stateFile, pollStatu
     fs.renameSync(stateFile + ".tmp", stateFile)
   }
   const poll = () => pollStatus({ version, ...state })
+  const failInstallation = error => {
+    if (!exiting) return
+    clearTimeout(exitTimer)
+    exitTimer = null
+    exiting = false
+    save({ ...state, state: "failed", message: safeError(error) })
+    resume()
+    poll().catch(() => {}).finally(recover)
+  }
   async function tick() {
     if (running || exiting) return
     running = true
@@ -63,13 +73,7 @@ function createKioskUpdater({ deviceId, publicKey, version, stateFile, pollStatu
         updater.autoInstallOnAppQuit = false
         updater.allowDowngrade = false
         updater.disableDifferentialDownload = true
-        updater.on("error", (error) => {
-          if (!exiting) return // awaited download/check calls handle these errors
-          exiting = false
-          save({ ...state, state: "failed", message: safeError(error) })
-          resume()
-          poll().catch(() => {}).finally(recover)
-        })
+        updater.on("error", failInstallation) // awaited download/check calls handle errors before exit
         const result = await updater.checkForUpdates()
         const info = result?.updateInfo
         check(info?.version === release.version && info.files?.length === 1 &&
@@ -97,8 +101,10 @@ function createKioskUpdater({ deviceId, publicKey, version, stateFile, pollStatu
         shutdownStarted = true
         await shutdown()
         exiting = true
+        exitTimer = setTimeout(() => failInstallation(new Error("설치를 위한 앱 종료가 60초 안에 완료되지 않았습니다.")), 60000)
+        exitTimer.unref?.()
         downloaded.updater.quitAndInstall(true, true)
-      } catch (error) { exiting = false; resume(); throw error }
+      } catch (error) { clearTimeout(exitTimer); exitTimer = null; exiting = false; resume(); throw error }
     } catch (error) {
       if (state.requestId) {
         save({ ...state, state: "failed", message: safeError(error) })

@@ -127,9 +127,10 @@ export interface ElectronAPI {
   }
 
   // 지폐 인식기
-  getHardwareStatus: () => Promise<{ connected: boolean | null }>
+  getHardwareStatus: () => Promise<{ connected: boolean | null; cashBackend?: "bac2400" | "oneplus"; cashBoard?: { version: string | null; versionVerified: boolean; responseFields: Record<string, string> } | null }>
   cashDiagnostics?: {
-    read: (password: string) => Promise<{ success: boolean; path?: string; text?: string; error?: string }>
+    read: (password: string) => Promise<{ success: boolean; path?: string; text?: string; error?: string; cashBackend?: "bac2400" | "oneplus";
+      cashBoard?: { version: string | null; versionVerified: boolean; responseFields: Record<string, string>; protocol?: string } | null }>
     run: (input: { password: string; command: "reset" | "stop"; confirmed: boolean }) => Promise<{
       success: boolean; result?: string; elapsedMs?: number; logSaved?: boolean; error?: string
     }>

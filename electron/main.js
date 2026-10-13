@@ -19,6 +19,7 @@ const { createPaymentRecovery } = require("./payment-recovery")
 const { createOperationsReporter, verifyRecoveryCommand } = require("./kiosk-operations")
 const { deviceFiles } = require("./device-setup")
 const { createDeviceSettings } = require("./device-settings")
+const { usesIntegratedCash } = require("./cash-device-profile")
 const { createCardKeyStore } = require("./card-key-store")
 const { createCardKeyService, enabled: cardDispenserEnabled } = require("./card-key-service")
 const { createDeviceRecovery, runRemoteReset } = require("./device-recovery")
@@ -41,11 +42,18 @@ const cashTrace = createCashTrace(path.join(app.getPath('userData'), 'logs'))
 const operationsIdentity = () => ({ deviceId: process.env.KIOSK_DEVICE_ID, property: process.env.KIOSK_PROPERTY_ID,
   building: process.env.KIOSK_PROPERTY_ID === 'property3' ? process.env.KIOSK_BUILDING || '' : '', version: app.getVersion() })
 let lastPrinterResult = null
+let cashBoardInfo = null
+let lastOperationsSnapshot = null
 const pendingOperations = new Map()
+function getOperationsWindow() {
+  const window = OVERLAY_MODE ? overlayButtonModule.getKioskPopup() : mainWindow
+  return window && !window.isDestroyed() ? window : null
+}
 function askOperationsRenderer(kind, command) {
   return new Promise((resolve, reject) => {
-    if (!mainWindow || mainWindow.isDestroyed()) { reject(Error('키오스크 화면이 응답하지 않습니다.')); return }
-    const sender = mainWindow.webContents, id = require('node:crypto').randomUUID()
+    const window = getOperationsWindow()
+    if (!window) { reject(Error('키오스크 화면이 응답하지 않습니다.')); return }
+    const sender = window.webContents, id = require('node:crypto').randomUUID()
     const timer = setTimeout(() => { pendingOperations.delete(id); reject(Error('키오스크 화면 응답을 확인하지 못했습니다.')); }, 10000)
     pendingOperations.set(id, { sender, resolve: value => { clearTimeout(timer); resolve(value) } })
     sender.send('operations:request', { id, kind, command })
@@ -60,7 +68,8 @@ ipcMain.handle('printer:report-result', (event, input) => {
   if (event.senderFrame !== event.sender.mainFrame || new URL(event.senderFrame.url).origin !== 'http://localhost:3000' ||
     !['sent', 'failed'].includes(input?.status) || typeof input?.error !== 'string' || typeof input?.roomNumber !== 'string') return
   lastPrinterResult = { status: input.status, error: input.error.slice(0, 500), roomNumber: input.roomNumber.slice(0, 40), at: Date.now() }
-  if (input.status === 'failed') deviceRecovery?.fault('printer', 'printer_failed')
+  if (input.status === 'failed') deviceRecovery?.fault('printer',
+    ['printer_not_installed', 'printer_unavailable', 'printer_failed'].includes(input.error) ? input.error : 'printer_failed')
 })
 ipcMain.on('device-recovery:fault', (event, key) => {
   try {
@@ -125,6 +134,7 @@ const cashDiagnostics = createCashDiagnostics({
   bridge: { get isConnected() { return hardwareBridge.isConnected }, subscribeMessage: hardwareBridge.subscribeMessage,
     send: message => { lastAcceptorCommand = Date.now(); return hardwareBridge.send(message) } },
   trace: cashTrace,
+  hardwareInfo: () => ({ cashBackend: usesIntegratedCash(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING) ? 'bac2400' : 'oneplus', cashBoard: cashBoardInfo }),
 })
 ipcMain.handle('cash-diagnostics:read', (event, password) => cashDiagnostics.read(event, password))
 ipcMain.handle('cash-diagnostics:run', (event, input) => cashDiagnostics.run(event, input))
@@ -161,7 +171,7 @@ ipcMain.handle("device-settings:save", (event, input) => deviceSettings.save(eve
 process.env.CARD_BRIDGE_TOKEN = require('node:crypto').randomBytes(32).toString('hex')
 let cardRendererIdle = false
 let deviceRecovery
-const cardAutoIdle = () => cardRendererIdle && mainWindow && !mainWindow.isDestroyed() && !global.kioskMaintenance && !global.kioskPaymentRecoveryActive && !global.kioskHttpActive &&
+const cardAutoIdle = () => (OVERLAY_MODE ? !getOperationsWindow() : cardRendererIdle && getOperationsWindow()) && !global.kioskMaintenance && !global.kioskPaymentRecoveryActive && !global.kioskHttpActive &&
   tossFrontBridge.pending.size === 0 && !cardKey.isBusy() && (global.kioskActiveOperations?.() || 0) === 0 && Date.now() - lastAcceptorCommand > 8000
 const cardStore = createCardKeyStore({ directory: path.join(app.getPath('userData'), 'card-keys'), safeStorage: require('electron').safeStorage })
 const cardKey = createCardKeyService({
@@ -464,6 +474,10 @@ function createWindow() {
       })
 
       hardwareBridge.onMessage((msg) => {
+        if (msg.type === 'cash_board_info') {
+          cashBoardInfo = msg
+          cashTrace.write('bridge', { ...msg, event: 'board_info' })
+        }
         const cashPacket = responsePacket(msg)
         if (cashPacket) cashTrace.write('bridge', { event: 'receive', bytes: cashPacket })
         if (!mainWindow || !mainWindow.webContents) return
@@ -852,11 +866,11 @@ ipcMain.handle("send-raw-to-bixolon", async (event, data) => {
   return hardwareBridge.send({ type: "printer_raw", data })
 })
 
-function printSam4sWithWindows(printerName, lines) {
+function printSam4sWithWindows(printerName, lines, backend = 'sam4s') {
   const powershell = process.env.SystemRoot
     ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
     : "powershell.exe"
-  const script = path.join(__dirname, "sam4s-print.ps1")
+  const script = path.join(__dirname, backend === 'woosim' ? "woosim-print.ps1" : "sam4s-print.ps1")
   const payload = Buffer.from(JSON.stringify(lines), "utf8").toString("base64")
 
   return new Promise((resolve, reject) => {
@@ -890,21 +904,32 @@ function printSam4sWithWindows(printerName, lines) {
     child.stdin.end(payload)
     timeout = setTimeout(() => {
       child.kill()
-      finish(new Error("SAM4S Windows 인쇄가 30초 안에 완료되지 않았습니다."))
+      finish(new Error("Windows 인쇄가 30초 안에 완료되지 않았습니다."))
     }, 30_000)
   })
 }
 
 const usesWoosim = () => KIOSK_PROPERTY_ID === "property3" && process.env.KIOSK_BUILDING === "B"
 
+function printerFailure(reason, roomNumber = '') {
+  lastPrinterResult = { status: 'failed', error: reason, roomNumber: String(roomNumber).slice(0, 40), at: Date.now() }
+  deviceRecovery?.fault('printer', reason)
+  return { success: false, error: reason }
+}
+
 ipcMain.handle("receipt-printer-status", async (event) => {
   if (KIOSK_PROPERTY_ID !== "property4" && !usesWoosim()) return { backend: "bixolon" }
-  const printers = await event.sender.getPrintersAsync()
-  const printer = usesWoosim()
-    ? findWoosimPrinter(printers, process.env.WOOSIM_PRINTER_NAME || "")
-    : findSam4sPrinter(printers, process.env.SAM4S_PRINTER_NAME || "")
-  return { backend: usesWoosim() ? "woosim" : "sam4s", connected: !!printer,
-    error: printer ? '' : `${usesWoosim() ? 'WOOSIM WSP-CP383' : 'SAM4S GCUBE'} Windows 프린터를 찾지 못했습니다. 설치된 프린터: ${printers.map(p => p.name).join(', ') || '없음'}` }
+  const backend = usesWoosim() ? "woosim" : "sam4s"
+  try {
+    const printers = await event.sender.getPrintersAsync()
+    const printer = usesWoosim()
+      ? findWoosimPrinter(printers, process.env.WOOSIM_PRINTER_NAME || "")
+      : findSam4sPrinter(printers, process.env.SAM4S_PRINTER_NAME || "")
+    return { backend, connected: !!printer, ...(printer ? { error: '' } : printerFailure('printer_not_installed')) }
+  } catch (error) {
+    console.error('[PRINTER] Status failed:', error)
+    return { backend, connected: false, ...printerFailure('printer_unavailable') }
+  }
 })
 
 ipcMain.handle("print-to-woosim", async (event, receipt) => {
@@ -916,12 +941,12 @@ ipcMain.handle("print-to-woosim", async (event, receipt) => {
     if (!lines.length || Buffer.byteLength(JSON.stringify(lines), "utf8") > 100_000) throw new Error("영수증 내용이 올바르지 않습니다.")
     const printers = await event.sender.getPrintersAsync()
     const printer = findWoosimPrinter(printers, process.env.WOOSIM_PRINTER_NAME || "")
-    if (!printer) throw new Error("WOOSIM WSP-CP383 Windows 프린터를 찾지 못했습니다.")
-    await printSam4sWithWindows(printer.name, lines)
+    if (!printer) return printerFailure('printer_not_installed', receipt.roomNumber)
+    await printSam4sWithWindows(printer.name, lines, 'woosim')
     return { success: true, printer: printer.displayName || printer.name }
   } catch (error) {
     console.error("[WOOSIM] Print failed:", error)
-    return { success: false, error: error instanceof Error ? error.message : String(error) }
+    return printerFailure('printer_failed', receipt.roomNumber)
   }
 })
 
@@ -943,11 +968,7 @@ ipcMain.handle("print-to-sam4s", async (event, receipt) => {
     const printers = await event.sender.getPrintersAsync()
     const printer = findSam4sPrinter(printers, process.env.SAM4S_PRINTER_NAME || "")
     if (!printer) {
-      const available = printers.map((item) => item.displayName || item.name).filter(Boolean).join(", ")
-      return {
-        success: false,
-        error: `SAM4S GCUBE 프린터를 찾지 못했습니다. 설치된 프린터: ${available || "없음"}`,
-      }
+      return printerFailure('printer_not_installed', receipt.roomNumber)
     }
     const printerLabel = printer.displayName || printer.name
     const output = await printSam4sWithWindows(printer.name, lines)
@@ -955,7 +976,7 @@ ipcMain.handle("print-to-sam4s", async (event, receipt) => {
     return { success: true, printer: printerLabel }
   } catch (error) {
     console.error("[SAM4S] Print failed:", error)
-    return { success: false, error: error instanceof Error ? error.message : String(error) }
+    return printerFailure('printer_failed', receipt.roomNumber)
   }
 })
 
@@ -969,7 +990,9 @@ ipcMain.handle("reconnect-printer", async () => {
 
 ipcMain.handle("get-hardware-status", async () => {
   return {
-    connected: hardwareBridge.isConnected
+    connected: hardwareBridge.isConnected,
+    cashBackend: usesIntegratedCash(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING) ? 'bac2400' : 'oneplus',
+    cashBoard: cashBoardInfo,
   }
 })
 
@@ -1318,6 +1341,7 @@ global.kioskHardwareReady = () => hardwareBridge.isConnected && !!hardwareServer
   tossFrontBridge.pending.size === 0
 
 global.shutdownKiosk = async () => {
+  overlayButtonModule.destroyOverlayButton()
   tossFrontBridge.close()
   if (hardwareServerProcess && !hardwareServerProcess.killed) {
     const child = hardwareServerProcess
@@ -1333,11 +1357,14 @@ global.shutdownKiosk = async () => {
   }
 }
 
+app.on('before-quit', () => overlayButtonModule.destroyOverlayButton())
+
 app.whenReady().then(async () => {
-  const configured = ['acceptor', 'dispenser', 'printer']
-  if (tossFrontBridge.configured) configured.push('cardTerminal')
+  const karivOverlay = OVERLAY_MODE && KIOSK_PROPERTY_ID === 'property2'
+  const configured = karivOverlay ? [] : ['acceptor', 'dispenser', 'printer']
+  if (!karivOverlay && tossFrontBridge.configured) configured.push('cardTerminal')
   if (cardDispenserEnabled(process.env)) configured.push('cardDispenser')
-  deviceRecovery = createDeviceRecovery({ configured,
+  deviceRecovery = createDeviceRecovery({ configured, property: KIOSK_PROPERTY_ID, building: process.env.KIOSK_BUILDING,
     bridgeDevices: configured.filter(key => key !== 'cardTerminal' && (key !== 'printer' || !usesWoosim() && KIOSK_PROPERTY_ID !== 'property4')),
     bridge: hardwareBridge, cardKey, terminal: tossFrontBridge,
     isIdle: cardAutoIdle, onBusy: value => { global.kioskDeviceRecoveryActive = value },
@@ -1348,7 +1375,7 @@ app.whenReady().then(async () => {
         const printers = await mainWindow.webContents.getPrintersAsync()
         const found = usesWoosim() ? findWoosimPrinter(printers, process.env.WOOSIM_PRINTER_NAME || '')
           : findSam4sPrinter(printers, process.env.SAM4S_PRINTER_NAME || '')
-        if (!found) throw Error('printer_unavailable')
+        if (!found) throw Error('printer_not_installed')
         return
       }
       await new Promise((resolve, reject) => {
@@ -1383,9 +1410,19 @@ app.whenReady().then(async () => {
   setInterval(() => void deviceRecovery.tick(), 15000).unref()
   const operations = createOperationsReporter({ identity: operationsIdentity(), key: process.env.FIREBASE_PRIVATE_KEY,
     read: async () => {
-      if (!mainWindow || mainWindow.isDestroyed() || global.kioskMaintenance) throw Error('화면 연결 대기')
-      const snapshot = await askOperationsRenderer('snapshot')
-      if (!snapshot || !(snapshot.raw === null || typeof snapshot.raw === 'string') || typeof snapshot.memory !== 'string') throw Error('결제 상태를 확인하지 못했습니다.')
+      if (global.kioskMaintenance) throw Error('화면 연결 대기')
+      // The idle overlay has no journal; retain any evidence from its last popup.
+      let snapshot = lastOperationsSnapshot || { raw: null, memory: 'null' }
+      if (!OVERLAY_MODE || getOperationsWindow()) {
+        try {
+          snapshot = await askOperationsRenderer('snapshot')
+          if (!snapshot || !(snapshot.raw === null || typeof snapshot.raw === 'string') || typeof snapshot.memory !== 'string') throw Error('invalid_snapshot')
+        } catch {
+          snapshot = { ...(lastOperationsSnapshot || { raw: null, memory: 'null' }),
+            storageError: '결제 상태를 확인하지 못했습니다.', paymentUnavailable: true }
+        }
+        lastOperationsSnapshot = snapshot
+      }
       const hardware = { ...deviceRecovery.hardware }
       if (hardware.cardDispenser) {
         const status = cardKey.status()
@@ -1400,9 +1437,10 @@ app.whenReady().then(async () => {
       if (command.request.action === 'reset_device') {
         return runRemoteReset(command.request, cardStore, deviceRecovery, cardAutoIdle)
       }
-      if (!mainWindow || mainWindow.isDestroyed() || global.kioskMaintenance || (global.kioskActiveOperations?.() || 0) > 0)
+      const window = getOperationsWindow()
+      if (!window || global.kioskMaintenance || (global.kioskActiveOperations?.() || 0) > 0)
         throw Error('진행 중인 장비 작업이 있습니다. 완료 후 다시 요청해 주세요.')
-      const sender = mainWindow.webContents
+      const sender = window.webContents
       const result = await askOperationsRenderer('recover', command)
       if (!result.success) throw Error(result.error)
       sender.reload()
@@ -1433,6 +1471,8 @@ app.whenReady().then(async () => {
 })
 
 app.on("window-all-closed", () => {
+  // Update shutdown destroys the last banner before quitAndInstall is invoked.
+  if (global.kioskMaintenance) return
   tossFrontBridge.close()
 
   if (nextServer) {

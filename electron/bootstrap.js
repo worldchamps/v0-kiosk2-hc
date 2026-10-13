@@ -65,7 +65,10 @@ if (!app.isPackaged) {
     ipcMain.on("kiosk:update-ready", (event, nonce) => {
       if (localSender(event) && event.sender === renderer && ack?.nonce === nonce) ack.resolve(true)
     })
-    const resume = () => { locked = false; global.kioskMaintenance = false; renderer?.send("kiosk:update-resume") }
+    const resume = () => {
+      locked = false; global.kioskMaintenance = false
+      if (renderer && !renderer.isDestroyed()) renderer.send("kiosk:update-resume")
+    }
     const installationBlocker = () => {
       if (overlayMode && !require("./overlay-button").isIdleButtonSender(renderer)) return "예약 확인 화면 종료 대기"
       if (!renderer || renderer.isDestroyed() || !heartbeat.at || Date.now() - heartbeat.at >= 10000 || heartbeat.at > Date.now())

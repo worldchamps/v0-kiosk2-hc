@@ -2,12 +2,16 @@ const { createHash, createHmac, timingSafeEqual, verify } = require('node:crypto
 const verificationKey = require('./pms-card-public-key.json').publicKey
 const deviceKeys = ['acceptor', 'dispenser', 'cardTerminal', 'printer', 'cardDispenser']
 const resetTargets = [...deviceKeys, 'all', 'hardwareServer']
+const commandFields = {
+  archive_payment: ['id', 'action', 'deviceId', 'property', 'building', 'fingerprint', 'confirmed', 'createdAt', 'expiresAt'],
+  reset_device: ['id', 'action', 'device', 'deviceId', 'property', 'building', 'createdAt', 'expiresAt'],
+}
 const shortCode = value => value === null || typeof value === 'string' && value.length <= 80 && /^[a-z0-9_:-]+$/.test(value)
 
 const fingerprint = (raw, memory = raw) => createHash('sha256').update(JSON.stringify({ raw, memory })).digest('hex')
 function recoverySummary(raw, memory = raw, storageError = '') {
   if (storageError) return { fingerprint: fingerprint(raw, memory), roomNumber: '', reason: String(storageError).slice(0, 500), amount: null }
-  if (!raw && !memory) return null
+  if (!raw && (!memory || memory === 'null')) return null
   try {
     const value = JSON.parse(memory)
     if (!value.isActive || typeof value.recoveryRequired !== 'string' || !value.recoveryRequired) return null
@@ -50,11 +54,16 @@ function verifyOperations(body, signature, key, identity, now = Date.now()) {
 }
 function verifyRecoveryCommand(job, raw, identity, now = Date.now(), publicKey = verificationKey, memory = raw) {
   try {
-    const r = job?.request
+    const received = job?.request
+    const fields = commandFields[received?.action]
+    if (!received || typeof received !== 'object' || Array.isArray(received) || !Array.isArray(fields) ||
+        Object.keys(received).length !== fields.length || fields.some(field => !Object.hasOwn(received, field))) return false
+    // Restore the PMS signing order after Firebase has reordered the exact field set.
+    const r = Object.fromEntries(fields.map(field => [field, received[field]]))
     return !!r && /^[a-f0-9-]{36}$/.test(r.id || '') && r.deviceId === identity.deviceId &&
       r.property === identity.property && r.building === identity.building &&
       (r.action === 'archive_payment' ? r.fingerprint === fingerprint(raw, memory) && r.confirmed === true :
-        r.action === 'reset_device' && Object.keys(r).join() === 'id,action,device,deviceId,property,building,createdAt,expiresAt' &&
+        r.action === 'reset_device' &&
         resetTargets.includes(r.device) && r.expiresAt - r.createdAt === 120000) &&
       Number.isSafeInteger(r.createdAt) && Number.isSafeInteger(r.expiresAt) &&
       r.createdAt <= now && r.expiresAt > now && r.expiresAt - r.createdAt <= 120000 &&
@@ -75,7 +84,7 @@ function createOperationsReporter({ identity, key, read, recover, fetcher = fetc
       })
       if (!response.ok) return
       const { command } = await response.json()
-      if (!command || command.request?.id === result?.id || !verifyRecoveryCommand(command, state.raw, identity,
+      if (!command || command.request?.id === result?.id || command.request?.action === 'archive_payment' && state.paymentUnavailable || !verifyRecoveryCommand(command, state.raw, identity,
         command.request?.action === 'reset_device' ? Math.min(now(), command.request.expiresAt - 1) : now(), undefined, state.memory)) return
       try {
         await recover(command)

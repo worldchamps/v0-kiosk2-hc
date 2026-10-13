@@ -345,6 +345,48 @@ test("Woosim IPC rejects another building before reaching the Windows printer", 
   assert.match(result.error, /B동/)
 })
 
+test('Windows printer faults expose short PMS codes instead of printer names or process errors', async () => {
+  const source = fs.readFileSync(path.join(root, 'electron/main.js'), 'utf8')
+  for (const [property, backend, roomNumber] of [['property3', 'woosim', 'B101'], ['property4', 'sam4s', 'Camp101']]) {
+    const handlers = new Map(), faults = []
+    let installed = false, statusBroken = false, printBroken = false
+    const driver = backend === 'woosim' ? 'WOOSIM WSP-CP383' : 'SAM4S GCUBE'
+    const frame = { url: 'http://localhost:3000' }
+    const event = { senderFrame: frame, sender: { mainFrame: frame, getPrintersAsync: async () => {
+      if (statusBroken) throw Error('C:\\Windows\\internal printer path')
+      return [{ name: installed ? driver : 'Microsoft XPS Document Writer' }]
+    } } }
+    const context = { ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+      KIOSK_PROPERTY_ID: property, process: { env: { KIOSK_BUILDING: 'B' } }, Buffer, Date, URL,
+      console: { log() {}, error() {} }, lastPrinterResult: null,
+      deviceRecovery: { fault: (key, reason) => faults.push([key, reason]) },
+      ...require('../electron/sam4s-receipt'),
+      printSam4sWithWindows: async (_name, _lines, route = 'sam4s') => {
+        assert.equal(route, backend)
+        if (printBroken) throw Error('Internal spooler details'); return 'OK'
+      },
+    }
+    vm.runInNewContext(source.slice(source.indexOf('const usesWoosim ='), source.indexOf('ipcMain.handle("reconnect-printer"')) +
+      source.slice(source.indexOf("ipcMain.handle('printer:report-result'"), source.indexOf("ipcMain.on('device-recovery:fault'")), context)
+    const status = await handlers.get('receipt-printer-status')(event)
+    assert.equal(status.backend, backend); assert.equal(status.connected, false); assert.equal(status.error, 'printer_not_installed')
+    const result = await handlers.get(`print-to-${backend}`)(event, { roomNumber })
+    assert.equal(result.error, 'printer_not_installed'); assert(!JSON.stringify(result).includes('Microsoft'))
+    handlers.get('printer:report-result')(event, { status: 'failed', error: result.error, roomNumber })
+    assert.equal(context.lastPrinterResult.roomNumber, roomNumber)
+    assert.equal(context.lastPrinterResult.error, 'printer_not_installed')
+    assert.deepEqual(faults.at(-1), ['printer', 'printer_not_installed'])
+    installed = true; printBroken = true
+    assert.equal((await handlers.get(`print-to-${backend}`)(event, { roomNumber })).error, 'printer_failed')
+    assert.equal(context.lastPrinterResult.error, 'printer_failed')
+    statusBroken = true
+    assert.equal((await handlers.get('receipt-printer-status')(event)).error, 'printer_unavailable')
+    assert.equal(context.lastPrinterResult.error, 'printer_unavailable')
+    statusBroken = false; printBroken = false
+    assert.equal((await handlers.get(`print-to-${backend}`)(event, { roomNumber })).success, true)
+  }
+})
+
 test("printer: a hung transport status query fails closed", { timeout: 1000 }, async () => {
   const p = printer({ getHardwareStatus: () => new Promise(() => {}) })
   assert.equal(await p.autoConnectPrinter(), false)

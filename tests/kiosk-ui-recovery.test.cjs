@@ -820,7 +820,7 @@ test('failed check-in print retries only the receipt once and preserves room inf
   const timers = []; let prints = 0, finish;
   const h = load('components/check-in-complete.tsx', {
     'next/image': { default: 'img' }, '@/lib/location-utils': { getBuildingZoomImagePath: () => '/test.png' },
-    '@/lib/printer-utils-unified': { getLastPrinterError: () => 'WOOSIM 연결 확인 필요', printReceipt: async data => {
+    '@/lib/printer-utils-unified': { getLastPrinterError: () => 'WOOSIM WSP-CP383 Windows 프린터 없음: Microsoft XPS Document Writer', printReceipt: async data => {
       prints++; assert.equal(data.roomNumber, 'B901');
       return prints === 1 ? false : new Promise(resolve => finish = resolve);
     } }, '@/lib/audio-utils': {}, '@/hooks/use-idle-timer': { useIdleTimer() {} }, '@/lib/property-utils': {},
@@ -828,11 +828,34 @@ test('failed check-in print retries only the receipt once and preserves room inf
     fetch: () => assert.fail('receipt retry must not check in or charge again') });
   const render = () => h.render({ reservation: { roomNumber: 'B901', guestName: '테스트', password: 'QA' }, revealedInfo: { roomNumber: 'B901', password: 'QA', floor: '9' } });
   render(); h.effects[1](); timers[0](); await new Promise(resolve => setImmediate(resolve)); render();
-  assert(h.visible('WOOSIM 연결 확인 필요')); assert(h.visible('B901')); assert.equal(prints, 1);
+  assert(h.visible('화면의 객실 정보를 확인해 주세요')); assert(!h.visible('WOOSIM')); assert(!h.visible('Microsoft XPS'));
+  assert(h.visible('B901')); assert(h.visible('QA')); assert.equal(prints, 1);
   const retry = h.button('안내지만 다시 인쇄'); retry.onClick(); retry.onClick(); assert.equal(prints, 2);
   finish(true); await new Promise(resolve => setImmediate(resolve)); render();
   assert(h.visible('인쇄 요청을 전달했습니다')); assert(h.visible('B901')); assert(!h.visible('안내지만 다시 인쇄'));
 });
+
+for (const failure of ['failed', 'exception']) {
+  test(`check-in print ${failure} shows guest guidance and returns home after 25 seconds without input`, async () => {
+    const timers = [], navigation = []
+    const h = load('components/check-in-complete.tsx', {
+      'next/image': { default: 'img' }, '@/lib/location-utils': { getBuildingZoomImagePath: () => '/test.png' },
+      '@/lib/printer-utils-unified': { printReceipt: async () => {
+        if (failure === 'exception') throw Error('C:\\Windows\\WOOSIM driver fault')
+        return false
+      } }, '@/lib/audio-utils': {}, '@/hooks/use-idle-timer': { useIdleTimer() {} }, '@/lib/property-utils': {},
+    }, { setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length }, clearTimeout() {},
+      setInterval: () => 1, clearInterval() {}, fetch: () => assert.fail('no check-in or payment replay') })
+    const props = { revealedInfo: { roomNumber: 'B101', password: 'QA1234', floor: '1' }, onNavigate: screen => navigation.push(screen) }
+    h.render(props); h.effects[1](); timers.find(timer => timer.ms === 1000).fn()
+    await new Promise(resolve => setImmediate(resolve)); h.render(props)
+    assert(h.visible('화면의 객실 정보를 확인해 주세요')); assert(h.visible('B101')); assert(h.visible('QA1234'))
+    assert(!h.visible('WOOSIM')); assert(!h.visible('Windows')); h.button('안내지만 다시 인쇄')
+    assert(h.visible('25초 후 자동으로 처음 화면'))
+    timers.find(timer => timer.ms === 25000).fn()
+    assert.deepEqual(navigation, ['standby'])
+  })
+}
 test('reservation input ignores whitespace and disables keyboard/scan while loading', () => {
   let checks = 0;
   const h = load('components/reservation-confirm.tsx', { './korean-keyboard': { default: 'Keyboard' }, '@/lib/location-utils': { getLocationTitle: () => 'B' },

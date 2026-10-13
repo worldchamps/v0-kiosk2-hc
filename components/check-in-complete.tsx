@@ -2,7 +2,7 @@
 
 import { Check, ReceiptText, MapPin } from "lucide-react"
 import { useEffect, useState, useRef } from "react"
-import { printReceipt, getPrinterModel, getLastPrinterError } from "@/lib/printer-utils-unified"
+import { printReceipt, getPrinterModel } from "@/lib/printer-utils-unified"
 import Image from "next/image"
 import { getBuildingZoomImagePath } from "@/lib/location-utils"
 import type { KioskLocation } from "@/lib/location-utils"
@@ -35,7 +35,6 @@ export default function CheckInComplete({
   const [countdown, setCountdown] = useState<number | null>(null)
   const [autoPrintAttempted, setAutoPrintAttempted] = useState(false)
   const [printStatus, setPrintStatus] = useState<"idle" | "printing" | "success" | "error">("idle")
-  const [printError, setPrintError] = useState('')
   const printing = useRef(false)
   const [simpleMode, setSimpleMode] = useState(false)
   const [printerModel, setPrinterModel] = useState<string>("UNKNOWN")
@@ -188,7 +187,6 @@ export default function CheckInComplete({
   const autoPrintReceipt = async () => {
     if (printing.current) return
     printing.current = true
-    setPrintError('')
     setAutoPrintAttempted(true)
     setPrintStatus("printing")
     logDebug("Print status: printing")
@@ -204,18 +202,15 @@ export default function CheckInComplete({
         setPrintStatus("success")
         logDebug(`Print status: success (${simpleMode ? "simple mode" : "normal mode"})`)
 
-        startRedirectCountdown()
       } else {
         setPrintStatus("error")
-        setPrintError(getLastPrinterError())
         logDebug("Print status: error (print failed)")
       }
     } catch (error) {
       console.error("Auto print receipt error:", error)
       setPrintStatus("error")
-      setPrintError(error instanceof Error ? error.message : '인쇄 요청을 완료하지 못했습니다.')
       logDebug(`Print status: error (${error})`)
-    } finally { printing.current = false }
+    } finally { printing.current = false; startRedirectCountdown() }
   }
 
   const startRedirectCountdown = () => {
@@ -359,7 +354,7 @@ export default function CheckInComplete({
       <div className={`kiosk-complete-print-status is-${printStatus}`}>
         {printStatus === "printing" && "객실 안내지를 인쇄하고 있습니다."}
         {printStatus === "success" && "인쇄 요청을 전달했습니다. 출력된 안내지를 가져가세요."}
-        {printStatus === "error" && <><p>안내지를 인쇄하지 못했습니다. 결제와 체크인은 완료되어 다시 체크인할 필요가 없습니다.</p><p>{printError || '프린터 연결을 확인해 주세요.'}</p></>}
+        {printStatus === "error" && <><p>안내지를 인쇄하지 못했습니다. 결제와 체크인은 완료되어 다시 체크인할 필요가 없습니다.</p><p>안내지 출력이 안 되면 화면의 객실 정보를 확인해 주세요.</p></>}
       </div>
 
       <div className="kiosk-complete-actions">
@@ -378,7 +373,7 @@ export default function CheckInComplete({
         </button>
       </div>
 
-      {countdown !== null && printStatus === "success" && (
+      {countdown !== null && (printStatus === "success" || printStatus === "error") && (
         <p className="kiosk-complete-countdown">
           {isPopupMode
             ? `${countdown}초 후 자동으로 창이 닫힙니다.`

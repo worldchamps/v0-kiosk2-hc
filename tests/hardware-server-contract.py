@@ -3,6 +3,7 @@ import asyncio
 import importlib.util
 import json
 import logging
+import runpy
 from pathlib import Path
 import sys
 import types
@@ -52,6 +53,60 @@ class FakeClient:
 
 
 class HardwareContracts(unittest.IsolatedAsyncioTestCase):
+    def test_cash_board_scope_and_local_port_priority_without_opening_any_com(self):
+        cases = [
+            ({"KIOSK_PROPERTY_ID": "property3", "KIOSK_BUILDING": "B"}, True, "COM5"),
+            ({"KIOSK_PROPERTY_ID": "property4"}, True, "COM5"),
+            ({"KIOSK_PROPERTY_ID": "property3", "KIOSK_BUILDING": "B", "BAC2400_PORT": "COM9", "BOARD3400_PORT": "COM8"}, True, "COM9"),
+            ({"KIOSK_PROPERTY_ID": "property4", "BOARD3400_PORT": "COM8"}, True, "COM8"),
+            ({"KIOSK_PROPERTY_ID": "property3", "KIOSK_BUILDING": "A"}, False, None),
+            ({"KIOSK_PROPERTY_ID": "property3"}, False, None),
+            ({"KIOSK_PROPERTY_ID": "property1", "KIOSK_BUILDING": "C"}, False, None),
+            ({"KIOSK_PROPERTY_ID": "property1", "KIOSK_BUILDING": "D"}, False, None),
+            ({"KIOSK_PROPERTY_ID": "property2", "KIOSK_BUILDING": "B"}, False, None),
+        ]
+        for env, integrated, port in cases:
+            with self.subTest(env=env):
+                isolated = importlib.util.module_from_spec(spec)
+                with patch("builtins.open", side_effect=FileNotFoundError), patch.dict("os.environ", env, clear=True):
+                    spec.loader.exec_module(isolated)
+                self.assertEqual(isolated.USE_BAC2400, integrated)
+                self.assertEqual(isolated.bac2400.port if isolated.bac2400 else None, port)
+                self.assertEqual(isolated.acceptor is None, integrated)
+                self.assertEqual(isolated.dispenser is None, integrated)
+        serial.Serial.assert_not_called()
+
+    def test_source_self_test_loads_architecture_matching_bixolon_sdk_without_a_port(self):
+        # Run the changed source under the selected Python, including the real 32/64-bit DLL load.
+        with patch.object(sys, "argv", ["main.py", "--self-test"]):
+            with self.assertRaises(SystemExit) as result:
+                runpy.run_path(str(root / "hardware_server/main.py"), run_name="__main__")
+        self.assertEqual(result.exception.code, 0)
+        serial.Serial.assert_not_called()
+
+    async def test_B_and_Camp_route_recovery_through_the_real_adapter_with_zero_payout_or_return(self):
+        for env in [{"KIOSK_PROPERTY_ID": "property3", "KIOSK_BUILDING": "B"}, {"KIOSK_PROPERTY_ID": "property4"}]:
+            isolated = importlib.util.module_from_spec(spec)
+            with patch("builtins.open", side_effect=FileNotFoundError), patch.dict("os.environ", env, clear=True):
+                spec.loader.exec_module(isolated)
+            sent = []
+            isolated.bac2400.send = lambda p: sent.append(bytes(p)) or True
+            for target in ("acceptor", "dispenser"):
+                client = FakeClient([json.dumps({"type": "cash_board_recover", "requestId": "qa-" + target, "target": target})])
+                await isolated.handle_client(client)
+                if target == "acceptor":
+                    before = multi_frame((0x18, [0] * 4), (0x1B, [1, 0, 0x12]))
+                    after = multi_frame((0x18, [0] * 4), (0x1B, [0, 0, 0x12]))
+                else:
+                    before = after = multi_frame((0x15, [0] * 4), (0x16, [0] * 4), (0x17, [0]))
+                isolated.bac2400.process_incoming(before)
+                result = isolated.bac2400.process_incoming(after)
+                self.assertTrue(next(m for m in result if m["type"] == "cash_board_result")["verified"])
+            self.assertEqual(sent, [bytes.fromhex(h) for h in (
+                "59 A6", "5B A4 03 10 00 00 13", "59 A6", "71 8E", "73 8C 05 01 00 00 01 00 05", "71 8E")])
+            self.assertIsNone(isolated.bac2400.pending_payout)
+        serial.Serial.assert_not_called()
+
     def test_card_startup_gates_and_invalid_configuration_leave_other_hardware_available(self):
         base = {"CARD_BRIDGE_TOKEN": "a" * 64, "CARD_DISPENSER_PORT": "COM9", "CARD_DISPENSER_ENABLED": "true"}
         for overrides, allowed in [({"KIOSK_PROPERTY_ID": "property1"}, True),
@@ -147,6 +202,33 @@ class HardwareContracts(unittest.IsolatedAsyncioTestCase):
         printer.print_text.assert_not_called()
         printer.cut_paper.assert_not_called()
 
+    async def test_C_D_bixolon_status_reuses_the_print_sdk_connection_without_closing_or_reinitializing(self):
+        for building in ('C', 'D'):
+            with self.subTest(building=building):
+                isolated = importlib.util.module_from_spec(spec)
+                with patch('builtins.open', side_effect=FileNotFoundError), patch.dict('os.environ',
+                        {'KIOSK_PROPERTY_ID': 'property1', 'KIOSK_BUILDING': building}, clear=True):
+                    spec.loader.exec_module(isolated)
+                printer = isolated.printer
+                sdk = Mock()
+                sdk.PrinterOpen.return_value = sdk.InitializePrinter.return_value = 0
+                sdk.PrintTextW.return_value = sdk.CutPaper.return_value = 0
+                printer.sdk = sdk
+                client = FakeClient(['{"type":"printer_status"}', '{"type":"printer_status"}'])
+                await isolated.handle_client(client)
+                self.assertEqual(client.sent, [{'type': 'printer_status', 'ready': True}] * 2)
+                sdk.PrinterOpen.assert_called_once()
+                sdk.InitializePrinter.assert_called_once()
+                sdk.PrinterClose.assert_not_called()
+                sdk.PrintTextW.assert_not_called()
+                sdk.CutPaper.assert_not_called()
+                # The same SDK/COM owner remains available to the existing receipt path.
+                self.assertTrue(printer.print_text('QA synthetic receipt'))
+                self.assertTrue(printer.cut_paper())
+                sdk.PrinterOpen.assert_called_once()
+                sdk.InitializePrinter.assert_called_once()
+                sdk.PrinterClose.assert_not_called()
+
     async def test_server_shutdown_requires_the_per_launch_secret(self):
         secret = 'a' * 64
         stop = asyncio.Event()
@@ -224,6 +306,8 @@ class HardwareContracts(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(board.pending_payout)
         self.assertEqual(board.process_incoming(multi_frame((0x17, [1]))), [])
         self.assertEqual(board.process_incoming(multi_frame((0x15, [0]), (0x17, [0]))), [])
+        self.assertEqual(board.process_incoming(old), [], 'Running alone cannot prove a per-cycle counter')
+        self.assertEqual(board.process_incoming(multi_frame((0x15, [0] * 4), (0x16, [0] * 4), (0x17, [1]))), [])
         result = board.process_incoming(old)
         self.assertEqual(result[0]["data"][1:4], [0x64, 2, 0x53])
         self.assertIsNone(board.pending_payout)

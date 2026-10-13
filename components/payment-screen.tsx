@@ -60,9 +60,9 @@ export default function PaymentScreen({
   const requiredAmount = paymentMethod === "card" ? cardAmount : cashAmount
 
   useEffect(() => {
-    window.electronAPI?.getPropertyId?.().then((propertyId: string) => {
-      setLargeBillsOnly(propertyId.toLowerCase() === "property4")
-    })
+    window.electronAPI?.getHardwareStatus?.().then(status => {
+      setLargeBillsOnly(status.cashBackend === "bac2400")
+    }).catch(() => {})
   }, [])
 
   // Polling Interval Ref
@@ -184,6 +184,11 @@ export default function PaymentScreen({
                 console.warn("[v0] Polling: Unknown bill code:", billData.toString(16))
                 requireRecovery("투입된 지폐 금액을 확인하지 못했습니다. 추가 투입하지 말고 관리자에게 문의해주세요.")
                 return
+            }
+
+            if (largeBillsOnly && amount < 10000) {
+              requireRecovery("지원하지 않는 지폐가 수납되었습니다. 추가 투입하지 말고 관리자에게 문의해주세요.")
+              return
             }
 
             if (amount > 0) {

@@ -57,15 +57,21 @@ function stopTopmostKeeper() {
   }
 }
 
+function destroyOverlayButton() {
+  stopTopmostKeeper()
+  const button = overlayButton
+  overlayButton = null
+  // close() on a non-closable Windows window cancels app.quit().
+  if (button && !button.isDestroyed()) button.destroy()
+}
+
 /**
  * 오버레이 버튼 창 생성 (Property1, Property2 전용)
  */
 function createOverlayButton() {
   console.log("[v0] createOverlayButton called")
 
-  if (overlayButton) {
-    overlayButton.close()
-  }
+  destroyOverlayButton()
 
   const primaryDisplay = screen.getPrimaryDisplay()
   const { x, y, width, height } = primaryDisplay.bounds
@@ -260,6 +266,8 @@ for (const channel of ["checkin-complete", "close-popup"]) {
 module.exports = {
   createOverlayButton,
   createKioskPopup,
+  destroyOverlayButton,
+  getKioskPopup: () => kioskPopup && !kioskPopup.isDestroyed() ? kioskPopup : null,
   isIdleButtonSender: sender => !!overlayButton && !overlayButton.isDestroyed() &&
     overlayButton.isVisible() && !kioskPopup && overlayButton.webContents === sender,
 }
