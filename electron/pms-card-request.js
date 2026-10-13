@@ -1,9 +1,16 @@
 const { verify, createHash } = require('node:crypto')
 const { publicKey } = require('./pms-card-public-key.json')
+const requestFields = ['id', 'room', 'property', 'deviceId', 'createdAt', 'expiresAt']
 
 function verifyRequest(envelope, env, now = Date.now(), key = publicKey) {
-  const request = envelope?.request
-  if (!request || typeof envelope.signature !== 'string' || envelope.signature.length > 1024 ||
+  const received = envelope?.request
+  if (!received || typeof received !== 'object' || Array.isArray(received) ||
+      Object.keys(received).length !== requestFields.length || requestFields.some(field => !Object.hasOwn(received, field)))
+    throw new Error('invalid_remote_request')
+  // Firebase reorders object keys; retain the byte order signed by the PMS.
+  const request = { id: received.id, room: received.room, property: received.property,
+    deviceId: received.deviceId, createdAt: received.createdAt, expiresAt: received.expiresAt }
+  if (typeof envelope.signature !== 'string' || envelope.signature.length > 1024 ||
       !verify('sha256', Buffer.from('pms-card-v1:' + JSON.stringify(request)), key, Buffer.from(envelope.signature, 'base64')))
     throw new Error('invalid_remote_request')
   const { id, room, property, deviceId, createdAt, expiresAt } = request

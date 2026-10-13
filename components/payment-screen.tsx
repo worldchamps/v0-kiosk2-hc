@@ -60,9 +60,9 @@ export default function PaymentScreen({
   const requiredAmount = paymentMethod === "card" ? cardAmount : cashAmount
 
   useEffect(() => {
-    window.electronAPI?.getPropertyId?.().then((propertyId: string) => {
-      setLargeBillsOnly(propertyId.toLowerCase() === "property4")
-    })
+    window.electronAPI?.getHardwareStatus?.().then(status => {
+      setLargeBillsOnly(status.cashBackend === "bac2400")
+    }).catch(() => {})
   }, [])
 
   // Polling Interval Ref
@@ -126,6 +126,7 @@ export default function PaymentScreen({
             setStatusMessage(`거스름돈 반환 완료`)
           } else {
             console.error("[v0] Failed to dispense bills")
+            window.electronAPI?.reportDeviceFault?.('dispenser')
             requireRecovery("거스름돈 반환 완료를 확인하지 못했습니다. 중복 반환하지 말고 관리자에게 문의해주세요.")
             return
           }
@@ -136,6 +137,7 @@ export default function PaymentScreen({
         }
       } catch (e) {
         console.error("[v0] Dispenser error:", e)
+        window.electronAPI?.reportDeviceFault?.('dispenser')
         requireRecovery("거스름돈 반환 완료를 확인하지 못했습니다. 관리자에게 문의해주세요.")
         return
       }
@@ -184,6 +186,11 @@ export default function PaymentScreen({
                 return
             }
 
+            if (largeBillsOnly && amount < 10000) {
+              requireRecovery("지원하지 않는 지폐가 수납되었습니다. 추가 투입하지 말고 관리자에게 문의해주세요.")
+              return
+            }
+
             if (amount > 0) {
               console.log(`[v0] Polling: Adding bill ${amount}`)
               const newTotal = latestSession.current.acceptedAmount + amount
@@ -226,6 +233,7 @@ export default function PaymentScreen({
       setError("")
 
       try {
+        if (await window.electronAPI?.cashAvailable?.() === false) throw new Error('Acceptor stop unconfirmed')
         if (!isBillAcceptorConnected()) {
           setStatusMessage("현금 결제를 준비하고 있습니다...")
           const connected = await connectBillAcceptor()
@@ -259,6 +267,7 @@ export default function PaymentScreen({
       } catch (error) {
         if (isMounted && !cancellingRef.current) {
           console.error("[v0] Payment initialization error:", error)
+          window.electronAPI?.reportDeviceFault?.(String(error).includes('Dispenser') ? 'dispenser' : 'acceptor')
           setIsConnecting(false)
           if (acceptanceAttemptedRef.current || latestSession.current.acceptedAmount > 0) {
             requireRecovery("현금 투입구 상태를 확인하지 못했습니다. 추가 현금을 넣지 마세요.")
@@ -341,6 +350,7 @@ export default function PaymentScreen({
           await new Promise((resolve) => setTimeout(resolve, 2000))
         } else {
           console.error("[v0] Refund failed")
+          window.electronAPI?.reportDeviceFault?.('dispenser')
           requireRecovery("환불 완료를 확인하지 못했습니다. 중복 반환하지 말고 관리자에게 문의해주세요.")
           return
         }
@@ -349,6 +359,7 @@ export default function PaymentScreen({
       if (await cancelPayment()) onCancel()
     } catch (error) {
       console.error("[v0] Cancel error:", error)
+      window.electronAPI?.reportDeviceFault?.('dispenser')
       requireRecovery("결제 취소 및 반환 완료를 확인하지 못했습니다. 관리자에게 문의해주세요.")
     } finally {
       cancellingRef.current = false

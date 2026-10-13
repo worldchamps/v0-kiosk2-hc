@@ -37,8 +37,35 @@ class FakeK750:
         self.write_delay = 0
         self.controls = []
         self.denied_block = None
+        self.delayed = []
+        self.faults = {}  # (command, phase): ack_timeout, nak, response_timeout, disconnect, power_cycle
+        self.capture_seconds = 0
+        self.capture_latch = 0
+        self.capture_stuck = False
+        self.moving_until = 0
+        self.pickup_states = None
+        self.pickup_index = 0
+        self.pickup_started = False
+
+    def inject(self, command, phase, fault, after=0):
+        self.faults[(command, phase)] = (after, fault)
+
+    def next_fault(self, command, phase):
+        pending = self.faults.get((command, phase))
+        if pending is None:
+            return None
+        after, fault = pending
+        if after:
+            self.faults[(command, phase)] = (after - 1, fault)
+            return None
+        del self.faults[(command, phase)]
+        return fault
     @property
     def in_waiting(self):
+        for due, response in self.delayed[:]:
+            if self.device.clock() >= due:
+                self.input.extend(response)
+                self.delayed.remove((due, response))
         return min(len(self.input), 1)  # fragment every ACK/frame into individual bytes
     def read(self, size):
         return bytes(self.input.popleft() for _ in range(min(size, len(self.input))))
@@ -50,12 +77,42 @@ class FakeK750:
                 raise AssertionError("Command overlap before ENQ")
             self.pending = data[5:-2]
             self.commands.append(self.pending)
+            fault = self.next_fault(self.pending, "ack")
+            if isinstance(fault, (int, float)):
+                self.delayed.append((self.device.clock() + fault, b"\x06" + self.device.address))
+                return len(data)
+            if fault == "disconnect":
+                self.close()
+                return len(data)
+            if fault == "ack_timeout":
+                return len(data)
+            if fault == "nak":
+                self.input.extend(b"\x15" + self.device.address)
+                self.pending = None
+                return len(data)
             if self.fault == "silent":
                 return len(data)
             self.input.extend(bytes([21 if self.fault == "nak" else 6]) + self.device.address)
         elif data[0] == 5:
             command, self.pending = self.pending, None
+            fault = self.next_fault(command, "response")
+            response_delay = fault if isinstance(fault, (int, float)) else 0
+            if fault == "disconnect":
+                self.close()
+                return len(data)
+            if fault == "power_cycle":
+                self.bits = 0
+                self.input.clear()
+                return len(data)
+            if fault == "response_timeout":
+                return len(data)
             if command == b"AP":
+                if self.moving_until and self.device.clock() >= self.moving_until:
+                    self.moving_until = 0
+                    self.bits = (2 | 0x20) if self.capture_stuck else self.capture_latch
+                if self.pickup_states is not None and self.pickup_started:
+                    self.bits = self.pickup_states[min(self.pickup_index, len(self.pickup_states) - 1)]
+                    self.pickup_index += 1
                 if self.bits == 1 and self.take_card:
                     self.present_queries += 1
                     if self.present_queries > 1:
@@ -64,8 +121,16 @@ class FakeK750:
             elif command in self.device.MOVES.values():
                 self.authenticated_sector = None
                 self.bits = 0 if command in (b"CP", b"DB", b"RS") else 2 if command in (b"FC7", b"FC8") else 1
+                if command == b"CP":
+                    self.pickup_started = False
+                    self.moving_until = self.device.clock() + self.capture_seconds if self.capture_seconds else 0
+                    self.bits = 0x0402 if self.capture_seconds else ((2 | 0x20) if self.capture_stuck else self.capture_latch)
+                if command == b"RS":
+                    self.capture_latch = 0
                 if command == b"FC4":
                     self.present_queries = 0
+                    self.pickup_index = 0
+                    self.pickup_started = True
                 return len(data)
             elif command == b";0":
                 self.authenticated_sector = None
@@ -110,7 +175,10 @@ class FakeK750:
             frame = bytearray(self.device.frame(reply))
             if self.fault == "bcc":
                 frame[-1] ^= 1
-            self.input.extend(frame)
+            if response_delay:
+                self.delayed.append((self.device.clock() + response_delay, frame))
+            else:
+                self.input.extend(frame)
         elif data[0] == 4:
             self.controls.append(data)
             self.pending = None
@@ -124,6 +192,21 @@ class CardDispenserContracts(unittest.TestCase):
         device = CardDispenser("QA-FAKE", address=address, clock=clock, sleep=clock.sleep)
         device.ser = FakeK750(device)
         return device
+
+    def auto_recover(self, device):
+        status = device.status()
+        if not status["success"]:
+            return status
+        if status["sensors"]:
+            status = device.capture()
+            if not status["success"]:
+                return status
+        if not status.get("sensors") and status.get("reason") and not any(
+                status.get(key) for key in ("empty", "captureFull", "hopperFull")):
+            status = device.reset()
+            if not status["success"]:
+                return status
+        return device.status()
 
     def test_gate_requires_explicit_supported_pc_and_flag(self):
         for prop, building, allowed in [("property1", "", True), ("property3", "A", True),
@@ -147,8 +230,9 @@ class CardDispenserContracts(unittest.TestCase):
         device = self.device()
         device.ser.bits = 2
         self.assertTrue(device.capture()["settled"])
-        self.assertEqual(device.ser.commands, [b"AP", b"CP", b"AP"])
-        self.assertGreaterEqual(device.clock(), .2)
+        self.assertEqual(device.ser.commands[:3], [b"AP", b"CP", b"AP"])
+        self.assertTrue(all(command == b"AP" for command in device.ser.commands[3:]))
+        self.assertGreaterEqual(device.clock(), .4)
 
     def test_device_number_08_is_used_for_command_and_control_frames(self):
         device = self.device(b"08")
@@ -535,3 +619,194 @@ class CardDispenserContracts(unittest.TestCase):
         self.assertLessEqual(device.clock(), 30.1)
         self.assertEqual(device.ser.commands.count(b"FC7"), 1)
         self.assertIn(b"CP", device.ser.commands)
+
+    def test_unclaimed_capture_can_finish_after_five_seconds_with_latched_error(self):
+        for mode in ("uid_only", "full"):
+            with self.subTest(mode=mode):
+                device = self.device(b"08")
+                device.ser.take_card = False
+                device.ser.capture_seconds = 7
+                device.ser.capture_latch = 0x0100
+                result = device.issue(self.record(device), mode=mode)
+                self.assertEqual((result["reason"], result["settled"], result["state"]),
+                                 ("not_taken", True, "captured"))
+                self.assertLessEqual(device.clock(), 120)
+                self.assertFalse(device.lock.locked())
+                self.assertEqual(device.ser.commands.count(b"FC7"), 1)
+                self.assertEqual(device.ser.commands.count(b"FC4"), 1)
+                self.assertNotIn("01020304", str(result))
+                self.assertEqual(device.status()["reason"], "capture_error")
+                self.assertTrue(device.reset()["success"])
+                device.ser.take_card = True
+                self.assertTrue(device.issue(self.record(device), mode=mode)["success"])
+
+    def test_latched_errors_allow_capture_then_empty_reset_but_stuck_card_stays_unresolved(self):
+        for mask in (0x0100, 0x0200, 0x0020, 0x0040):
+            with self.subTest(mask=mask):
+                device = self.device()
+                device.ser.bits = 2 | mask
+                device.ser.capture_latch = mask
+                self.assertTrue(device.capture()["settled"])
+                self.assertTrue(device.reset()["success"])
+                self.assertFalse(device.lock.locked())
+        device = self.device()
+        device.ser.bits = 2 | 0x20
+        device.ser.capture_stuck = True
+        self.assertFalse(device.capture()["settled"])
+        self.assertEqual(device.reset()["reason"], "card_present")
+        device.ser.capture_stuck = False
+        self.assertTrue(device.status()["success"])
+        self.assertTrue(device.capture()["success"])
+        self.assertTrue(device.reset()["success"])
+        self.assertTrue(device.issue(self.record(device), mode="uid_only")["success"])
+        self.assertFalse(device.lock.locked())
+
+    def test_desynchronized_new_operations_recover_channel_before_preflight(self):
+        for action in ("issue", "register", "accept_return"):
+            with self.subTest(action=action):
+                device = self.device()
+                device.ser.inject(b"AP", "ack", "ack_timeout")
+                self.assertEqual(device.status()["reason"], "timeout")
+                result = (device.issue(self.record(device), mode="uid_only") if action == "issue" else
+                          device.register(self.profile) if action == "register" else device.accept_return())
+                self.assertTrue(result["success"], result)
+                self.assertEqual(device.ser.controls, [b"\x0400"])
+                self.assertFalse(device.lock.locked())
+
+    def test_preflight_rejections_settle_without_moving_a_card(self):
+        for action, bits in (("issue", 8), ("issue", 0x20), ("register", 2),
+                             ("accept_return", 0x80)):
+            with self.subTest(action=action, bits=bits):
+                device = self.device()
+                device.ser.bits = bits
+                result = (device.issue(self.record(device), mode="uid_only") if action == "issue" else
+                          device.register(self.profile) if action == "register" else device.accept_return())
+                self.assertFalse(result["success"])
+                self.assertTrue(result["settled"], result)
+                self.assertEqual(device.ser.commands, [b"AP"])
+                self.assertFalse(device.lock.locked())
+
+    def test_original_not_taken_uses_same_extended_capture_budget(self):
+        device = self.device()
+        device.ser.take_card = False
+        device.ser.capture_seconds = 7
+        self.assertEqual(device.register(self.profile)["state"], "captured")
+        self.assertFalse(device.lock.locked())
+        self.assertEqual(device.ser.wrote, set())
+
+    def test_pickup_reinsert_and_flicker_do_not_report_taken_or_issue_again(self):
+        for states in ([1, 2, 2], [1, 0, 1, 1]):
+            with self.subTest(states=states):
+                device = self.device()
+                device.ser.take_card = False
+                device.ser.pickup_states = states
+                result = device.issue(self.record(device), mode="uid_only")
+                self.assertNotEqual(result.get("state"), "taken")
+                self.assertEqual(device.ser.commands.count(b"FC7"), 1)
+                self.assertLessEqual(device.clock(), 120)
+                self.assertFalse(device.lock.locked())
+
+    def test_transport_faults_bound_time_and_release_lock(self):
+        for command, phase, fault in ((b"AP", "ack", "nak"), (b"AP", "ack", "ack_timeout"),
+                                      (b"AP", "response", "response_timeout"),
+                                      (b"AP", "response", "disconnect"),
+                                      (b"AP", "response", "power_cycle"),
+                                      (b"AP", "response", 3)):
+            with self.subTest(command=command, phase=phase, fault=fault):
+                device = self.device()
+                device.ser.inject(command, phase, fault)
+                result = device.issue(self.record(device), mode="uid_only")
+                self.assertFalse(result["success"])
+                self.assertTrue(result["settled"])
+                self.assertEqual(device.ser.commands.count(b"FC7"), 0)
+                self.assertLessEqual(device.clock(), 32)
+                self.assertFalse(device.lock.locked())
+
+    def test_full_capture_bin_and_low_hopper_status(self):
+        device = self.device()
+        device.ser.bits = 0x8010
+        status = device.status()
+        self.assertTrue(status["low"] and status["captureFull"])
+        self.assertEqual(device.capture()["reason"], "capture_full")
+        self.assertNotIn(b"CP", device.ser.commands)
+        self.assertFalse(device.lock.locked())
+        device = self.device()
+        device.ser.bits = 2
+        device.ser.capture_latch = 0x8000
+        result = device.capture()
+        self.assertEqual(result["reason"], "capture_full")
+        self.assertFalse(result["settled"])
+        self.assertFalse(device.lock.locked())
+
+    def test_fault_phase_matrix_recovers_without_admin_commands(self):
+        # Applicable ACK, response, movement, pickup and capture phases across all commands.
+        cases = (("issue_uid", b"FC7", "ack", "ack_timeout", 0),
+                 ("issue_full", b"AP", "response", "response_timeout", 1),
+                 ("issue_uid", b"AP", "response", "response_timeout", 3),
+                 ("register", b"FC8", "ack", "nak", 0),
+                 ("register", b"AP", "response", "response_timeout", 1),
+                 ("return", b"FC8", "ack", "ack_timeout", 0),
+                 ("return", b"AP", "response", "response_timeout", 1),
+                 ("capture", b"CP", "ack", "ack_timeout", 0),
+                 ("capture", b"AP", "response", "response_timeout", 1),
+                 ("reset", b"RS", "ack", "ack_timeout", 0),
+                 ("status", b"AP", "response", "response_timeout", 0))
+        for action, command, phase, fault, after in cases:
+            with self.subTest(action=action, command=command, phase=phase, after=after):
+                device = self.device()
+                if action == "capture":
+                    device.ser.bits = 2
+                device.ser.inject(command, phase, fault, after)
+                record = self.record(device)
+                result = (device.issue(record, mode="uid_only" if action == "issue_uid" else "full")
+                          if action.startswith("issue") else
+                          device.register(self.profile) if action == "register" else
+                          device.accept_return() if action == "return" else
+                          device.capture() if action == "capture" else
+                          device.reset() if action == "reset" else device.status())
+                self.assertFalse(result["success"], result)
+                self.assertLessEqual(device.clock(), 120)
+                self.assertFalse(device.lock.locked())
+                self.assertLessEqual(device.ser.commands.count(b"FC7"), 1)
+                self.assertLessEqual(device.ser.commands.count(b"FC4"), 1)
+                if action == "register":
+                    self.assertEqual(device.ser.wrote, set())
+                device.ser.take_card = True
+                for _ in range(3):
+                    status = self.auto_recover(device)
+                    if status["success"] and not status["reason"] and not status["sensors"]:
+                        break
+                self.assertTrue(status["success"] and not status["reason"] and not status["sensors"], status)
+                device.ser.commands.clear()
+                self.assertTrue(device.issue(self.record(device), mode="uid_only")["success"])
+                self.assertEqual(device.ser.commands.count(b"FC7"), 1)
+                self.assertFalse(device.lock.locked())
+
+    def test_disconnect_mid_movement_recovers_after_idle_reconnect(self):
+        device = self.device()
+        device.ser.inject(b"AP", "response", "disconnect", after=1)
+        result = device.issue(self.record(device), mode="uid_only")
+        self.assertFalse(result["settled"])
+        self.assertEqual(device.ser.commands.count(b"FC7"), 1)
+        self.assertFalse(device.lock.locked())
+        replacement = FakeK750(device)
+        replacement.bits = 2
+        with patch("serial_manager.serial.Serial", return_value=replacement):
+            status = self.auto_recover(device)
+        self.assertTrue(status["success"] and not status["sensors"] and not status["reason"])
+        self.assertTrue(device.issue(self.record(device), mode="uid_only")["success"])
+        self.assertEqual(device.ser.commands.count(b"FC7"), 1)
+
+    def test_power_cycle_drops_reply_but_operation_remains_bounded(self):
+        device = self.device()
+        device.ser.inject(b"AP", "response", "power_cycle", after=1)
+        result = device.issue(self.record(device), mode="uid_only")
+        self.assertFalse(result["success"])
+        self.assertLessEqual(device.clock(), 50)
+        self.assertFalse(device.lock.locked())
+        self.assertEqual(device.ser.commands.count(b"FC7"), 1)
+        status = self.auto_recover(device)
+        self.assertTrue(status["success"] and not status["sensors"] and not status["reason"])
+        device.ser.commands.clear()
+        self.assertTrue(device.issue(self.record(device), mode="uid_only")["success"])
+        self.assertEqual(device.ser.commands.count(b"FC7"), 1)

@@ -59,11 +59,11 @@ PROPERTY_ID = (
     or os.environ.get("NEXT_PUBLIC_KIOSK_PROPERTY_ID")
     or "property3"
 ).lower()
-USE_BAC2400 = PROPERTY_ID == "property4"
 USE_WOOSIM = PROPERTY_ID == "property3" and os.environ.get("KIOSK_BUILDING") == "B"
+USE_BAC2400 = PROPERTY_ID == "property4" or USE_WOOSIM
 
 bac2400 = Bac2400(
-    os.environ.get("BAC2400_PORT") or os.environ.get("BOARD3400_PORT", "COM5")
+    os.environ.get("BAC2400_PORT") or os.environ.get("BOARD3400_PORT") or "COM5"
 ) if USE_BAC2400 else None
 dispenser = None if USE_BAC2400 else OnePlusDispenser(DISPENSER_PORT)
 acceptor = None if USE_BAC2400 else OnePlusAcceptor(ACCEPTOR_PORT)
@@ -83,6 +83,7 @@ if card_enabled(os.environ) and len(CARD_BRIDGE_TOKEN) == 64:
 
 connected_clients = set()
 card_tasks = set()
+shutdown_event = None
 
 
 async def handle_card_command(websocket, message):
@@ -152,6 +153,8 @@ def legacy_packet(command1, command2, data):
 
 def handle_bac2400_message(message):
     command_type = message.get("type")
+    if command_type == "cash_board_recover":
+        return bac2400.recover(message.get("target"), message.get("requestId"))
     if command_type == "raw_acceptor":
         return bac2400.handle_acceptor_command(bytes(message.get("data", [])))
     if command_type == "raw_dispenser":
@@ -180,6 +183,8 @@ def handle_bac2400_message(message):
 
 async def poll_bac2400_payout():
     while True:
+        for response in bac2400.expire_operations():
+            await broadcast(response)
         if bac2400.payout_in_progress:
             bac2400.query_dispenser()
         await asyncio.sleep(0.25)
@@ -256,6 +261,14 @@ async def handle_client(websocket, *args):
                     acceptor.send(bytes(msg.get("data", [])))
                 elif cmd_type == "ping":
                     await websocket.send(json.dumps({"type": "pong"}))
+                elif cmd_type == "printer_status":
+                    if printer and not printer.is_connected:
+                        printer.connect()
+                    await websocket.send(json.dumps({"type": "printer_status", "ready": bool(printer and printer.is_connected)}))
+                elif cmd_type == "shutdown" and shutdown_event and isinstance(msg.get("token"), str) and \
+                        len(msg["token"]) == 64 and CARD_BRIDGE_TOKEN and hmac.compare_digest(msg["token"], CARD_BRIDGE_TOKEN):
+                    await websocket.send(json.dumps({"type": "shutdown_ack"}))
+                    shutdown_event.set()
             except json.JSONDecodeError:
                 logger.error("Invalid JSON received")
             except Exception as exc:
@@ -272,14 +285,16 @@ async def handle_client(websocket, *args):
 
 
 async def main():
-    global main_loop
+    global main_loop, shutdown_event
     main_loop = asyncio.get_running_loop()
+    shutdown_event = asyncio.Event()
 
     if card_dispenser:
         card_dispenser.connect()
 
     if bac2400:
-        logger.info("Property4 selected: using BAC-2400 V1.3 (BV1/BD1) on %s", bac2400.port)
+        logger.info("%s building=%s: using BAC-2400/3400 adapter (BV1/BD1) on %s; firmware unverified",
+                    PROPERTY_ID, os.environ.get("KIOSK_BUILDING", ""), bac2400.port)
         bac2400.connect()
         bac2400.start(bac2400_callback)
         asyncio.create_task(poll_bac2400_payout())
@@ -296,15 +311,10 @@ async def main():
 
     logger.info("Starting WebSocket server on ws://localhost:8082")
     # Only the native Electron bridge connects here; web pages must never issue cash/printer commands.
-    async with websockets.serve(handle_client, "localhost", 8082, origins=[None], max_size=65536):
-        await asyncio.Future()
-
-
-if __name__ == "__main__":
     try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Server stopping...")
+        async with websockets.serve(handle_client, "localhost", 8082, origins=[None], max_size=65536):
+            await shutdown_event.wait()
+    finally:
         if card_dispenser:
             card_dispenser.stop()
         if bac2400:
@@ -314,3 +324,10 @@ if __name__ == "__main__":
             acceptor.stop()
         if printer:
             printer.disconnect()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Server interrupted")

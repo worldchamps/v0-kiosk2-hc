@@ -1,6 +1,7 @@
 param(
   [string]$PrinterName = "",
-  [switch]$CheckOnly
+  [switch]$CheckOnly,
+  [switch]$FunctionsOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,13 +30,13 @@ function New-ReceiptFormat([string]$Alignment) {
   return $format
 }
 
-function Draw-Receipt($Graphics, $Commands, [double]$OffsetXmm = 0, [double]$OffsetYmm = 0) {
+function Draw-Receipt($Graphics, $Commands, [double]$OffsetXmm = 0, [double]$OffsetYmm = 0, [double]$WidthMm = 72) {
   $Graphics.PageUnit = [System.Drawing.GraphicsUnit]::Millimeter
   $Graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::SingleBitPerPixelGridFit
   $Graphics.TranslateTransform([single]$OffsetXmm, [single]$OffsetYmm)
   $y = 4.0
   $x = 4.0
-  $width = 72.0
+  $width = $WidthMm
 
   foreach ($line in $Commands) {
     if ($null -ne $line.gapBefore) { $y += [double]$line.gapBefore }
@@ -64,7 +65,7 @@ function Draw-Receipt($Graphics, $Commands, [double]$OffsetXmm = 0, [double]$Off
           try {
             $leftWidth = 23.0
             $rightX = $x + 25.0
-            $rightWidth = 47.0
+            $rightWidth = $width - 25.0
             $leftText = [string]$line.left
             $rightText = [string]$line.right
             $leftSize = $Graphics.MeasureString($leftText, $font, [System.Drawing.SizeF]::new([single]$leftWidth, [single]1000), $leftFormat)
@@ -98,6 +99,8 @@ function Draw-Receipt($Graphics, $Commands, [double]$OffsetXmm = 0, [double]$Off
   }
   return $y
 }
+
+if ($FunctionsOnly) { return }
 
 if ($CheckOnly) {
   $sample = ([string][char]0xD55C) + ([string][char]0xAE00) + " SAM4S 1234"
