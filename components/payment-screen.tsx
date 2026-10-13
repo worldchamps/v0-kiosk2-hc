@@ -17,7 +17,7 @@ import {
   setEventCallback,
   initializeDevice,
 } from "@/lib/bill-acceptor-utils"
-import { dispenseBills, connectBillDispenser, isBillDispenserConnected, getDispenserStatus } from "@/lib/bill-dispenser-utils"
+import { dispenseBills, connectBillDispenser, isBillDispenserConnected } from "@/lib/bill-dispenser-utils"
 import { printReceipt } from "@/lib/printer-utils"
 
 interface PaymentScreenProps {
@@ -237,14 +237,6 @@ export default function PaymentScreen({
         if (!isMounted || cancellingRef.current) return
         console.log("[v0] Bill acceptor connected")
         setStatusMessage("지폐 투입구를 준비하고 있습니다...")
-        // Check both devices before opening the inlet; a cached connection is not readiness.
-        const initialStatus = await getStatus()
-        if (!isMounted || cancellingRef.current) return
-        if (initialStatus !== 0x01 && initialStatus !== 0x02) throw new Error("Acceptor not idle")
-        if (!await initializeDevice() || !await setConfig(0x1c)) throw new Error("Acceptor stop not confirmed")
-        if (!isMounted || cancellingRef.current) return
-        if (!isBillDispenserConnected() && !await connectBillDispenser()) throw new Error("Dispenser disconnected")
-        if (await getDispenserStatus() !== 0x62) throw new Error("Dispenser not ready")
         if (!isMounted || cancellingRef.current) return
         acceptanceAttemptedRef.current = true
         if (!await enableAcceptance()) throw new Error("Acceptor enable not confirmed")

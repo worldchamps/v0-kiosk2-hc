@@ -262,7 +262,7 @@ for (const action of ['취소', '결제수단 변경']) {
     h.renderEffects.at(-1)(); // Start the actual cash initialization effect.
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(enabling, true);
-    stops = 0; // Ignore the preflight reset/stop completed before opening the inlet.
+    assert.equal(stops, 0, 'cash initialization must not reset or stop before enabling');
     const cancelling = h.button(action).onClick();
     await Promise.resolve();
     assert.equal(stops, 0, 'must drain enable before sending another OK-returning command');
@@ -303,29 +303,52 @@ test('confirmed zero-cash cancellation does not send a duplicate stop on unmount
 });
 
 test('zero-cash cancellation still blocks when acceptor shutdown is not confirmed', async () => {
-  let resets = 0;
-  const h = cashScreen(0, false, { initializeDevice: async () => ++resets === 1 });
+  const h = cashScreen(0, false, { initializeDevice: async () => false });
   h.renderEffects.at(-1)(); await new Promise(resolve => setImmediate(resolve));
   await h.button('취소').onClick();
   assert(h.calls.recovery); assert.equal(h.calls.cancelled, 0);
   assert.deepEqual(h.calls.dispense, []);
 });
 
-for (const stage of ['acceptor', 'reset', 'stop', 'dispenser']) {
-  test(`cash ${stage} preflight failure returns home before accepting money`, async () => {
-    let enables = 0;
-    const h = cashScreen(0, false, {
-      getStatus: async () => stage === 'acceptor' ? null : 1,
-      initializeDevice: async () => stage !== 'reset',
-      setConfig: async () => stage !== 'stop',
-      enableAcceptance: async () => { enables++; return true; },
-    }, { getDispenserStatus: async () => stage === 'dispenser' ? -1 : 0x62 });
-    h.renderEffects.at(-1)(); await new Promise(resolve => setImmediate(resolve));
-    assert.equal(enables, 0); assert.equal(h.calls.polling, 0);
-    assert.equal(h.calls.cancelled, 1); assert(h.calls.unavailable);
-    assert.equal(h.calls.recovery, ''); assert.deepEqual(h.calls.dispense, []);
+test('cash starts without acceptor or dispenser pre-checks', async () => {
+  let enables = 0, prechecks = 0;
+  const h = cashScreen(0, false, {
+    getStatus: async () => { prechecks++; return 0x0b; },
+    initializeDevice: async () => { prechecks++; return false; },
+    setConfig: async () => { prechecks++; return false; },
+    enableAcceptance: async () => { enables++; return true; },
+  }, {
+    isBillDispenserConnected: () => { prechecks++; return false; },
+    connectBillDispenser: async () => { prechecks++; return false; },
+    getDispenserStatus: async () => { prechecks++; return -1; },
   });
-}
+  h.renderEffects.at(-1)(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(prechecks, 0); assert.equal(enables, 1); assert.equal(h.calls.polling, 1);
+  assert.equal(h.calls.cancelled, 0); assert.equal(h.calls.unavailable, undefined);
+  assert.equal(h.calls.recovery, ''); assert.deepEqual(h.calls.dispense, []);
+});
+
+test('cash acceptor connection failure returns home before accepting money', async () => {
+  let enables = 0;
+  const h = cashScreen(0, false, {
+    isBillAcceptorConnected: () => false,
+    connectBillAcceptor: async () => false,
+    enableAcceptance: async () => { enables++; return true; },
+  });
+  h.renderEffects.at(-1)(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(enables, 0); assert.equal(h.calls.polling, 0);
+  assert.equal(h.calls.cancelled, 1); assert(h.calls.unavailable);
+  assert.equal(h.calls.recovery, ''); assert.deepEqual(h.calls.dispense, []);
+});
+
+test('cash enable acknowledgement failure requires recovery', async () => {
+  let enables = 0;
+  const h = cashScreen(0, false, { enableAcceptance: async () => { enables++; return false; } });
+  h.renderEffects.at(-1)(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(enables, 1); assert.equal(h.calls.polling, 0);
+  assert.equal(h.calls.cancelled, 0); assert.equal(h.calls.unavailable, undefined);
+  assert(h.calls.recovery); assert.deepEqual(h.calls.dispense, []);
+});
 for (const [amount, result] of [[35000, true], [50000, false]]) {
   test(`cash completion ${amount}/${result} cannot complete with unreturned change`, async () => {
     const h = cashScreen(amount, result); await h.callbacks[0](amount);
