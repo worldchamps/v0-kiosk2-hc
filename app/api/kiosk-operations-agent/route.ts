@@ -22,8 +22,7 @@ export async function POST(request: NextRequest) {
       })
     }
     await db.ref(`kiosk_operations/devices/${body.deviceId}`).set({ property: body.property, building: body.building,
-      version: body.version, lastSeen: Date.now(), recovery: body.recovery, printer: body.printer, hardware: body.hardware })
-    return NextResponse.json({ command: job?.status === 'pending' &&
-      (job.request.action === 'reset_device' || job.request.expiresAt > Date.now()) && job.request.id !== body.result?.id ? job : null })
+      version: body.version, lastSeen: Date.now(), recovery: body.recovery, printer: body.printer })
+    return NextResponse.json({ command: job?.status === 'pending' && job.request.expiresAt > Date.now() && job.request.id !== body.result?.id ? job : null })
   } catch { return NextResponse.json({ error: 'Device report unavailable' }, { status: 503 }) }
 }

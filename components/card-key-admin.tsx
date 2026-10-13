@@ -132,8 +132,8 @@ export default function CardKeyAdmin({ onBusy, request, onRegistered, onClose }:
     {(!request || unresolved) && <div className="flex flex-wrap gap-3">
       <Button disabled={busy} variant="outline" onClick={() => run("status")}>장치 상태</Button>
       <Button disabled={busy} variant="outline" onClick={() => run("capture")}>회수함으로 회수</Button>
-      <Button disabled={busy} variant="outline" onClick={() => run("reset")}>빈 장비 초기화</Button>
       {!request && <>
+        <Button disabled={busy || unresolved} variant="outline" onClick={() => run("reset")}>빈 장비 초기화</Button>
         <Button disabled={busy || unresolved} variant="outline" onClick={() => run("return")}>카드 반납</Button>
       </>}
     </div>}

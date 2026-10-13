@@ -11,11 +11,6 @@ import time
 
 from serial_manager import SerialDevice
 
-ISSUE_BUDGET = 30
-PRESENT_BUDGET = 5
-PICKUP_BUDGET = 60
-CAPTURE_BUDGET = 15
-
 
 class CardError(Exception):
     def __init__(self, reason, sectors=None, **details):
@@ -70,7 +65,6 @@ class CardDispenser(SerialDevice):
         self.desynchronized = False
         self.error_stage, self.received_bytes = "", 0
         self.last_failure = None
-        self.movement_started = False
 
     def start(self, callback=None):
         # Read synchronously under the operation lock. SerialDevice._run logs raw bytes.
@@ -144,8 +138,6 @@ class CardDispenser(SerialDevice):
         if self.desynchronized:
             raise CardError("protocol_unsynchronized")
         try:
-            if command in self.MOVES.values():
-                self.movement_started = True
             self.error_stage, self.received_bytes = "write", 0
             if not self.send(self.frame(command)):
                 raise CardError("disconnected")
@@ -229,31 +221,17 @@ class CardDispenser(SerialDevice):
         status = self._wait(lambda state: True, deadline, allow_errors=True)
         if status["captureFull"]:
             raise CardError("capture_full")
-        # Bench confirmation needed: K750 may retain error bits until RS.
-        clear_since = None
-        def captured(state):
-            nonlocal clear_since
-            if state["captureFull"] or state["bits"] & 0x4000:
-                raise CardError(state["reason"] or "command_rejected")
-            if state["sensors"]:
-                clear_since = None
-                return False
-            if clear_since is None:
-                clear_since = self.clock()
-            return self.clock() - clear_since >= 0.4
-        return self._move("capture", captured, deadline, allow_errors=True)
+        return self._move("capture", lambda state: state["sensors"] == 0, deadline)
 
     def _run_locked(self, action):
         if not self.lock.acquire(blocking=False):
             return {"success": False, "reason": "busy", "settled": False}
         try:
-            self.movement_started = False
             return action()
         except CardError as exc:
-            return {"success": False, "reason": exc.reason, "failedSectors": exc.sectors,
-                    "settled": not self.movement_started, **exc.details}
+            return {"success": False, "reason": exc.reason, "failedSectors": exc.sectors, "settled": False, **exc.details}
         except Exception:
-            return {"success": False, "reason": "device_error", "settled": not self.movement_started}
+            return {"success": False, "reason": "device_error", "settled": False}
         finally:
             self.lock.release()
 
@@ -284,7 +262,7 @@ class CardDispenser(SerialDevice):
 
     def capture(self):
         return self._run_locked(lambda: {"success": True, "settled": True,
-                                         **self._capture(self.clock() + CAPTURE_BUDGET)})
+                                         **self._capture(self.clock() + 5)})
 
     def reset(self):
         def run():
@@ -293,9 +271,7 @@ class CardDispenser(SerialDevice):
             status = self._status(deadline)
             if status["sensors"] or status["moving"]:
                 raise CardError("card_present")
-            # Bench confirmation needed: RS must clear latched error bits.
-            self._move("reset", lambda state: state["sensors"] == 0 and not state["reason"],
-                       deadline, allow_errors=True)
+            self._move("reset", lambda state: state["sensors"] == 0, deadline)
             return {"success": True, "settled": True}
         return self._run_locked(run)
 
@@ -358,29 +334,17 @@ class CardDispenser(SerialDevice):
         raise CardError("timeout")
 
     def _present_and_wait(self, progress):
-        self._move("present", lambda state: bool(state["sensors"]), self.clock() + PRESENT_BUDGET)
+        self._move("present", lambda state: bool(state["sensors"]), self.clock() + 5)
         progress({"state": "presented"})
-        deadline, clear_since = self.clock() + PICKUP_BUDGET, None
-        reason = "not_taken"
-        try:
-            while self.clock() < deadline:
-                state = self._status(deadline)
-                if state["reason"]:
-                    raise CardError(state["reason"])
-                if not state["moving"] and not state["sensors"]:
-                    if clear_since is None:
-                        clear_since = self.clock()
-                    if self.clock() - clear_since >= 0.4:
-                        return {"success": True, "settled": True, "state": "taken"}
-                else:
-                    clear_since = None
-        except CardError as exc:
-            reason = exc.reason
-        try:
-            self._capture(self.clock() + CAPTURE_BUDGET)
-            return {"success": False, "settled": True, "state": "captured", "reason": reason}
-        except CardError:
-            return {"success": False, "settled": False, "state": "unresolved", "reason": reason}
+        deadline = self.clock() + 60
+        while self.clock() < deadline:
+            state = self._status(deadline)
+            if state["reason"]:
+                raise CardError(state["reason"])
+            if not state["moving"] and not state["sensors"]:
+                return {"success": True, "settled": True, "state": "taken"}
+        self._capture(self.clock() + 5)
+        return {"success": False, "settled": True, "state": "captured", "reason": "not_taken"}
 
     def _read_source(self, profile, deadline):
         blocks, failed = {}, []
@@ -413,7 +377,6 @@ class CardDispenser(SerialDevice):
         def run():
             validate_profile(profile)
             deadline = self.clock() + 30
-            self._recover_channel(deadline)
             state = self._status(deadline)
             if state["reason"] or state["moving"] or state["sensors"]:
                 raise CardError(state["reason"] or "card_present")
@@ -467,8 +430,7 @@ class CardDispenser(SerialDevice):
                 trailer = blocks[str(item["sector"] * 4 + 3)].lower()
                 if trailer[:12] != item["keyA"].lower() or trailer[20:] != item["keyB"].lower() or trailer[12:18] != "ff0780":
                     raise CardError("invalid_record")
-            deadline = self.clock() + ISSUE_BUDGET
-            self._recover_channel(deadline)
+            deadline = self.clock() + 30
             state = self._status(deadline)
             if state["reason"] or state["moving"] or state["sensors"] or state["empty"]:
                 raise CardError(state["reason"] or ("empty" if state["empty"] else "card_present"))
@@ -536,25 +498,15 @@ class CardDispenser(SerialDevice):
                         pass
                 return {"success": False, "reason": exc.reason, "failedSectors": exc.sectors, "settled": settled, **exc.details}
             progress({"state": "presented"})
-            pickup_deadline, clear_since = self.clock() + PICKUP_BUDGET, None
+            pickup_deadline = self.clock() + 60
             try:
-                while self.clock() < pickup_deadline:
-                    state = self._status(pickup_deadline)
-                    if state["reason"]:
-                        raise CardError(state["reason"])
-                    if not state["moving"] and not state["sensors"]:
-                        if clear_since is None:
-                            clear_since = self.clock()
-                        if self.clock() - clear_since >= 0.4:
-                            return {"success": True, "settled": True, "state": "taken", "uidChanged": uid != source_uid,
-                                    "uidMatchesSource": True, "issueMode": mode, "dispenseMs": dispense_ms}
-                    else:
-                        clear_since = None
-                raise CardError("timeout")
+                self._wait(lambda status: status["sensors"] == 0, pickup_deadline)
+                return {"success": True, "settled": True, "state": "taken", "uidChanged": uid != source_uid,
+                        "uidMatchesSource": True, "issueMode": mode, "dispenseMs": dispense_ms}
             except CardError as exc:
                 settled = False
                 try:
-                    self._capture(self.clock() + CAPTURE_BUDGET)
+                    self._capture(self.clock() + 5)
                     settled = True
                 except CardError:
                     pass
@@ -565,7 +517,6 @@ class CardDispenser(SerialDevice):
     def accept_return(self, progress=lambda _: None):
         def run():
             deadline = self.clock() + 30
-            self._recover_channel(deadline)
             state = self._status(deadline)
             if state["reason"] or state["moving"] or state["sensors"] or state["hopperFull"]:
                 raise CardError(state["reason"] or ("hopper_full" if state["hopperFull"] else "card_present"))

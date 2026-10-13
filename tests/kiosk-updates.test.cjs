@@ -93,7 +93,6 @@ test("an unsuccessful installer is not retried forever", async (t) => {
   assert.equal(h.calls.installs, 1)
 })
 test("an asynchronous installer launch failure is reported and restarts the old app", async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] })
   let recoveries = 0, reportError
   const h = updaterHarness(t, { recover: () => recoveries++ })
   h.native.on = (_event, listener) => { reportError = listener }
@@ -104,30 +103,6 @@ test("an asynchronous installer launch failure is reported and restarts the old 
   assert.equal(h.client.status().state, "failed")
   assert.equal(h.calls.resumes, 1)
   assert.equal(recoveries, 1)
-  t.mock.timers.tick(60000)
-  await new Promise((resolve) => setImmediate(resolve))
-  assert.equal(recoveries, 1, 'error clears the exit watchdog')
-})
-
-test('a canceled quit fails after 60 seconds, resumes reporting and never repeats installation', async t => {
-  t.mock.timers.enable({ apis: ['setTimeout'] })
-  let recoveries = 0
-  const h = updaterHarness(t, { recover: () => recoveries++ })
-  h.idle(); await h.client.tick()
-  assert.equal(h.client.status().state, 'installing')
-  const reports = h.calls.reports.length
-  t.mock.timers.tick(59999); await h.client.tick()
-  assert.equal(h.calls.resumes, 0); assert.equal(h.calls.reports.length, reports)
-  t.mock.timers.tick(1)
-  await new Promise(resolve => setImmediate(resolve))
-  assert.equal(h.client.status().state, 'failed')
-  assert.match(h.client.status().message, /60초/)
-  assert.equal(JSON.parse(fs.readFileSync(h.stateFile)).state, 'failed')
-  assert.equal(h.calls.resumes, 1); assert.equal(recoveries, 1)
-  assert.equal(h.calls.reports.at(-1).state, 'failed')
-  await h.client.tick()
-  assert(h.calls.reports.length > reports)
-  assert.equal(h.calls.installs, 1)
 })
 test("a canceled request cannot apply a previously downloaded installer", async (t) => {
   const h = updaterHarness(t, { prepare: async () => { h.remote.request = null; return true } })

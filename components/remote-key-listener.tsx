@@ -15,7 +15,6 @@ async function requestJob(id: string, action: string, details = {}) {
 
 export function RemoteKeyListener({ idle, onBusy }: { idle: boolean; onBusy: (busy: boolean) => void }) {
   const idleRef = useRef(idle), running = useRef(false)
-  const retries = useRef(new Map<string, { delay: number; nextAttemptAt: number; expiresAt: number }>())
   idleRef.current = idle
   const [room, setRoom] = useState("")
   const [message, setMessage] = useState("")
@@ -26,7 +25,7 @@ export function RemoteKeyListener({ idle, onBusy }: { idle: boolean; onBusy: (bu
       const api = window.electronAPI?.cardKey
       if (stopped || running.current || !idleRef.current || !api?.issueRemote) return
       running.current = true
-      let id = "", expiresAt = 0, cardIssued = false, claimed = false, busy = false
+      let id = "", cardIssued = false, claimed = false
       try {
         // Checking native availability on every poll would continually reset
         // the updater's device-idle timer. Device settings apply on app restart.
@@ -34,24 +33,12 @@ export function RemoteKeyListener({ idle, onBusy }: { idle: boolean; onBusy: (bu
         if (!enabled) return
         const response = await fetch("/api/remote-key", { cache: "no-store", signal: AbortSignal.timeout(15000) })
         const data = await response.json()
-        if (!response.ok || stopped || !idleRef.current || !Array.isArray(data.jobs)) return
-        const now = Date.now()
-        const jobs: { id: string; expiresAt: number }[] = data.jobs
-        for (const [key, retry] of retries.current) {
-          if (retry.expiresAt <= now) retries.current.delete(key)
-        }
-        const candidate = jobs.find(job => Number.isFinite(job.expiresAt) && job.expiresAt > now &&
-          (retries.current.get(job.id)?.nextAttemptAt ?? 0) <= now)
-        if (!candidate) return
-        id = candidate.id
-        expiresAt = candidate.expiresAt
+        if (!response.ok || stopped || !idleRef.current || !data.jobs?.length) return
+        id = data.jobs[0]
+        onBusy(true)
+        setRoom("객실"); setMessage("")
         const job = await requestJob(id, "claim")
         claimed = true
-        retries.current.delete(id)
-        if (stopped || !idleRef.current) return
-        busy = true
-        onBusy(true)
-        setMessage("")
         setRoom(job.receipt.roomNumber)
         if (!await autoConnectPrinter()) throw Error("프린터가 연결되지 않았습니다.")
         // The native service verifies the PMS signature and keeps a durable result
@@ -72,16 +59,11 @@ export function RemoteKeyListener({ idle, onBusy }: { idle: boolean; onBusy: (bu
         setMessage(`${job.receipt.roomNumber} 카드 수령 및 인쇄 명령 완료`)
       } catch (error) {
         const message = error instanceof Error ? error.message : "원격 배출 확인이 필요합니다."
-        if (claimed) {
-          setMessage(message)
-          await requestJob(id, "fail", { error: message, cardIssued }).catch(() => {})
-        } else if (id) {
-          const delay = Math.min((retries.current.get(id)?.delay ?? 15000) * 2, 300000)
-          retries.current.set(id, { delay, nextAttemptAt: Date.now() + delay, expiresAt })
-        }
+        setMessage(message)
+        if (claimed) await requestJob(id, "fail", { error: message, cardIssued }).catch(() => {})
       } finally {
         running.current = false
-        if (busy) { setRoom(""); onBusy(false) }
+        if (id) { setRoom(""); onBusy(false) }
       }
     }
     void poll()

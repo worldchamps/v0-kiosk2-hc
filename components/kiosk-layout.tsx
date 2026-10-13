@@ -33,7 +33,7 @@ import { type KioskScope, buildingRestrictionMessage } from "@/lib/kiosk-scope"
 import type { Reservation } from "@/lib/types"
 import { kioskOperatorShortcut } from "@/lib/kiosk-operator-shortcuts"
 import CheckInCardProgress from "@/components/check-in-card-progress"
-import { checkCardBeforePayment, issueCheckInCard } from "@/lib/check-in-card"
+import { checkCardBeforePayment, issueCheckInCard, cardFailure } from "@/lib/check-in-card"
 
 interface KioskLayoutProps {
   onChangeMode: (mode?: "web") => void
@@ -56,7 +56,6 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   const [guestName, setGuestName] = useState("")
   const [loading, setLoading] = useState(false)
   const [onSiteUpdateSafe, setOnSiteUpdateSafe] = useState(false)
-  const [onSiteCardIdle, setOnSiteCardIdle] = useState(false)
   const [error, setError] = useState("")
   const [lookupError, setLookupError] = useState(false)
   const [checkInPending, setCheckInPending] = useState(false)
@@ -103,13 +102,12 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   }, [])
 
   useEffect(() => {
-    const idle = ready && !storageError && !checkInPending && !remoteKeyBusy && !!kioskScope &&
-      currentScreen === "onSiteReservation" && !loading && !paymentSession.isActive &&
-      !showAdminKeypad && !showPropertyMismatch && !showPropertyRedirect
-    window.electronAPI?.setUpdateSafe?.(idle && onSiteUpdateSafe)
-    window.electronAPI?.send?.('card-key:idle', idle && onSiteCardIdle)
-    return () => { window.electronAPI?.setUpdateSafe?.(false); window.electronAPI?.send?.('card-key:idle', false) }
-  }, [kioskScope, currentScreen, onSiteUpdateSafe, onSiteCardIdle, loading, paymentSession.isActive, showAdminKeypad, showPropertyMismatch, showPropertyRedirect, ready, storageError, checkInPending, remoteKeyBusy])
+    window.electronAPI?.setUpdateSafe?.(
+      ready && !storageError && !checkInPending && !remoteKeyBusy && !!kioskScope && currentScreen === "onSiteReservation" && onSiteUpdateSafe && !loading &&
+      !paymentSession.isActive && !showAdminKeypad && !showPropertyMismatch && !showPropertyRedirect,
+    )
+    return () => window.electronAPI?.setUpdateSafe?.(false)
+  }, [kioskScope, currentScreen, onSiteUpdateSafe, loading, paymentSession.isActive, showAdminKeypad, showPropertyMismatch, showPropertyRedirect, ready, storageError, checkInPending, remoteKeyBusy])
 
   useEffect(() => {
     let cancelled = false
@@ -225,25 +223,10 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     }
   }, [isPopupMode, paymentSession.isActive, loading, checkInPending])
 
-  useEffect(() => {
-    if (!checkInPending || loading) return
-    const timer = setTimeout(() => {
-      setCheckInPending(false)
-      setReservationData(null)
-      setReservationsList([])
-      setRevealedInfo({ roomNumber: "", password: "", floor: "" })
-      setGuestName("")
-      setError("")
-      if (isPopupMode) window.electronAPI?.send?.('close-popup')
-      else setCurrentScreen('onSiteReservation')
-    }, 5000)
-    return () => clearTimeout(timer)
-  }, [checkInPending, loading, isPopupMode])
-
   const handleNavigate = async (screen: string) => {
     // A navigation is never proof that cash was returned or an approval was cancelled.
     const paymentInterrupted = Boolean(paymentSession.recoveryRequired || paymentSession.pendingBooking || storageError)
-    if (remoteKeyBusy || (paymentSession.isActive && !paymentInterrupted) || checkInSubmitting.current || checkInPending || lookupSubmitting.current) return
+    if (remoteKeyBusy || (paymentSession.isActive && !paymentInterrupted) || checkInSubmitting.current || checkInPending || lookupSubmitting.current || reservationData?.cardDelivery?.settled === false) return
 
     stopAllAudio(false)
 
@@ -451,12 +434,11 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     setLoading(true)
     setError("")
     let definitiveFailure = false
-    let cardPreflightFailed = false
 
     try {
       if (!checkInPending) {
         try { await checkCardBeforePayment(reservationData.roomNumber, reservationData.reservationId) }
-        catch (error) { definitiveFailure = cardPreflightFailed = true; throw error }
+        catch (error) { definitiveFailure = true; throw error }
       }
       const response = await fetch("/api/check-in", {
         method: "POST",
@@ -520,24 +502,23 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       const cardDelivery = await issueCheckInCard(data.cardIssue)
       setDeliveringCard(false)
       setReservationData(previous => previous ? { ...previous, cardDelivery } : previous)
+      if (isPopupMode && cardDelivery && !cardDelivery.success) alert(cardFailure(cardDelivery) + " 체크인은 완료되었습니다. 관리자 문의 010-5126-4644")
       setAdminOverride(false)
       setCheckInPending(false)
 
       if (!isPopupMode || data.cardIssue?.required) {
         setCurrentScreen("checkInComplete")
       }
-      return true
+      return cardDelivery?.settled !== false
     } catch (err) {
       console.error("[v0] Check-in error:", err)
       const message = err instanceof Error ? err.message : "체크인 중 오류가 발생했습니다. 다시 시도해 주세요."
       if (!definitiveFailure) setCheckInPending(true)
       setError(message)
 
-      if (cardPreflightFailed) setTimeout(() => {
-        if (isPopupMode) window.electronAPI?.send?.('close-popup')
-        else void handleNavigate('onSiteReservation')
-      }, 5000)
-
+      if (isPopupMode) {
+        alert(message)
+      }
       return false
     } finally {
       setDeliveringCard(false)
@@ -613,7 +594,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         )}
 
         {currentScreen === "onSiteReservation" && (
-          <OnSiteReservation key={homeSessionKey} onNavigate={handleNavigate} location={kioskLocation} onUpdateSafeChange={setOnSiteUpdateSafe} onCardIdleChange={setOnSiteCardIdle} />
+          <OnSiteReservation key={homeSessionKey} onNavigate={handleNavigate} location={kioskLocation} onUpdateSafeChange={setOnSiteUpdateSafe} />
         )}
 
         {deliveringCard && <CheckInCardProgress />}

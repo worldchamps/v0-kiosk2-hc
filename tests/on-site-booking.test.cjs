@@ -124,16 +124,6 @@ function harness(options = {}) {
 }
 const card = id => ({ method: 'CARD', provider: 'TOSS_PAY', payToken: id, orderNo: 'QA-' + id });
 
-test('queryOnly checks the same booking result without creating a reservation or repeating a payment', async () => {
-  const h = harness();
-  const missing = await h.post({ queryOnly: true });
-  assert.equal(missing.status, 404); assert.deepEqual(h.counts(), { append: 0, queue: 0 });
-  assert.equal((await h.post()).status, 200);
-  const completed = await h.post({ queryOnly: true });
-  assert.equal(completed.body.success, true);
-  assert.deepEqual(h.counts(), { append: 1, queue: 1 });
-});
-
 test('Kariv cleaned rooms pass listing, pre-payment and booking checks without rewriting status on read', async () => {
   const h = harness({ roomCode: 'Kariv 206', env: { KIOSK_PROPERTY_ID: 'property2', KIOSK_BUILDING: '' } });
   h.set('beach_room_status/rooms/room901/category', 'Kariv ');

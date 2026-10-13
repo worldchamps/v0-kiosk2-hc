@@ -1,7 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { readFileSync } = require('node:fs')
-const { createCardKeyService, defaultProfile, roomKey, publicResult, CARD_OPERATION_TIMEOUT_MS } = require('../electron/card-key-service')
+const { createCardKeyService, defaultProfile, roomKey, publicResult } = require('../electron/card-key-service')
 const { view, updatedConfig } = require('../electron/device-settings')
 const { issueTicket, verifyTicket } = require('../electron/card-issue-proof')
 const customerEnv = { KIOSK_PROPERTY_ID: 'property1', CARD_DISPENSER_ENABLED: 'true', CARD_BRIDGE_TOKEN: 'a'.repeat(64) }
@@ -12,26 +11,23 @@ function fixture(env = { KIOSK_PROPERTY_ID: 'property1', CARD_DISPENSER_ENABLED:
   const event = { senderFrame: mainFrame, sender: { mainFrame, isDestroyed: () => false, send: (_channel, value) => progress.push(value) } }
   const store = { read: id => records.get(id) || null, write: (id, value) => records.set(id, structuredClone(value)),
     list: () => [...records.values()].filter(value => value?.registeredAt).map(({ room, registeredAt }) => ({ room, registeredAt })) }
-  let busy = false, hold = false, idle = true, response = { success: true, settled: true, state: 'taken' }
-  const responses = [], reports = []
+  let busy = false, hold = false, response = { success: true, settled: true, state: 'taken' }
   const bridge = { isConnected: true, subscribeMessage: fn => { listeners.add(fn); return () => listeners.delete(fn) },
     send: value => {
       sent.push(value)
       if (!hold) queueMicrotask(() => {
-        const next = responses.length ? responses.shift() : response
         for (const fn of [...listeners]) {
           fn({ type: 'card_progress', requestId: value.requestId, state: 'presented', blocks: 'never-forward' })
-          fn({ type: 'card_result', requestId: value.requestId, ...next })
+          fn({ type: 'card_result', requestId: value.requestId, ...response })
         }
       })
       return true
     } }
   const create = () => createCardKeyService({ env, store, bridge, token: 'x'.repeat(64), timeoutMs: 30,
-    authorize: (_event, password) => ({ success: password === 'correct', error: 'auth failed' }), isIdle: () => idle,
-    isAutoIdle: () => idle, onStatus: value => reports.push(value), setBusy: value => { busy = value } })
-  return { service: create(), create, event, sent, progress, records, store, reports, get busy() { return busy },
-    respond: value => { response = value }, respondSequence: (...values) => responses.push(...values),
-    setIdle: value => { idle = value }, hold: (value = true) => { hold = value }, listeners }
+    authorize: (_event, password) => ({ success: password === 'correct', error: 'auth failed' }), isIdle: () => true,
+    setBusy: value => { busy = value } })
+  return { service: create(), create, event, sent, progress, records, store, get busy() { return busy },
+    respond: value => { response = value }, hold: (value = true) => { hold = value }, listeners }
 }
 
 test('check-in tickets bind committed reservation, room, property and expiry', () => {
@@ -113,16 +109,6 @@ test('failed durable write prevents card movement and failed result persistence 
     assert.equal((await f.create().run(f.event, 'checkin_issue', { ticket: ticket() })).settled, false)
     assert.equal(f.sent.length, stage === 'started' ? 0 : 1)
   }
-})
-
-test('startup defers encrypted-store access and keeps a damaged record locked without crashing', () => {
-  const f = fixture(customerEnv), read = f.store.read
-  f.store.read = () => { throw Error('encrypted store unavailable') }
-  const restarted = f.create()
-  assert.equal(restarted.needsRecovery(), true)
-  assert.equal(restarted.status().state, 'needs_attention')
-  assert.equal(f.sent.length, 0)
-  f.store.read = read
 })
 
 test('card IPC gate rejects unsupported PCs, flag-off, bad auth and cross-room access without hardware I/O', async () => {
@@ -247,91 +233,4 @@ test('failed registration returns device diagnostics without saving or exposing 
     { ...failure, recoveryRequired: false })
   assert.equal(f.records.size, 0)
   assert.equal(f.busy, false)
-})
-
-test('C-building unclaimed card recovers after restart without administrator input', async () => {
-  const f = fixture(customerEnv)
-  f.records.set('room-C105', { room: 'C105', blocks: {}, uid: '01020304' })
-  f.respond({ success: false, reason: 'not_taken', settled: false, state: 'unresolved' })
-  assert.equal((await f.service.run(f.event, 'checkin_issue', { ticket: ticket() })).recoveryRequired, true)
-  assert(f.records.get('active-check-in')?.id)
-  const restarted = f.create()
-  assert.equal(restarted.needsRecovery(), true)
-  f.setIdle(false)
-  assert.equal((await restarted.autoRecover()).reason, 'busy')
-  assert.equal(f.sent.length, 1)
-  f.setIdle(true)
-  f.respondSequence(
-    { success: true, bits: 0x0102, sensors: 2, moving: false, reason: 'capture_error' },
-    { success: true, settled: true, bits: 0x0100, sensors: 0, reason: 'capture_error' },
-    { success: true, settled: true },
-    { success: true, sensors: 0, moving: false })
-  assert.equal((await restarted.autoRecover()).success, true)
-  assert.deepEqual(f.sent.slice(1, 5).map(value => value.type), ['card_status', 'card_capture', 'card_reset', 'card_status'])
-  assert.equal(f.records.get('active-check-in'), null)
-  assert.equal(f.records.get('operation-' + require('../electron/card-issue-proof').operationId('property1', 'test-reservation')).result.reason, 'auto_recovered')
-  f.respond({ success: true, sensors: 0, moving: false })
-  assert.equal((await restarted.run(f.event, 'ready', { room: 'C105' })).success, true)
-  f.respond({ success: true, settled: true, state: 'taken' })
-  assert.equal((await restarted.run(f.event, 'checkin_issue', { ticket: ticket('next-customer') })).success, true)
-  assert.equal(f.sent.filter(value => value.type === 'card_issue').length, 2)
-  assert.equal(f.sent.filter(value => value.type === 'card_capture').length, 1)
-  assert.equal(f.reports.at(-1).state, 'ok')
-})
-
-test('physical fault reports needs_attention, then one idle recovery restores card use without dispensing', async () => {
-  const f = fixture(customerEnv)
-  f.records.set('room-C105', { room: 'C105' })
-  f.respond({ success: false, reason: 'not_taken', settled: false })
-  await f.service.run(f.event, 'checkin_issue', { ticket: ticket() })
-  assert.equal(f.service.status().state, 'recovering')
-  f.respond({ success: false, reason: 'disconnected', settled: false })
-  assert.equal((await f.service.autoRecover()).state, 'needs_attention')
-  assert.equal(f.service.status().reason, 'disconnected')
-  assert.equal((await f.service.run(f.event, 'ready', { room: 'C105' })).reason, 'inspection_required')
-  assert.equal(f.sent.filter(value => value.type === 'card_issue').length, 1)
-  f.respond({ success: true, sensors: 0, moving: false })
-  assert.equal((await f.service.autoRecover()).success, true)
-  assert.equal(f.service.status().autoRecovery.attempts, 2)
-  assert.equal(f.sent.filter(value => value.type === 'card_issue').length, 1)
-})
-
-test('admin reset remains available while unresolved and a preflight failure releases the durable lock', async () => {
-  const f = fixture(customerEnv), admin = { password: 'correct', confirmed: true }
-  f.records.set('room-C105', { room: 'C105' })
-  f.respond({ success: false, reason: 'not_taken', settled: false })
-  await f.service.run(f.event, 'checkin_issue', { ticket: ticket() })
-  const restarted = f.create()
-  f.respond({ success: true, settled: true, sensors: 0 })
-  assert.equal((await restarted.run(f.event, 'reset', admin)).success, true)
-  assert.equal(f.records.get('active-check-in'), null)
-  f.respond({ success: false, reason: 'empty', settled: true })
-  assert.equal((await restarted.run(f.event, 'checkin_issue', { ticket: ticket('preflight') })).recoveryRequired, false)
-  assert.equal(f.records.get('active-check-in'), null)
-  f.respond({ success: true, settled: true, state: 'taken' })
-  assert.equal((await restarted.run(f.event, 'checkin_issue', { ticket: ticket('after-refill') })).success, true)
-})
-
-test('failed admin recovery cannot clear a prior unresolved check-in', async () => {
-  const f = fixture(customerEnv), admin = { password: 'correct', confirmed: true }
-  f.records.set('room-C105', { room: 'C105' })
-  f.respond({ success: false, reason: 'not_taken', settled: false })
-  await f.service.run(f.event, 'checkin_issue', { ticket: ticket() })
-  const restarted = f.create()
-  for (const [command, reason] of [['reset', 'card_present'], ['capture', 'capture_full']]) {
-    f.respond({ success: false, reason, settled: true })
-    const result = await restarted.run(f.event, command, admin)
-    assert.equal(result.recoveryRequired, true)
-    assert(f.records.get('active-check-in')?.id)
-    assert.equal((await restarted.run(f.event, 'ready', { room: 'C105' })).reason, 'inspection_required')
-  }
-})
-
-test('Electron hardware timeout exceeds the complete Python operation budget', () => {
-  const source = readFileSync(require.resolve('../hardware_server/card_dispenser.py'), 'utf8')
-  const budgets = Object.fromEntries([...source.matchAll(/^(\w+_BUDGET) = (\d+)$/gm)].map(([, name, seconds]) => [name, Number(seconds)]))
-  assert.deepEqual(Object.keys(budgets).sort(), ['CAPTURE_BUDGET', 'ISSUE_BUDGET', 'PICKUP_BUDGET', 'PRESENT_BUDGET'])
-  // Registration can use its 30s read budget, then 2s recovery + 3s status + present/pickup/capture.
-  assert(CARD_OPERATION_TIMEOUT_MS > (budgets.ISSUE_BUDGET + 2 + 3 + budgets.PRESENT_BUDGET +
-    budgets.PICKUP_BUDGET + budgets.CAPTURE_BUDGET + 5) * 1000)
 })

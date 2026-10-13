@@ -132,8 +132,6 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
   }, [save])
   const setCardInFlight = useCallback((cardInFlight: boolean) => save({ ...current.current, cardInFlight }), [save])
   const requireRecovery = useCallback((recoveryRequired: string, evidence?: PaymentSession["recoveryEvidence"]) => {
-    if (current.current.method === 'cash') window.electronAPI?.reportDeviceFault?.('acceptor')
-    else if (current.current.method === 'card') window.electronAPI?.reportDeviceFault?.('cardTerminal')
     save({ ...current.current, isActive: true, recoveryRequired,
       ...(evidence ? { recoveryEvidence: evidence } : {}) })
   }, [save])
@@ -153,7 +151,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
       const result = command
         ? await api.archiveRemote!({ command, expectedRaw, memorySnapshot: expectedSession })
         : password === undefined
-        ? await api.reportCash({ expectedRaw, memorySnapshot: expectedSession, storageError })
+        ? await api.reportCash({ expectedRaw, memorySnapshot: expectedSession })
         : await api.archive({ password, expectedRaw, memorySnapshot: expectedSession, resolution: resolution!, note: note!, confirmed: true })
       if (!result.success || !result.archiveId) return { success: false, error: result.error || "복구 기록 보관을 확인하지 못했습니다." }
       if (window.localStorage.getItem(STORAGE_KEY) !== expectedRaw || JSON.stringify(current.current) !== expectedSession) {
@@ -170,7 +168,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
     } catch {
       return { success: false, error: "잠금 해제를 확인하지 못했습니다. 보관 기록은 유지됩니다. 다시 확인해주세요." }
     } finally { recoveryBusy.current = false }
-  }, [storageError])
+  }, [])
   const resolveRecovery = useCallback((password: string, resolution: "zero_cash" | "operator_resolved", note: string) =>
     finishRecovery(password, resolution, note), [finishRecovery])
   const reportCashRecovery = useCallback(() => finishRecovery(), [finishRecovery])

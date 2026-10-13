@@ -18,7 +18,6 @@ export default function CashDeviceDiagnostics() {
   const [logs, setLogs] = useState("")
   const [path, setPath] = useState("")
   const [results, setResults] = useState<string[]>([])
-  const [boardDetails, setBoardDetails] = useState("")
 
   const execute = async (command?: "reset" | "stop") => {
     const api = window.electronAPI?.cashDiagnostics
@@ -37,8 +36,6 @@ export default function CashDeviceDiagnostics() {
       if (!record.success) { setMessage(record.error || "통신 기록을 읽지 못했습니다."); return }
       setLogs(record.text || "아직 기록된 통신이 없습니다.")
       setPath(record.path || "")
-      setBoardDetails(record.cashBackend === "bac2400"
-        ? `BAC-2400 / 3400 통합 보드 · 펌웨어 버전 미확인 · 응답 필드 ${JSON.stringify(record.cashBoard?.responseFields || {})}` : "")
       if (!command) setMessage("최근 통신 기록을 읽었습니다.")
     } catch { setMessage("다른 장비 작업 또는 업데이트 중입니다. 완료 후 다시 확인해주세요.") }
     finally { setBusy(false) }
@@ -61,7 +58,6 @@ export default function CashDeviceDiagnostics() {
     {results.length > 0 && <ul className="list-disc pl-6">{results.map((result, index) => <li key={index}>{result}</li>)}</ul>}
     <p className="text-sm">정상 응답은 명령 응답 확인 결과입니다. 실물 지폐 수납과 체크인 완료 검증은 별도입니다.</p>
     {path && <p className="break-all text-sm">저장 위치: {path}</p>}
-    {boardDetails && <p className="break-all text-sm">{boardDetails}</p>}
     <Textarea aria-label="현금 통신 기록" value={logs} readOnly className="h-80 font-mono text-xs" />
   </section>
 }

@@ -92,8 +92,7 @@ test('cash error archives without an administrator code and never calls booking,
   assert.equal(result.success, true)
   assert.equal(h.calls.stop, 1)
   const record = JSON.parse(h.safeStorage.decryptString(fs.readFileSync(path.join(h.directory, 'payment-recovery-archive', result.archiveId + '.bin'))))
-  assert.equal(record.kind, 'payment-incident-awaiting-review')
-  assert.equal(record.incidentKind, 'cash')
+  assert.equal(record.kind, 'cash-incident-awaiting-review')
   assert.equal(record.financialCommandsSent, 0)
   const incident = incidentFromArchive(record)
   assert.equal(incident.receivedAmount, 50000)
@@ -104,23 +103,16 @@ test('cash error archives without an administrator code and never calls booking,
   assert.equal(h.raw(), h.original)
 })
 
-test('automatic incident recovery archives card, booking and uncertain results without financial commands', async () => {
-  for (const [extra, kind] of [[{ method: 'card' }, 'unknown_result'], [{ cardInFlight: true }, 'unknown_result'],
-    [{ pendingBooking: { requestId: 'fixed' } }, 'booking_pending'], [{ recoveryEvidence: {} }, 'card_approval']]) {
+test('automatic cash recovery cannot clear card evidence, pending bookings, wrong frames or an unconfirmed inlet', async () => {
+  for (const extra of [{ method: 'card' }, { cardInFlight: true }, { pendingBooking: {} }, { recoveryEvidence: {} }]) {
     const h = fixture({ ...base, ...extra })
-    const saved = await h.service.archive(h.event, { expectedRaw: h.original, memorySnapshot: h.original }, true)
-    assert.equal(saved.success, true)
-    const record = JSON.parse(h.safeStorage.decryptString(fs.readFileSync(path.join(h.directory, 'payment-recovery-archive', saved.archiveId + '.bin'))))
-    assert.equal(record.incidentKind, kind)
-    assert.equal(record.financialCommandsSent, 0)
+    assert.equal((await h.service.archive(h.event, { expectedRaw: h.original, memorySnapshot: h.original }, true)).success, false)
   }
   const h = fixture()
   const input = { expectedRaw: h.original, memorySnapshot: h.original }
   assert.equal((await h.service.archive({ ...h.event, senderFrame: { url: 'https://outside.invalid/' } }, input, true)).success, false)
   h.setStop(false)
-  const saved = await h.service.archive(h.event, input, true)
-  assert.equal(saved.success, true)
-  assert.equal(saved.cashStopped, false)
+  assert.equal((await h.service.archive(h.event, input, true)).success, false)
   assert.equal(h.raw(), h.original)
 })
 

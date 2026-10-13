@@ -30,11 +30,10 @@ AGAIN Kiosk는 숙소별 키오스크에서 다음 기능을 제공합니다.
 │  ├─ Google Sheets: 예약 조회·체크인·현장예약 기록
 │  └─ Firebase: 객실 상태·PMS 상태·PMS/인쇄 대기열
 ├─ 로컬 Python Hardware Server (ws://localhost:8082)
-│  ├─ property1, property3 A: Bixolon, ONEPLUS 개별 지폐 장비
-│  └─ property4, property3 B: BAC-2400/3400 통합 지폐 보드
+│  ├─ property1/3: Bixolon, 지폐 인식기, 지폐 배출기
+│  └─ property4: BAC-2400 지폐 장비
 ├─ Windows 인쇄 시스템
-│  ├─ property4: SAM4S GCUBE 드라이버 인쇄
-│  └─ property3 B: WOOSIM WSP-CP383 Windows 큐 (이미지 + 커팅 1회 RAW 작업)
+│  └─ property4: SAM4S GCUBE 드라이버 인쇄
 └─ Toss Front Bridge
    └─ WebSocket 또는 Serial로 Toss Front 플러그인과 통신
 ```
@@ -49,8 +48,7 @@ COM 포트를 두 프로세스가 동시에 사용해 충돌할 수 있습니다
 |---|---|---|---|---|
 | `property1` | C동, D동 | 기존 PMS 위 Electron 오버레이 | Bixolon, Hardware Server | 개별 인식기·배출기 |
 | `property2` | Kariv | 기존 PMS 위 Electron 오버레이 | 현재 키오스크 출력 흐름에서 사용 안 함 | 개별 인식기·배출기 |
-| `property3` | A동 (`KIOSK_BUILDING=A`) | Electron 전체화면 | Bixolon, Hardware Server | ONEPLUS 개별 인식기·배출기 |
-| `property3` | B동 (`KIOSK_BUILDING=B`) | Electron 전체화면, 현장 PC ia32 | WOOSIM WSP-CP383, Windows 큐 | MULTI3400 통합 보드, BV1/BD1 경로 (현장 규약 미검증) |
+| `property3` | A동, B동 | Electron 전체화면 | Bixolon, Hardware Server | 개별 인식기·배출기 |
 | `property4` | CAMP | Electron 전체화면 | SAM4S GCUBE, Windows 드라이버 | BAC-2400 통합 보드 |
 
 소스에서 객실 구분은 `C/D → property1`, `KARIV → property2`, `A/B → property3`,
@@ -215,35 +213,7 @@ DISPENSER_PORT=COM5
 - 실제 COM 번호는 Windows 장치 관리자에서 확인합니다.
 - 하나의 COM 포트는 한 프로그램만 열 수 있습니다.
 
-### 6.5 캠프·비치 B동 통합 현금 보드와 Windows 프린터
-
-통합 보드는 **property4 또는 property3 + `KIOSK_BUILDING=B`**에서만 선택합니다.
-비치 A동, C·D동, 카리브의 개별 장비 경로는 이 선택 조건에 포함되지 않습니다.
-포트 우선순위는 `BAC2400_PORT` → `BOARD3400_PORT` → 기본 COM5입니다.
-현장 포트는 환경변수나 **외부기기 등록 → BAC-2400 / 3400 통합 보드**에서 지정합니다.
-
-B동 현장 확인값(2026-10-13): `property3-kiosk-b-32`, Windows ia32, COM5,
-제조사 데모 MULTI3400 v1.1 / IO board 0x12(1.2), 방출기 ONEPLUS OBC-400 V1.2 SO DC24V.
-이 모델·버전 표시는 BAC-2400 V1.3의 프로토콜과 동일하다는 증거가 아닙니다.
-
-```env
-# 소스 실행형 B동 PC의 .env.local 또는 설치형 최초 등록 설정
-KIOSK_PROPERTY_ID=property3
-KIOSK_BUILDING=B
-KIOSK_DEVICE_ID=property3-kiosk-b-32
-BAC2400_PORT=COM5
-# 자동 검색으로 찾지 못할 때만 Windows 큐의 정확한 이름 지정
-WOOSIM_PRINTER_NAME=WSP-CP383
-# 선택: 인쇄 끝에서 커터까지 공급할 길이 (0~30mm, 기본 12mm)
-WOOSIM_CUT_FEED_MM=12
-```
-
-B동에서는 `ACCEPTOR_PORT` / `DISPENSER_PORT`를 사용하지 않습니다. 설치형 앱은 기존
-암호화 장비 설정을 읽으므로 `.env.local`만 바꿔도 기존 설정은 바뀌지 않습니다.
-**외부기기 등록**에서 통합 보드 포트와 WOOSIM 프린터 이름을 저장하고 앱 재시작이 필요합니다.
-`WOOSIM_CUT_FEED_MM`은 로컬 환경 설정값이며 외부기기 등록 화면의 항목은 아닙니다.
-
-캠프 설정:
+### 6.5 property4 BAC-2400과 SAM4S
 
 ```env
 BAC2400_PORT=COM5
@@ -259,15 +229,6 @@ SAM4S_OFFSET_Y_MM=0
 `BOARD3400_PORT`는 `BAC2400_PORT`가 없을 때 사용하는 이전 호환 이름입니다. 새 설정에서는
 `BAC2400_PORT`를 사용합니다. SAM4S 드라이버가 사용하는 COM 포트는 Windows 프린터 속성에서
 설정하며, 앱이 그 COM 포트를 직접 열지 않습니다.
-
-두 통합 보드 경로는 현재 9600 8E1, BV1 권종 카운터 `0x18`, 상태 `0x1B`, BD1 인덱스 2를
-사용합니다. 1만원·5만원만 금액으로 인정하고 1천원·5천원 수납 흔적은 오류로 보존하여 투입을
-중지합니다. 소프트웨어의 중지가 물리적 권종 거부를 보장하지 않으므로 데모의 권종 설정과
-대조해야 합니다. 상태만 온 응답을 금액으로 환산하지 않습니다.
-부분 필드·알 수 없는 상태값·누적/회차별 지급 수량을 구분할 증거가 없는 응답은 성공이 아닙니다.
-`FE` 프레임을 사용하는 과거 3400 구현과 자동 교체하지 않으며, 이 프레임은 호환 미확인으로 기록합니다.
-펌웨어 조회 명령은 규격 미확보로 보내지 않습니다. 응답의 `0x14` / `0x1B` 필드는 로그·현금 통신 점검에
-원문으로 남기고 버전은 미확인으로 표시합니다. 데모 버전을 코드가 읽어 확인한 값으로 표시하지 않습니다.
 
 ### 6.6 Toss Front 결제
 
@@ -300,7 +261,7 @@ TOSS_FRONT_PAIRING_KEY=16자-이상의-동일한-키
 장비 설정 화면이 포함된 설치형 앱에서는 관리자 모드 → **외부기기 등록**을 엽니다.
 관리자 비밀번호를 입력하면 이 PC에 저장된 연결 방식과 장비 포트를 볼 수 있습니다.
 property1과 property3 A동은 Bixolon, property3 B동은 WOOSIM WSP-CP383을 사용합니다.
-property3 B동은 통합 현금 보드 포트·WOOSIM 프린터 이름, property4는 통합 보드·SAM4S 프린터,
+property4는 BAC-2400·SAM4S 프린터,
 property2는 토스 프론트 연결 항목만 표시합니다. COM 포트 목록과 Windows 프린터 목록은
 선택을 돕기 위한 것이며, 감지되지 않은 장비의 포트도 직접 입력할 수 있습니다.
 
@@ -456,19 +417,6 @@ B동 PC에 WOOSIM Windows 프린터 드라이버를 설치하고 프린터 테�
 **외부기기 등록**에서 정확한 프린터 이름을 선택한 뒤 앱을 재시작합니다.
 이 경로는 Bixolon COM 포트를 사용하지 않습니다.
 
-B동 인쇄는 `woosim-print.ps1`에서 기존 한글 GDI 레이아웃을 576도트 비트맵으로 렌더링한 뒤,
-같은 Windows 프린터 큐에 `RAW` 문서 하나로 `ESC *` 이미지와 `GS V 0` 전체 커팅 1회를 보냅니다.
-GDI 드라이버의 문서 끝 커팅을 사용하는 PrintDocument를 호출하지 않아 드라이버 커팅과 중복하지 않습니다.
-내용 높이만 인쇄하고 마지막 공급은 `WOOSIM_CUT_FEED_MM`(기본 12mm)로 조정합니다.
-부분 쓰기·스풀 실패·30초 제한 초과 시 실패로 보고하며 이미지/커팅 작업을 자동 재전송하지 않습니다.
-실제 용지 배출·절단 여부는 스풀 완료와 별도로 현장에서 확인해야 합니다.
-
-무장비 검사: `powershell.exe -NoProfile -File electron/woosim-print.ps1 -CheckOnly`.
-한글 비트맵, 비트 순서, 밴드 경계, 커팅 1회 구성을 검사하며 프린터를 열지 않습니다.
-명령 근거: [WOOSIM Command Manual 2.6](https://woosim.com/upload/catalog_20151030173214_949835.pdf)의
-`ESC *` 비트 이미지와 `GS V n`(0 전체 / 1 부분) 커팅. WSP-CP383 현장 펌웨어의 동작 확인은 별도입니다.
-캠프 SAM4S는 기존 GDI PrintDocument와 드라이버 커팅 설정을 유지하고, Bixolon은 기존 SDK CutPaper를 유지합니다.
-
 ### 10.3 Bixolon
 
 Bixolon은 Python Hardware Server가 `hardware_server/bin/BXLPAPI_x64.dll` 또는 32비트 DLL을
@@ -505,7 +453,7 @@ python hardware_server\test_bixolon_korean.py --port COM2
 `[RESET]`은 초기화 응답 또는 준비 상태 미확인, `[STOP]`은 투입 중지 응답 미확인을 뜻합니다.
 
 - Electron이 Hardware Server를 자동 시작하고 `ws://localhost:8082`에 연결합니다.
-- property4와 property3 B동은 `BAC2400_PORT`의 통합 보드 경로로 BV1/BD1을 제어합니다. MULTI3400 v1.1 호환은 현장 검증 대상입니다.
+- property4는 `BAC2400_PORT`의 BAC-2400 V1.3 통합 보드로 BV1/BD1을 제어합니다.
 - 다른 property는 `ACCEPTOR_PORT`와 `DISPENSER_PORT`를 각각 사용합니다.
 - property4에서는 Hardware Server가 SAM4S를 열지 않으며 프린터는 Windows 드라이버가 담당합니다.
 

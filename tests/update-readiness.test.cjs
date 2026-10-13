@@ -119,36 +119,6 @@ test("missing renderer acknowledgement resumes without installation", async () =
   assert.equal(h.sent.at(-1), "kiosk:update-resume")
 })
 
-test('update shutdown and ordinary before-quit both clean up the overlay banner', async () => {
-  const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8')
-  const events = new Map(), calls = []
-  const context = { global: { kioskMaintenance: true },
-    app: { on: (name, listener) => events.set(name, listener), quit: () => calls.push('quit') },
-    overlayButtonModule: { destroyOverlayButton: () => { calls.push('destroy'); events.get('window-all-closed')() } },
-    tossFrontBridge: { close: () => calls.push('terminal-close') },
-    hardwareServerProcess: null, nextServer: null, process: { platform: 'win32' },
-    billAcceptorPort: null, billDispenserPort: null, printerPort: null,
-  }
-  vm.runInNewContext(source.slice(source.indexOf('global.shutdownKiosk ='),
-    source.indexOf('app.whenReady().then(async () => {', source.indexOf('global.shutdownKiosk ='))) +
-    source.slice(source.indexOf('app.on("window-all-closed"'), source.indexOf('app.on("activate"')), context)
-  await context.global.shutdownKiosk()
-  assert.deepEqual(calls, ['destroy', 'terminal-close'], 'closing the last banner must not quit before the installer starts')
-  calls.length = 0
-  context.global.kioskMaintenance = false
-  events.get('before-quit')()
-  assert.deepEqual(calls, ['destroy', 'terminal-close', 'quit'])
-})
-
-test('installer failure can resume after the overlay renderer has been destroyed', () => {
-  const h = harness({ overlay: true })
-  h.context.global.kioskMaintenance = true
-  h.renderer.isDestroyed = () => true
-  h.renderer.send = () => assert.fail('cannot send to a destroyed renderer')
-  h.context.global.probe.resume()
-  assert.equal(h.context.global.kioskMaintenance, false)
-})
-
 test("activity, pending terminal work or HTTP starting during the handshake cancels maintenance", async () => {
   for (const change of [h => h.heartbeat({ safe: false }),
     h => h.context.tossFrontBridge.pending.set("synthetic-request", {}),

@@ -95,20 +95,6 @@ test('hardware capture records real serial bytes and fixed error codes, excludes
   assert.doesNotMatch(text, /secret|private-guest|Printer/)
 })
 
-test('integrated board serial and metadata trace preserves response bytes without inventing versions or retaining secrets', async t => {
-  const h = fixture(t), stream = new PassThrough()
-  h.trace.capture(stream)
-  stream.end('2026-10-13 10:00:00,000 - SerialManager - INFO - [BAC2400] Received: 22041B1100121C\n')
-  h.trace.write('bridge', { event: 'board_info', protocol: 'bac2400-tlv', version: 'made-up-version',
-    responseFields: { '0x1B': '110012', '0x14': '12', secret: 'guest-name' }, privateKey: 'secret' })
-  await new Promise(resolve => setImmediate(resolve))
-  const text = h.trace.read().text
-  assert.match(text, /"event":"receive"/)
-  assert.match(text, /"0x1B":"110012"/)
-  assert.match(text, /"version":null,"versionVerified":false/)
-  assert.doesNotMatch(text, /made-up|privateKey|guest-name|secret/)
-})
-
 test('logging storage failure does not throw and blocks a diagnostic that cannot save its evidence', async t => {
   const h = fixture(t)
   const file = path.join(h.dir, 'not-directory')

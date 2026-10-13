@@ -92,8 +92,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // 지폐 인식기
   getHardwareStatus: () => ipcRenderer.invoke("get-hardware-status"),
-  cashAvailable: () => ipcRenderer.invoke('cash:available'),
-  reportDeviceFault: key => ipcRenderer.send('device-recovery:fault', key),
   cashDiagnostics: {
     read: password => ipcRenderer.invoke('cash-diagnostics:read', password),
     run: input => ipcRenderer.invoke('cash-diagnostics:run', input),
@@ -147,7 +145,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // 오버레이 모드 관련
   send: (channel, data) => {
     // 허용된 채널만 전송 가능
-    const validChannels = ["overlay-button-clicked", "checkin-complete", "close-popup", "card-key:idle"]
+    const validChannels = ["overlay-button-clicked", "checkin-complete", "close-popup"]
     if (validChannels.includes(channel)) {
       ipcRenderer.send(channel, data)
     }

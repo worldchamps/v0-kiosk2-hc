@@ -3,34 +3,12 @@ const fs = require('node:fs'), path = require('node:path'), vm = require('node:v
 const proof = require('../electron/pms-card-request')
 const keys = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
 const env = { KIOSK_PROPERTY_ID: 'property1', KIOSK_DEVICE_ID: 'property1-kiosk-01', CARD_DISPENSER_ENABLED: 'true' }
-const firebaseOrder = value => Object.fromEntries(Object.keys(value).sort().map(field => [field, value[field]]))
 function envelope(room = 'C103', other = {}) {
   const request = { id: crypto.randomUUID(), room, property: 'property1', deviceId: 'property1-kiosk-01', createdAt: Date.now(), expiresAt: Date.now() + 600000, ...other }
   request.expiresAt = request.createdAt + 600000
   return { request, signature: crypto.sign('sha256', Buffer.from('pms-card-v1:' + JSON.stringify(request)), keys.privateKey).toString('base64') }
 }
 const verifyRequest = (value, config, now) => proof.verifyRequest(value, config, now, keys.publicKey)
-test('Firebase sorted card requests retain the PMS signature and reject extra, missing or tampered fields', () => {
-  for (const room of ['C201', 'C103', 'D103']) {
-    const signed = envelope(room), request = firebaseOrder(signed.request)
-    const value = { ...signed, request }
-    assert.equal(Object.keys(request).join(), 'createdAt,deviceId,expiresAt,id,property,room')
-    assert.equal(verifyRequest(value, env).room, room)
-    assert.equal(verifyRequest(value, env).operationId, verifyRequest(signed, env).operationId)
-    assert.throws(() => verifyRequest(value, env, request.expiresAt), /invalid_remote_request/)
-    assert.throws(() => verifyRequest(value, { ...env, KIOSK_DEVICE_ID: 'another-kiosk' }), /invalid_remote_request/)
-    for (const field of Object.keys(request)) {
-      assert.throws(() => verifyRequest({ ...value, request: firebaseOrder({ ...request, [field]: 'tampered' }) }, env))
-      const missing = { ...request }; delete missing[field]
-      const malformed = { ...signed.request, extra: true }
-      delete malformed[field]
-      for (const changed of [missing, malformed, { ...signed.request, extra: true }]) {
-        const signature = crypto.sign('sha256', Buffer.from('pms-card-v1:' + JSON.stringify(changed)), keys.privateKey).toString('base64')
-        assert.throws(() => verifyRequest({ request: firebaseOrder(changed), signature }, env), /invalid_remote_request/)
-      }
-    }
-  }
-})
 test('PMS card signature binds one room, property, kiosk and ten-minute lifetime', () => {
   const value = envelope()
   assert.equal(verifyRequest(value, env).room, 'C103')
@@ -60,7 +38,7 @@ function serviceFixture() {
   return { create, event, sent, records, hold: () => { hold = true } }
 }
 test('signed remote delivery is UID-only and durable across duplicate requests and restart', async () => {
-  const f = serviceFixture(), value = envelope(); value.request = firebaseOrder(value.request)
+  const f = serviceFixture(), value = envelope()
   assert.equal((await f.create().run(f.event, 'remote_issue', { envelope: value })).success, true)
   assert.equal((await f.create().run(f.event, 'remote_issue', { envelope: value })).success, true)
   assert.equal(f.sent.length, 1); assert.equal(f.sent[0].issueMode, 'uid_only')
@@ -76,13 +54,7 @@ test('uncertain remote delivery cannot dispense again after restart', async () =
   assert.equal(f.sent.length, 1)
 })
 test('remote queue claims and print transitions reject wrong devices, stale jobs and repeated printing', async () => {
-  const firebaseTransaction = {}
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../lib/firebase-transaction.ts'), 'utf8'), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText, { exports: firebaseTransaction })
   const valid = envelope(), foreign = envelope('A101', { property: 'property3', deviceId: 'property3-kiosk-01' })
-  valid.request = firebaseOrder(valid.request)
-  foreign.request = firebaseOrder(foreign.request)
   const rows = { [valid.request.id]: { ...valid, status: 'pending' }, [foreign.request.id]: { ...foreign, status: 'pending' } }
   const exports = {}, deps = {
     'next/server': { NextResponse: { json: (value, options) => Response.json(value, options) } },
@@ -92,16 +64,15 @@ test('remote queue claims and print transitions reject wrong devices, stale jobs
     '@/lib/firebase-admin': { getDB: () => ({ ref: name => { assert.equal(name, 'kiosk_key_jobs/property1'); return {
       orderByChild(field) { assert.equal(field, 'request/createdAt'); return this },
       limitToLast: () => ({ once: async () => ({ val: () => rows }) }),
-      child: id => ({ on() {}, off() {}, once: async () => ({ val: () => rows[id] }), transaction: async callback => {
+      child: id => ({ once: async () => ({ val: () => rows[id] }), transaction: async callback => {
         const next = callback(rows[id]); if (next) rows[id] = next; return { committed: !!next }
       } }),
     } } }) },
-    '@/lib/firebase-transaction': firebaseTransaction,
   }
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../app/api/remote-key/route.ts'), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText, { exports, require: name => { assert(name in deps, name); return deps[name] }, process: { env }, Date })
-  assert.deepEqual((await (await exports.GET()).json()).jobs, [{ id: valid.request.id, expiresAt: valid.request.expiresAt }])
+  assert.deepEqual((await (await exports.GET()).json()).jobs, [valid.request.id])
   const post = action => exports.POST({ json: async () => ({ id: valid.request.id, action }) })
   const claim = await (await post('claim')).json()
   assert.equal(claim.receipt.password, '')

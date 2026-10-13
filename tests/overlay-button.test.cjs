@@ -21,8 +21,7 @@ function harness(property = 'property2', bounds = { x: -1280, y: 20, width: 1280
     isVisible() { return this.visible }
     showInactive() { this.visible = true }
     hide() { this.visible = false }
-    close() { if (this.options.closable !== false) this.destroy() }
-    destroy() { this.destroyed = true; this.emit('closed') }
+    close() { this.destroyed = true; this.emit('closed') }
     focus() { this.focusCount++ }
     setAlwaysOnTop() {} setVisibleOnAllWorkspaces() {} moveTop() {} setIgnoreMouseEvents() {}
   }
@@ -34,7 +33,7 @@ function harness(property = 'property2', bounds = { x: -1280, y: 20, width: 1280
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../electron/overlay-button.js'), 'utf8'), context)
   const api = context.module.exports, button = api.createOverlayButton()
   button.webContents.emit('did-finish-load')
-  return { api, button, windows, context, intervals, tick: () => intervals.forEach(fn => fn()),
+  return { api, button, windows, context, tick: () => intervals.forEach(fn => fn()),
     send: (channel, window = button, frame = window.webContents.mainFrame) => ipcMain.emit(channel, { sender: window.webContents, senderFrame: frame }) }
 }
 
@@ -89,25 +88,4 @@ test('other legacy overlay properties retain the compact window', () => {
   assert.equal(h.button.options.width, 200)
   assert.equal(h.button.options.height, 125)
   assert.equal(h.button.loadOptions.query.layout, 'compact')
-})
-
-test('exit destroys the non-closable banner and its keeper, even while a popup is open', () => {
-  for (const popupOpen of [false, true]) {
-    const h = harness()
-    h.button.close()
-    assert.equal(h.button.isDestroyed(), false, 'guests still cannot close the banner')
-    if (popupOpen) {
-      h.send('overlay-button-clicked')
-      h.windows[1].webContents.emit('did-finish-load')
-      assert.equal(h.api.getKioskPopup(), h.windows[1])
-    }
-    assert.equal(h.intervals.size, 1)
-    h.api.destroyOverlayButton(); h.api.destroyOverlayButton()
-    assert.equal(h.button.isDestroyed(), true)
-    assert.equal(h.intervals.size, 0)
-    if (popupOpen) h.windows[1].close()
-    assert.equal(h.intervals.size, 0, 'popup close cannot revive the destroyed banner')
-    assert.equal(h.api.getKioskPopup(), null)
-    assert.equal(h.api.isIdleButtonSender(h.button.webContents), false)
-  }
 })

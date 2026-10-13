@@ -73,7 +73,6 @@ interface OnSiteReservationProps {
   onNavigate: (screen: string) => void
   location?: string
   onUpdateSafeChange?: (safe: boolean) => void
-  onCardIdleChange?: (idle: boolean) => void
   assistantOpen?: boolean
   onAssistantStepChange?: (step: string) => void
 }
@@ -143,7 +142,7 @@ function getBookingDates(stayType: StayType) {
   }
 }
 
-export default function OnSiteReservation({ onNavigate, location, onUpdateSafeChange, onCardIdleChange, assistantOpen = false, onAssistantStepChange }: OnSiteReservationProps) {
+export default function OnSiteReservation({ onNavigate, location, onUpdateSafeChange, assistantOpen = false, onAssistantStepChange }: OnSiteReservationProps) {
   const [step, setStep] = useState<BookingStep>("stayType")
   useEffect(() => { onAssistantStepChange?.(step) }, [step, onAssistantStepChange])
   const [loading, setLoading] = useState(true)
@@ -170,8 +169,6 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
   const [bookingError, setBookingError] = useState("")
   const [paymentNotice, setPaymentNotice] = useState("")
   const [recoveryAtHome, setRecoveryAtHome] = useState(false)
-  const [bookingChecked, setBookingChecked] = useState(false)
-  const checkedBookingId = useRef("")
   const hasPaymentProblem = Boolean(paymentSession.pendingBooking || paymentSession.recoveryRequired || storageError)
   useEffect(() => {
     if (!hasPaymentProblem) { setRecoveryAtHome(false); return }
@@ -187,11 +184,6 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
     onUpdateSafeChange?.(ready !== false && !storageError && step === "stayType" && !loading && !submitting && !paymentSession.isActive && !roomsError)
     return () => onUpdateSafeChange?.(false)
   }, [step, loading, submitting, paymentSession.isActive, roomsError, onUpdateSafeChange, ready, storageError])
-  useEffect(() => {
-    onCardIdleChange?.(ready !== false && !hasPaymentProblem && step === "stayType" && !loading && !submitting &&
-      !checkingCard && !deliveringCard && !paymentSession.isActive && !paymentSession.cardInFlight)
-    return () => onCardIdleChange?.(false)
-  }, [ready, hasPaymentProblem, step, loading, submitting, checkingCard, deliveringCard, paymentSession.isActive, paymentSession.cardInFlight, onCardIdleChange])
   const selectedRates = selectedRoom && selectedStay ? selectedRoom.rates?.[selectedStay.type] : undefined
 
   const locationName = location === "C" || location === "D" ? "C·D동" : location === "CAMP" ? "캠프" : location ? `${location}동` : ""
@@ -239,7 +231,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
   )
 
   const resetToHome = useCallback(async () => {
-    if (checkingCard || deliveringCard || submittingRef.current || submitting || paymentSession.cardInFlight || paymentSession.pendingBooking || paymentSession.recoveryRequired || step === "payment") return
+    if (checkingCard || deliveringCard || reservationData?.cardDelivery?.settled === false || submittingRef.current || submitting || paymentSession.cardInFlight || paymentSession.pendingBooking || paymentSession.recoveryRequired || step === "payment") return
     if (paymentSession.isActive && paymentSession.acceptedAmount > 0) {
       console.warn("[v0] Cash has been inserted. Keeping the payment screen active.")
       return
@@ -265,7 +257,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
       await resetToHome()
     },
     idleTime: 60000,
-    enabled: !checkingCard && !deliveringCard,
+    enabled: !checkingCard && !deliveringCard && reservationData?.cardDelivery?.settled !== false,
   })
 
   useEffect(() => {
@@ -288,7 +280,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
   const handleStayTypeSelect = (stay: StaySelection) => {
     const available = Object.values(roomsByType).some((rooms) => rooms.some((room) => hasAvailableStay(room, stay.type)))
     if (!available) {
-      setPaymentNotice(`현재 ${stay.label}으로 판매 가능한 객실이 없습니다.`)
+      alert(`현재 ${stay.label}으로 판매 가능한 객실이 없습니다.`)
       return
     }
     const dates = getBookingDates(stay.type)
@@ -303,17 +295,11 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
     setStep("roomSelect")
   }
 
-  const cardPreflightFailure = (error: unknown) => {
-    setPaymentNotice(error instanceof Error ? error.message : "카드 발급기를 확인해주세요.")
-    setSelectedStay(null); setSelectedRoom(null); setGuestName(""); setPhoneNumber("")
-    setStep("stayType")
-  }
-
   const startRoomPayment = async (room: AvailableRoom) => {
     if (!selectedStay || checkingCardRef.current) return
     checkingCardRef.current = true; setCheckingCard(true)
     try { await checkOnSiteBeforePayment(room.roomCode, selectedStay.type, room.rates?.[selectedStay.type]); await checkCardBeforePayment(room.roomCode) }
-    catch (error) { cardPreflightFailure(error); return }
+    catch (error) { alert(error instanceof Error ? error.message : "카드 발급기를 확인해주세요."); return }
     finally { checkingCardRef.current = false; setCheckingCard(false) }
     if (!mountedRef.current) return
 
@@ -341,8 +327,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
 
     const roomRates = room.rates?.[selectedStay.type]
     if (!hasAvailableStay(room, selectedStay.type)) {
-      setPaymentNotice("이 객실의 이용금액을 확인할 수 없습니다. 다른 객실을 선택해주세요.")
-      setStep("stayType")
+      alert("이 객실의 이용금액을 확인할 수 없습니다. 다른 객실을 선택해주세요.")
       return
     }
 
@@ -360,15 +345,14 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
 
   const handleSubmitBooking = async () => {
     if (!selectedRoom || !selectedStay || !guestName || !phoneNumber) {
-      setPaymentNotice("예약 정보를 확인할 수 없습니다. 객실을 다시 선택해주세요.")
-      setStep("stayType")
+      alert("모든 정보를 입력해주세요")
       return
     }
 
     if (checkingCardRef.current) return
     checkingCardRef.current = true; setCheckingCard(true)
     try { await checkOnSiteBeforePayment(selectedRoom.roomCode, selectedStay.type, selectedRoom.rates?.[selectedStay.type]); await checkCardBeforePayment(selectedRoom.roomCode) }
-    catch (error) { cardPreflightFailure(error); return }
+    catch (error) { alert(error instanceof Error ? error.message : "카드 발급기를 확인해주세요."); return }
     finally { checkingCardRef.current = false; setCheckingCard(false) }
     if (!mountedRef.current) return
 
@@ -388,8 +372,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
 
     const roomRates = selectedRoom.rates?.[selectedStay.type]
     if (!hasAvailableStay(selectedRoom, selectedStay.type)) {
-      setPaymentNotice("이 객실의 이용금액을 확인할 수 없습니다. 다른 객실을 선택해주세요.")
-      setStep("stayType")
+      alert("이 객실의 이용금액을 확인할 수 없습니다. 다른 객실을 선택해주세요.")
       return
     }
 
@@ -398,7 +381,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
     setStep("payment")
   }
 
-  const submitPendingBooking = async (booking: PendingBooking, queryOnly = false) => {
+  const submitPendingBooking = async (booking: PendingBooking) => {
     if (submittingRef.current || booking.cancellationStarted) return
     submittingRef.current = true
     try {
@@ -407,7 +390,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
       const response = await fetch("/api/on-site-booking", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: queryOnly ? JSON.stringify({ ...JSON.parse(booking.body), queryOnly: true }) : booking.body,
+        body: booking.body,
         signal: AbortSignal.timeout(30000),
       })
       const data = await response.json()
@@ -424,8 +407,22 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
         setReservationData({ ...data.data, cardDelivery })
         setStep("complete")
         void fetchAvailableRooms(false)
-      } else if (queryOnly || data.canCancelPayment === true && !data.pending) {
-        if (!queryOnly) requireRecovery("예약이 완료되지 않았습니다. 결제 확인이 필요합니다. 연락처 010-5126-4644")
+      } else if (data.canCancelPayment === true && !data.pending) {
+        const payment = JSON.parse(booking.body).payment as CompletedPayment
+        if (payment.method === "CARD" && payment.provider === "TOSS_FRONT" && payment.front) {
+          // Only an explicit pre-commit rejection permits an approval cancellation.
+          // Persist intent first: a lost cancellation response must never trigger another automatic cancellation.
+          if (!savePendingBooking({ ...booking, cancellationStarted: true })) return
+          const result = await window.electronAPI?.tossFront?.cancelPayment(payment.front)
+          if (result?.success) {
+            if (completePayment() === false) return
+            setBookingError("")
+            alert(`예약을 완료하지 못해 카드 승인을 취소했습니다. ${data.error || "다른 객실을 선택해주세요."}`)
+            setStep(selectedStay ? "roomSelect" : "stayType")
+            return
+          }
+        }
+        requireRecovery("예약이 완료되지 않았습니다. 결제/반환 상태를 관리자와 확인해주세요.")
         setBookingError(data.error || "결제 확인이 필요합니다.")
       } else {
         setBookingError(data.error || "예약 처리 결과를 아직 확인하지 못했습니다. 다시 결제하지 말고 처리 결과를 확인해주세요.")
@@ -434,20 +431,11 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
       console.error("Error submitting booking:", error)
       setBookingError("예약 처리 결과를 확인하지 못했습니다. 결제 기록은 보관 중입니다. 다시 결제하지 마세요.")
     } finally {
-      if (queryOnly) setBookingChecked(true)
       submittingRef.current = false
       setSubmitting(false)
       setDeliveringCard(false)
     }
   }
-
-  useEffect(() => {
-    const booking = paymentSession.pendingBooking
-    if (!ready || !booking || submitting || submittingRef.current || checkedBookingId.current === booking.requestId) return
-    checkedBookingId.current = booking.requestId
-    setBookingChecked(false)
-    void submitPendingBooking(booking, true)
-  }, [ready, paymentSession.pendingBooking?.requestId, submitting])
 
   const handlePaymentComplete = async (payment: CompletedPayment) => {
     if (submittingRef.current || paymentSession.pendingBooking) return
@@ -476,12 +464,12 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
       {paymentSession.acceptedAmount > 0 && <p className="text-2xl">보관 중인 현금: {paymentSession.acceptedAmount.toLocaleString()}원</p>}
       {paymentSession.pendingBooking && <p className="break-all">확인 번호: {paymentSession.pendingBooking.requestId}</p>}
       {paymentSession.pendingBooking && !paymentSession.pendingBooking.cancellationStarted && !storageError &&
-        <Button className="h-24 w-full text-2xl" disabled={submitting} onClick={() => submitPendingBooking(paymentSession.pendingBooking!, true)}>
+        <Button className="h-24 w-full text-2xl" disabled={submitting} onClick={() => submitPendingBooking(paymentSession.pendingBooking!)}>
           {submitting ? "처리 결과 확인 중..." : "기존 결제 처리 결과 다시 확인"}
         </Button>}
-      <p className="text-2xl">결제 확인이 필요합니다. 연락처 010-5126-4644</p>
+      <p className="text-2xl">새 결제나 추가 현금 투입을 하지 마세요. 관리자 문의 010-5126-4644</p>
       <p className="text-xl">5초 후 처음 화면으로 돌아갑니다.</p>
-      <PaymentRecoveryPanel customerMode disabled={submitting} allowPending={bookingChecked} onResolved={() => {
+      <PaymentRecoveryPanel customerMode disabled={submitting} onResolved={() => {
         requestIdRef.current = ""
         setBookingError(""); setGuestName(""); setPhoneNumber("")
         setSelectedStay(null); setSelectedRoomType(""); setSelectedRoom(null); setReservationData(null)
@@ -574,10 +562,10 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
             <div>
               <p>이전 결제 확인 중으로 새 결제는 잠시 중단됩니다. 예약 조회는 이용하실 수 있습니다. 문의 010-5126-4644</p>
               {paymentSession.pendingBooking && !paymentSession.pendingBooking.cancellationStarted && !storageError &&
-                <Button disabled={submitting} onClick={() => submitPendingBooking(paymentSession.pendingBooking!, true)}>
+                <Button disabled={submitting} onClick={() => submitPendingBooking(paymentSession.pendingBooking!)}>
                   {submitting ? "처리 결과 확인 중..." : "기존 결제 처리 결과 다시 확인"}
                 </Button>}
-              <PaymentRecoveryPanel disabled={submitting} allowPending={bookingChecked} onResolved={() => {
+              <PaymentRecoveryPanel disabled={submitting} onResolved={() => {
                 requestIdRef.current = ""; setBookingError(""); setPaymentNotice("")
                 void fetchAvailableRooms(false)
               }} />

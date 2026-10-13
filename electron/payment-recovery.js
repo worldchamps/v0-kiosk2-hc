@@ -26,13 +26,6 @@ function isAutomaticCash(session) {
     !session.cardInFlight && !session.recoveryEvidence && !session.pendingBooking &&
     typeof session.recoveryRequired === 'string' && !!session.recoveryRequired
 }
-function automaticKind(session, raw, storageError) {
-  if (storageError || raw && (() => { try { JSON.parse(raw); return false } catch { return true } })()) return 'corrupt'
-  if (session?.pendingBooking) return 'booking_pending'
-  if (session?.recoveryEvidence) return 'card_approval'
-  if (session?.method === 'card' || session?.cardInFlight) return 'unknown_result'
-  return 'cash'
-}
 
 function createPaymentRecovery({ app, safeStorage, isIdle, stopCash, setBusy, authorizeRemote = () => false, now = Date.now }) {
   let failures = 0, blockedUntil = 0, busy = false
@@ -77,10 +70,10 @@ function createPaymentRecovery({ app, safeStorage, isIdle, stopCash, setBusy, au
           '화면의 결제 기록을 읽지 못했습니다. 잠금은 유지됩니다.')
         const memorySession = JSON.parse(input.memorySnapshot)
         check(memorySession && typeof memorySession === 'object' &&
-          (input.expectedRaw !== null || memorySession.isActive === true || input.storageError), '보관할 거래 정보가 없습니다.')
+          (input.expectedRaw !== null || memorySession.isActive === true), '보관할 거래 정보가 없습니다.')
         if (automatic && !remote) {
-          check(memorySession.isActive === true || input.storageError, '자동 보관할 결제 기록이 없습니다.')
-          input = { ...input, resolution: 'payment_incident', note: '결제 결과 확인 필요' }
+          check(isAutomaticCash(memorySession), '자동 복귀할 수 있는 현금 오류 기록이 아닙니다.')
+          input = { ...input, resolution: 'cash_incident', note: '현금 오류 기록 후 입실 중단' }
         } else {
           check(input.confirmed === true && ['zero_cash', 'operator_resolved'].includes(input.resolution), '실제 처리 결과 확인이 필요합니다.')
           check(['현금 미투입 취소', '승인 내역 없음 확인', '관리자 정산 완료'].includes(input.note), '처리 결과를 선택해주세요.')
@@ -92,20 +85,18 @@ function createPaymentRecovery({ app, safeStorage, isIdle, stopCash, setBusy, au
         check(await readCurrent(event) === input.expectedRaw, '결제 기록이 변경되었습니다. 화면을 다시 확인해주세요.')
         let session
         try { session = JSON.parse(input.expectedRaw) } catch { /* Preserve malformed evidence verbatim for an operator review. */ }
-        if (automatic && !remote && !input.storageError) check(session?.isActive === true &&
-          session.acceptedAmount === memorySession.acceptedAmount && session.requiredAmount === memorySession.requiredAmount &&
-          session.sessionStartTime === memorySession.sessionStartTime, '저장된 결제 오류 기록을 확인하지 못했습니다.')
+        if (automatic && !remote) check(isAutomaticCash(session) && session.acceptedAmount === memorySession.acceptedAmount &&
+          session.requiredAmount === memorySession.requiredAmount && session.sessionStartTime === memorySession.sessionStartTime,
+          '저장된 현금 오류 기록을 확인하지 못했습니다.')
         if (input.resolution === 'zero_cash' || input.note === '현금 미투입 취소') check(input.resolution === 'zero_cash' &&
           input.note === '현금 미투입 취소' && isZeroCash(session) && isZeroCash(memorySession), '현금 미투입 건으로 해제할 수 없는 기록입니다. 실제 결제·반환 결과를 확인해주세요.')
         if (input.note === '승인 내역 없음 확인') check([session, memorySession].every(value => value?.method === 'card' && value.acceptedAmount === 0),
           '카드 승인 내역 확인만으로 현금 관련 기록을 해제할 수 없습니다.')
         // No reset, payout, card approval or cancellation: only close the cash
         // inlet. A card-only session never requires an unrelated device.
-        let cashStopped = true
         if (![session, memorySession].every(value => value?.method === 'card' && value.acceptedAmount === 0 &&
           Array.isArray(value.acceptedBills) && value.acceptedBills.length === 0 && !value.returnedAmount)) {
-          cashStopped = await stopCash()
-          if (!cashStopped && automatic !== true) throw new RecoveryError('지폐 투입구 정지 응답이 없습니다. 현금 반환 명령은 보내지 않았습니다.')
+          check(await stopCash(), '지폐 투입구 정지 응답이 없습니다. 인식기 연결을 확인한 뒤 복구를 다시 눌러주세요. 현금 반환 명령은 보내지 않았습니다.')
         }
         check(await readCurrent(event) === input.expectedRaw, '결제 기록이 변경되었습니다. 잠금은 유지됩니다.')
         check(safeStorage.isEncryptionAvailable(), '암호화 보관을 사용할 수 없어 잠금을 유지합니다.')
@@ -118,8 +109,7 @@ function createPaymentRecovery({ app, safeStorage, isIdle, stopCash, setBusy, au
         const file = path.join(directory, archiveId + '.bin')
         const record = { ...identity, archiveId, reviewedAt: new Date(now()).toISOString(), version: app.getVersion(),
           property: process.env.KIOSK_PROPERTY_ID || null, building: process.env.KIOSK_BUILDING || process.env.KIOSK_START_LOCATION || null,
-          kind: remote ? 'operator-reviewed-remote-unlock' : automatic ? 'payment-incident-awaiting-review' : 'operator-reviewed-local-unlock',
-          incidentKind: automatic && !remote ? automaticKind(memorySession, input.expectedRaw, input.storageError) : null,
+          kind: remote ? 'operator-reviewed-remote-unlock' : automatic ? 'cash-incident-awaiting-review' : 'operator-reviewed-local-unlock',
           ...(remote ? { commandId: input.command.request.id } : {}), financialCommandsSent: 0 }
         try {
           const encrypted = safeStorage.encryptString(JSON.stringify(record))
@@ -135,11 +125,11 @@ function createPaymentRecovery({ app, safeStorage, isIdle, stopCash, setBusy, au
         check(await readCurrent(event) === input.expectedRaw, '보관 중 결제 기록이 변경되어 잠금을 유지합니다.')
         // Renderer compares the same snapshot again before removing exactly one
         // key. A lost IPC response leaves the original and this archive intact.
-        return { success: true, archiveId, cashStopped }
+        return { success: true, archiveId }
       } catch (error) { return failed(error) }
       finally { if (acquired) { busy = false; setBusy(false) } }
     },
   }
 }
 
-module.exports = { createPaymentRecovery, isZeroCash, isAutomaticCash, automaticKind, STORAGE_KEY }
+module.exports = { createPaymentRecovery, isZeroCash, isAutomaticCash, STORAGE_KEY }

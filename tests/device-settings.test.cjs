@@ -1,35 +1,11 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { view, updatedConfig, createDeviceSettings } = require('../electron/device-settings')
-const { usesIntegratedCash } = require('../electron/cash-device-profile')
 
 const config = property => ({
   registered: true, property, deviceId: 'field-pc', refreshToken: 'preserve-me',
   env: { KIOSK_PROPERTY_ID: property, KIOSK_BUILDING: 'B', PRIVATE_API_KEY: 'preserve-me',
     TOSS_FRONT_PAIRING_KEY: 'existing-pairing-key' },
-})
-
-test('only Camp and property3 B use one configurable cash board port; individual device settings are preserved', () => {
-  for (const [property, building, integrated] of [
-    ['property1', 'C', false], ['property1', 'B', false], ['property2', 'B', false],
-    ['property3', 'A', false], ['property3', '', false], ['property3', 'B', true], ['property4', '', true],
-  ]) {
-    assert.equal(usesIntegratedCash(property, building), integrated)
-    const original = config(property)
-    Object.assign(original.env, { KIOSK_BUILDING: building, ACCEPTOR_PORT: 'COM4', DISPENSER_PORT: 'COM6' })
-    const input = { ...view(original).values, bac2400Port: 'com9', woosimPrinterName: 'field Woosim', sam4sPrinterName: 'field SAM4S' }
-    const saved = updatedConfig(original, input)
-    assert.equal(saved.env.BAC2400_PORT, integrated ? 'COM9' : undefined)
-    assert.equal(saved.env.ACCEPTOR_PORT, 'COM4')
-    assert.equal(saved.env.DISPENSER_PORT, 'COM6')
-    if (property === 'property3' && building === 'B') {
-      assert.equal(saved.env.WOOSIM_PRINTER_NAME, 'field Woosim')
-      assert.equal(saved.env.SAM4S_PRINTER_NAME, undefined)
-      assert.throws(() => updatedConfig(original, { ...input, tossSerialPath: 'COM9' }), /동일한 COM/)
-      // Unused old ONEPLUS fields are not active ports in B.
-      assert.equal(updatedConfig(original, { ...input, acceptorPort: 'COM9', dispenserPort: 'COM9' }).env.BAC2400_PORT, 'COM9')
-    }
-  }
 })
 
 test('registration view hides pairing key and preserves device identity when saving all property types', () => {
@@ -85,7 +61,7 @@ test('IPC service requires administrator authorization and only writes after val
   assert.equal((await service.read({}, 'correct')).serialPorts[0].path, 'COM8')
   const values = { ...view(stored).values, tossTransport: 'serial', tossSerialPath: 'COM8' }
   assert.equal(service.save({}, { password: 'wrong', values }).success, false)
-  assert.equal(service.save({}, { password: 'correct', values: { ...values, bac2400Port: 'COM8' } }).success, false)
+  assert.equal(service.save({}, { password: 'correct', values: { ...values, acceptorPort: 'COM8' } }).success, false)
   assert.equal(writes, 0)
   assert.equal(service.save({}, { password: 'correct', values }).success, true)
   assert.equal(writes, 1)

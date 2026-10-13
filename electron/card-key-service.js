@@ -11,7 +11,6 @@ function scopedRoom(value, env) {
   return room
 }
 const defaultProfile = () => ({ sectors: Array.from({ length: 16 }, (_, sector) => ({ sector, keyA: 'FFFFFFFFFFFF', keyB: 'FFFFFFFFFFFF' })) })
-const CARD_OPERATION_TIMEOUT_MS = 130000 // Python: 30s work + 5s present + 60s pickup + 15s capture, with recovery slack.
 function validateProfile(value) {
   if (!value || Object.keys(value).join() !== 'sectors' || !Array.isArray(value.sectors) || !value.sectors.length || value.sectors.length > 16) throw new Error('invalid_profile')
   const seen = new Set()
@@ -25,38 +24,8 @@ function validateProfile(value) {
 const publicResult = result => Object.fromEntries(['success', 'reason', 'settled', 'state', 'failedSectors', 'bits', 'sensors', 'moving', 'empty', 'low', 'hopperFull', 'captureFull', 'uidChanged', 'uidMatchesSource', 'issueMode', 'dispenseMs', 'port', 'baudRate', 'address', 'errorStage', 'receivedBytes', 'failedCommand', 'deviceCode', 'failedBlock', 'responseBytes']
   .filter(key => Object.hasOwn(result, key)).map(key => [key, result[key]]))
 
-function createCardKeyService({ env, store, bridge, authorize, isIdle, isAutoIdle = isIdle, setBusy, onStatus = () => {}, token, timeoutMs = CARD_OPERATION_TIMEOUT_MS }) {
-  let busy = false, unresolved = false, initialized = false
-  let health = { state: enabled(env) ? 'ok' : 'disabled', reason: null, recoveryRequired: false,
-    empty: false, low: false, captureFull: false, hopperFull: false,
-    autoRecovery: { attempts: 0, lastAt: null, lastResult: null }, updatedAt: new Date().toISOString() }
-  function initialize() {
-    if (initialized) return
-    initialized = true
-    if (!enabled(env)) { setBusy(false); return }
-    try {
-      const active = store.read('active-check-in')
-      unresolved = Boolean(active?.id && store.read(active.id)?.result?.settled !== true)
-      if (unresolved) publish({ state: 'recovering', recoveryRequired: true })
-    } catch {
-      unresolved = true
-      publish({ state: 'needs_attention', reason: 'card_operation_failed', recoveryRequired: true })
-    }
-    setBusy(unresolved)
-  }
-  function publish(patch = {}) {
-    const next = { ...health, ...patch, updatedAt: new Date().toISOString() }
-    const changed = JSON.stringify({ ...health, updatedAt: null }) !== JSON.stringify({ ...next, updatedAt: null })
-    health = next
-    if (changed) onStatus(health)
-  }
-  function observe(result, afterAuto = false) {
-    publish({ state: !enabled(env) ? 'disabled' : result.success && !result.reason && !result.empty && !result.captureFull && !result.hopperFull && !result.sensors && !result.moving && !unresolved ? 'ok' :
-      unresolved && !afterAuto && health.state !== 'needs_attention' ? 'recovering' : 'needs_attention',
-      reason: result.reason || (result.empty ? 'empty' : result.captureFull ? 'capture_full' : result.hopperFull ? 'hopper_full' : result.sensors || result.moving ? 'card_present' : null),
-      recoveryRequired: unresolved, empty: Boolean(result.empty), low: Boolean(result.low),
-      captureFull: Boolean(result.captureFull), hopperFull: Boolean(result.hopperFull) })
-  }
+function createCardKeyService({ env, store, bridge, authorize, isIdle, setBusy, token, timeoutMs = 105000 }) {
+  let busy = false, unresolved = false
   function local(event) {
     return event?.senderFrame === event?.sender?.mainFrame && (() => { try { return new URL(event.senderFrame.url).origin === 'http://localhost:3000' } catch { return false } })()
   }
@@ -78,60 +47,21 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, isAutoIdl
         if (message.requestId !== requestId) return
         if (message.type === 'card_result') finish(message)
         else if (message.type === 'card_progress' && ['insert_original', 'reading', 'issuing', 'presented', 'insert_return'].includes(message.state)) {
-          if (event && !event.sender.isDestroyed()) event.sender.send('card-key:progress', { state: message.state })
+          if (!event.sender.isDestroyed()) event.sender.send('card-key:progress', { state: message.state })
         }
       })
-      timer = setTimeout(() => finish({ success: false, reason: 'timeout', settled: false }),
-        type === 'status' ? Math.min(timeoutMs, 12000) : type === 'capture' ? Math.min(timeoutMs, 20000) : type === 'reset' ? Math.min(timeoutMs, 10000) : timeoutMs)
+      timer = setTimeout(() => finish({ success: false, reason: 'timeout', settled: false }), timeoutMs)
       try {
         if (!bridge.send({ type: 'card_' + type, requestId, token, ...payload })) finish({ success: false, reason: 'disconnected', settled: false })
       } catch { finish({ success: false, reason: 'disconnected', settled: false }) }
     })
   }
   return {
-    initialize,
-    isBusy() { return busy },
-    status() { return health },
-    needsRecovery() { initialize(); return unresolved || health.state === 'needs_attention' || health.state === 'recovering' },
-    async autoRecover() {
-      initialize()
-      if (!enabled(env)) return { success: false, reason: 'disabled', state: 'disabled' }
-      if (busy || !isAutoIdle()) return { success: false, reason: 'busy', state: health.state }
-      busy = true; setBusy(true)
-      const autoRecovery = { attempts: health.autoRecovery.attempts + 1, lastAt: new Date().toISOString(), lastResult: null }
-      publish({ state: 'recovering', autoRecovery })
-      let result
-      try {
-        result = await hardware('status', {}, null)
-        if (result.success && !result.moving && result.sensors) result = await hardware('capture', {}, null)
-        if (result.success && !result.moving && !result.sensors && result.reason && !result.empty && !result.captureFull && !result.hopperFull)
-          result = await hardware('reset', {}, null)
-        if (result.success) result = await hardware('status', {}, null)
-        const recovered = result.success && !result.reason && !result.sensors && !result.moving && !result.empty && !result.captureFull && !result.hopperFull
-        if (recovered) {
-          const active = store.read('active-check-in')
-          if (active?.id) {
-            const previous = store.read(active.id)
-            store.write(active.id, { ...previous, state: 'complete', result: { success: false, reason: 'auto_recovered', settled: true } })
-            store.write('active-check-in', null)
-          }
-          unresolved = false
-        }
-        observe({ ...result, success: recovered, reason: recovered ? null : result.reason || 'card_present' }, true)
-        publish({ autoRecovery: { ...autoRecovery, lastResult: recovered ? 'recovered' : health.reason } })
-        return { success: recovered, state: health.state, reason: health.reason }
-      } catch {
-        observe({ success: false, reason: 'card_operation_failed' }, true)
-        publish({ autoRecovery: { ...autoRecovery, lastResult: health.reason } })
-        return { success: false, state: health.state, reason: health.reason }
-      } finally { busy = false; setBusy(unresolved) }
-    },
     available(event) { return local(event) && enabled(env) },
     checkInRequired(event) { return local(event) && supported(env) },
     async run(event, command, input = {}) {
       let acquired = false
       try {
-        initialize()
         const auth = check(event, input, ['ready', 'checkin_issue', 'remote_issue'].includes(command))
         if (auth) return auth
         const active = store.read('active-check-in')
@@ -155,14 +85,13 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, isAutoIdl
         }
         if (command === 'list') return { success: true, rooms: store.list(), sectors: (store.read('profile') || defaultProfile()).sectors.map(item => item.sector) }
         if (busy || !isIdle()) return { success: false, reason: 'busy', settled: false }
-        if (unresolved && !['status', 'capture', 'reset'].includes(command)) return { success: false, reason: 'inspection_required', settled: false }
+        if (unresolved && !['status', 'capture'].includes(command)) return { success: false, reason: 'inspection_required', settled: false }
         busy = acquired = true; setBusy(true)
         if (command === 'profile') {
           store.write('profile', validateProfile(input.profile))
           return { success: true }
         }
-        if (!bridge.isConnected) { observe({ success: false, reason: 'disconnected' }); return { success: false, reason: 'disconnected', settled: !unresolved } }
-        const unresolvedBefore = unresolved
+        if (!bridge.isConnected) return { success: false, reason: 'disconnected', settled: !unresolved }
         let result
         if (command === 'ready') {
           const room = scopedRoom(input.room, env)
@@ -216,13 +145,11 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, isAutoIdl
           result = await hardware(command, {}, event)
         } else return { success: false, reason: 'invalid_command' }
         if (['status', 'ready'].includes(command)) {
-          if (result.success) unresolved = Boolean(result.sensors || result.moving || unresolved && result.reason)
+          if (result.success) unresolved = Boolean(result.sensors || result.moving)
           // A failed read-only poll must not create a pending card movement.
           // Preserve a lock that was already set by an unresolved operation.
-        } else if (Object.hasOwn(result, 'settled')) unresolved = !result.settled ||
-          (['capture', 'reset'].includes(command) && !result.success && unresolvedBefore)
-        observe(result)
-        if (active?.id && !unresolved && ['status', 'capture', 'reset'].includes(command) && result.success) {
+        } else if (Object.hasOwn(result, 'settled')) unresolved = !result.settled
+        if (active?.id && !unresolved && ['status', 'capture'].includes(command) && result.success) {
           const previous = store.read(active.id)
           store.write(active.id, { ...previous, state: 'complete', result: {
             success: false, reason: 'operator_recovered', settled: true,
@@ -236,4 +163,4 @@ function createCardKeyService({ env, store, bridge, authorize, isIdle, isAutoIdl
     },
   }
 }
-module.exports = { createCardKeyService, supportsCardKey, enabled, roomKey, scopedRoom, defaultProfile, validateProfile, publicResult, CARD_OPERATION_TIMEOUT_MS }
+module.exports = { createCardKeyService, supportsCardKey, enabled, roomKey, scopedRoom, defaultProfile, validateProfile, publicResult }

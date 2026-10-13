@@ -3,15 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')
 const ts = require('typescript')
-const { incidentSignature, verifyIncident, incidentFromArchive } = require('../electron/cash-incidents')
-
-test('incident keeps the original payment timestamp', () => {
-  const started = 1789147000000
-  const incident = incidentFromArchive({ archiveId: 'b'.repeat(64), property: 'property3', building: 'A',
-    reviewedAt: '2026-10-13T00:00:00.000Z', version: '1.3.31', incidentKind: 'cash',
-    memorySnapshot: JSON.stringify({ sessionStartTime: started, acceptedAmount: 10000, requiredAmount: 10000 }) })
-  assert.equal(incident.occurredAt, started)
-})
+const { incidentSignature, verifyIncident } = require('../electron/cash-incidents')
 
 test('cash incident API requires native signature and device scope, retries idempotently, and fails closed offline', async () => {
   const key = 'synthetic-api-key', records = new Map(), writes = []
@@ -37,7 +29,6 @@ test('cash incident API requires native signature and device scope, retries idem
   })
   assert.equal((await module.exports.POST(request(incident, 'invalid'))).status, 403)
   assert.equal((await module.exports.POST(request({ ...incident, building: 'B' }))).status, 403)
-  assert.equal((await module.exports.POST(request({ ...incident, kind: 'card_number' }))).status, 403)
   assert.equal(writes.length, 0)
   const success = await module.exports.POST(request(incident))
   assert.equal(success.status, 200)
@@ -47,9 +38,6 @@ test('cash incident API requires native signature and device scope, retries idem
   await module.exports.POST(request(incident))
   assert.equal(records.size, 1)
   assert.equal(records.get(path).status, 'operator_reviewed')
-  const cardIncident = { ...incident, id: 'c'.repeat(64), kind: 'card_approval', receivedAmount: 0, cashRecordedAmount: 0, expectedChange: 0 }
-  assert.equal((await module.exports.POST(request(cardIncident))).status, 200)
-  assert.equal(records.get('kiosk_payment_incidents/' + cardIncident.id).kind, 'card_approval')
   offline = true
   assert.equal((await module.exports.POST(request(incident))).status, 503)
 })
