@@ -70,6 +70,8 @@ export default function DeviceSettings() {
       </datalist>
       <div className="rounded border p-4 space-y-4">
         <h3 className="text-xl font-semibold">토스 프론트</h3>
+        <label className="flex gap-3 items-center"><input type="checkbox" checked={values.tossEnabled === "true"}
+          onChange={event => set("tossEnabled", String(event.target.checked))} />이 PC의 토스 프론트 단말기 사용</label>
         <label className="block space-y-1">연결 방식
           <select className="flex h-10 w-full rounded-md border px-3" value={values.tossTransport}
             onChange={event => set("tossTransport", event.target.value)}>

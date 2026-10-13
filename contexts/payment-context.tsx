@@ -3,6 +3,7 @@
 import type React from "react"
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from "react"
 import type { CompletedPayment } from "@/lib/payment-types"
+import { hardwareCallWithin } from "@/lib/hardware-timeout"
 
 export interface PendingBooking {
   requestId: string
@@ -31,7 +32,10 @@ interface PaymentContextType {
   paymentSession: PaymentSession
   ready: boolean
   storageError: string
-  startPayment: (amount: number, reservationData?: any, method?: "cash" | "card") => boolean
+  paymentStartError: string
+  cashAvailable: boolean
+  cardAvailable: boolean
+  startPayment: (amount: number, reservationData?: any, method?: "cash" | "card") => Promise<boolean>
   addBill: (amount: number) => void
   recordCashReturned: (amount: number) => void
   completePayment: () => boolean
@@ -55,7 +59,35 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
   const current = useRef(paymentSession)
   const [ready, setReady] = useState(false)
   const [storageError, setStorageError] = useState("")
+  const [paymentStartError, setPaymentStartError] = useState("")
+  const starting = useRef(false)
+  const [cashAvailable, setCashAvailable] = useState(true)
+  const [cardAvailable, setCardAvailable] = useState(true)
   const recoveryBusy = useRef(false)
+
+  useEffect(() => {
+    const api = window.electronAPI
+    if (!api?.cashAvailable && !api?.tossFront) return
+    let stopped = false, checking = false
+    const check = async () => {
+      if (checking) return
+      checking = true
+      try {
+        const [cash, card] = await Promise.all([
+          hardwareCallWithin(() => api.cashAvailable?.() ?? Promise.resolve(false), 3000).catch(() => false),
+          hardwareCallWithin(() => api.tossFront?.getStatus() ?? Promise.resolve(null), 3000).catch(() => null),
+        ])
+        if (!stopped) { setCashAvailable(Boolean(cash)); setCardAvailable(Boolean(card?.configured && card.connected && card.authenticated)) }
+      } finally { checking = false }
+    }
+    setCashAvailable(false); setCardAvailable(false)
+    void check()
+    const timer = setInterval(() => void check(), 5000)
+    const unsubscribe = api.tossFront?.onStatus(status => {
+      if (!stopped) setCardAvailable(status.configured && status.connected && status.authenticated)
+    })
+    return () => { stopped = true; clearInterval(timer); unsubscribe?.() }
+  }, [])
 
   useEffect(() => {
     try {
@@ -88,10 +120,10 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const save = useCallback((next: PaymentSession) => {
+    // Busy recovery is contention, not a failed journal write.
+    if (window.electronAPI?.paymentRecovery?.setDeviceRecoveryBlocked?.(true) === false) return false
     // Persist before another money operation or clearing its evidence.
     try {
-      // Synchronous main-process guard must precede storage and the next physical command.
-      if (window.electronAPI?.paymentRecovery?.setDeviceRecoveryBlocked?.(true) === false) throw new Error("Device recovery busy")
       if (next.isActive) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
       else window.localStorage.removeItem(STORAGE_KEY)
       current.current = next
@@ -107,11 +139,27 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  const startPayment = useCallback((requiredAmount: number, reservationData?: any, method?: "cash" | "card") => {
+  const startPayment = useCallback(async (requiredAmount: number, reservationData?: any, method?: "cash" | "card") => {
     const previous = current.current
-    if (!ready || storageError || !Number.isSafeInteger(requiredAmount) || requiredAmount <= 0 || previous.acceptedAmount > 0 || previous.cardInFlight ||
+    if (starting.current || !ready || storageError || !Number.isSafeInteger(requiredAmount) || requiredAmount <= 0 || previous.acceptedAmount > 0 || previous.cardInFlight ||
         previous.pendingBooking || previous.recoveryRequired) return false
-    return save({ ...initialSession, isActive: true, requiredAmount, reservationData, method, sessionStartTime: Date.now() })
+    starting.current = true
+    setPaymentStartError("")
+    try {
+      const api = window.electronAPI?.paymentRecovery
+      // Reserve the guard before waiting. Recovery yields before its next command.
+      if (api?.setDeviceRecoveryBlocked?.(true) === false &&
+          (!api.waitForDeviceRecovery || !await hardwareCallWithin(() => api.waitForDeviceRecovery!(), 3500))) {
+        setPaymentStartError("장비를 준비하고 있습니다. 잠시 후 다시 시도해주세요.")
+        api.setDeviceRecoveryBlocked?.(previous.isActive)
+        return false
+      }
+      return save({ ...initialSession, isActive: true, requiredAmount, reservationData, method, sessionStartTime: Date.now() })
+    } catch {
+      setPaymentStartError("장비를 준비하고 있습니다. 잠시 후 다시 시도해주세요.")
+      window.electronAPI?.paymentRecovery?.setDeviceRecoveryBlocked?.(previous.isActive)
+      return false
+    } finally { starting.current = false }
   }, [ready, storageError, save])
 
   const addBill = useCallback((amount: number) => {
@@ -190,7 +238,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
     })
   }, [ready, finishRecovery, storageError])
 
-  return <PaymentContext.Provider value={{ paymentSession, ready, storageError, startPayment, addBill, recordCashReturned,
+  return <PaymentContext.Provider value={{ paymentSession, ready, storageError, paymentStartError, cashAvailable, cardAvailable, startPayment, addBill, recordCashReturned,
     completePayment, cancelPayment, isPaymentComplete, setCardInFlight, requireRecovery, savePendingBooking, resolveRecovery, reportCashRecovery }}>
     {children}
   </PaymentContext.Provider>

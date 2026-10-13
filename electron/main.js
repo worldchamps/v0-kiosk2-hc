@@ -124,7 +124,8 @@ ipcMain.handle("payment-recovery:report-cash", async (event, input) => {
   }
   return result
 })
-ipcMain.handle('cash:available', () => !global.kioskCashBlocked)
+ipcMain.handle('cash:available', () => !global.kioskCashBlocked &&
+  ['acceptor', 'dispenser'].every(key => deviceRecovery?.hardware[key] && deviceRecovery.hardware[key].state !== 'needs_attention'))
 
 const cashDiagnostics = createCashDiagnostics({
   authorize: (event, password) => paymentRecovery.authorize(event, password),
@@ -185,8 +186,16 @@ ipcMain.on('payment-recovery:device-blocked', (event, blocked) => {
     if (event.sender !== getOperationsWindow()?.webContents || event.senderFrame !== event.sender.mainFrame ||
       new URL(event.senderFrame.url).origin !== 'http://localhost:3000' || typeof blocked !== 'boolean') return
     paymentDeviceRecoveryBlocked = blocked
+    if (blocked) deviceRecovery?.requestYield()
     event.returnValue = !global.kioskDeviceRecoveryActive
   } catch { /* An unverified frame cannot release the transaction guard. */ }
+})
+ipcMain.handle('payment-recovery:wait-for-device', async event => {
+  if (event.sender !== getOperationsWindow()?.webContents || event.senderFrame !== event.sender.mainFrame ||
+    new URL(event.senderFrame.url).origin !== 'http://localhost:3000' || !paymentDeviceRecoveryBlocked) return false
+  const until = Date.now() + 3000
+  while (global.kioskDeviceRecoveryActive && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 50))
+  return !global.kioskDeviceRecoveryActive && paymentDeviceRecoveryBlocked
 })
 const cardStore = createCardKeyStore({ directory: path.join(app.getPath('userData'), 'card-keys'), safeStorage: require('electron').safeStorage })
 const cardKey = createCardKeyService({
@@ -479,6 +488,9 @@ function createWindow() {
       })
 
       hardwareBridge.onMessage((msg) => {
+        if (msg.type === 'cash_board_result') cashTrace.write('bridge', {
+          event: 'result', result: msg.success && msg.verified ? 'ok' : 'ng', source: msg.source, target: msg.target, reason: msg.reason,
+        })
         if (msg.type === 'cash_board_info') {
           cashBoardInfo = msg
           cashTrace.write('bridge', { ...msg, event: 'board_info' })

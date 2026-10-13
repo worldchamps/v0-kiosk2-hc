@@ -39,7 +39,10 @@ export default function PaymentScreen({
   title = "결제",
   description = "결제수단을 선택해주세요",
 }: PaymentScreenProps) {
-  const { paymentSession, startPayment, addBill, isPaymentComplete, cancelPayment, requireRecovery, recordCashReturned } = usePayment()
+  const { paymentSession, startPayment, addBill, isPaymentComplete, cancelPayment, requireRecovery, recordCashReturned,
+    cashAvailable = true, cardAvailable = true } = usePayment()
+  const [isStarting, setIsStarting] = useState(false)
+  const startingRef = useRef(false)
   const [isConnecting, setIsConnecting] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string>("")
@@ -392,11 +395,18 @@ export default function PaymentScreen({
     } finally { cancellingRef.current = false }
   }
 
-  const selectPaymentMethod = (method: "card" | "cash") => {
+  const selectPaymentMethod = async (method: "card" | "cash") => {
     const amount = method === "card" ? cardAmount : cashAmount
-    if (amount <= 0) return
-    if (!startPayment(amount, paymentSession.reservationData, method)) return
-    setPaymentMethod(method)
+    if (startingRef.current || amount <= 0 || !(method === "card" ? cardAvailable : cashAvailable)) return
+    startingRef.current = true; setIsStarting(true)
+    try {
+      if (!await startPayment(amount, paymentSession.reservationData, method)) {
+        await cancelPayment()
+        onUnavailable("장비를 준비하고 있습니다. 잠시 후 다시 시도해주세요.")
+        return
+      }
+      setPaymentMethod(method)
+    } finally { startingRef.current = false; setIsStarting(false) }
   }
 
   if (paymentMethod === "select") {
@@ -412,30 +422,32 @@ export default function PaymentScreen({
               <button
                 type="button"
                 onClick={() => selectPaymentMethod("card")}
-                disabled={cardAmount <= 0}
+                disabled={isStarting || !cardAvailable || cardAmount <= 0}
                 className="kiosk-payment-method is-card"
               >
                 <CreditCard className="h-16 w-16" />
                 <span>
                   <strong>카드 결제</strong>
-                  <small>{cardAmount > 0 ? `${cardAmount.toLocaleString()}원` : "이용 불가"}</small>
+                  <small>{cardAvailable && cardAmount > 0 ? `${cardAmount.toLocaleString()}원` : "이용 불가"}</small>
                 </span>
               </button>
               <button
                 type="button"
                 onClick={() => selectPaymentMethod("cash")}
-                disabled={cashAmount <= 0}
+                disabled={isStarting || !cashAvailable || cashAmount <= 0}
                 className="kiosk-payment-method is-cash"
               >
                 <Banknote className="h-16 w-16" />
                 <span>
                   <strong>현금 결제</strong>
-                  <small>{cashAmount > 0 ? `${cashAmount.toLocaleString()}원` : "이용 불가"}</small>
+                  <small>{cashAvailable && cashAmount > 0 ? `${cashAmount.toLocaleString()}원` : "이용 불가"}</small>
                 </span>
               </button>
         </section>
 
-        <button type="button" className="kiosk-payment-back" onClick={onCancel}>
+        {!cashAvailable && <p role="status">현재 현금 결제를 이용하실 수 없습니다.</p>}
+        {isStarting && <p role="status">장비를 준비하고 있습니다...</p>}
+        <button type="button" className="kiosk-payment-back" disabled={isStarting} onClick={onCancel}>
           이전 화면
         </button>
       </main>

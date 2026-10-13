@@ -70,7 +70,7 @@ test('actual main-process guard keeps unknown/active journals and card/command/r
   let cardBusy = false, cardStatus = {}, operations = 0, windowAlive = true
   const context = { global: {}, Date: { now: () => 100000 }, URL, OVERLAY_MODE: false, lastAcceptorCommand: 0,
     getOperationsWindow: () => windowAlive ? { webContents } : null,
-    ipcMain: { on: (name, fn) => handlers[name] = fn }, tossFrontBridge: { pending: new Set() },
+    ipcMain: { on: (name, fn) => handlers[name] = fn, handle: (name, fn) => handlers[name] = fn }, tossFrontBridge: { pending: new Set() },
     cardKey: { isBusy: () => cardBusy, status: () => cardStatus } }
   vm.createContext(context)
   vm.runInContext(code + '; global.canRestart = canRestartServer; global.autoIdle = cardAutoIdle', context)

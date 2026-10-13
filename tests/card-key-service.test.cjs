@@ -296,6 +296,23 @@ test('physical fault reports needs_attention, then one idle recovery restores ca
   assert.equal(f.sent.filter(value => value.type === 'card_issue').length, 1)
 })
 
+test('payment preempts card recovery after its outstanding status without capture, reset, or card issue', async () => {
+  const f = fixture(customerEnv)
+  f.hold()
+  let continueRecovery = true
+  const recovering = f.service.autoRecover(() => continueRecovery)
+  assert.equal(f.sent.length, 1)
+  assert.equal(f.sent[0].type, 'card_status')
+  continueRecovery = false
+  for (const listener of [...f.listeners]) listener({ type: 'card_result', requestId: f.sent[0].requestId,
+    success: true, sensors: 2, moving: false })
+  const result = await recovering
+  assert.equal(result.reason, 'recovery_yielded')
+  assert.equal(f.sent.length, 1)
+  assert.equal(f.busy, false)
+  assert.equal(f.listeners.size, 0)
+})
+
 test('admin reset remains available while unresolved and a preflight failure releases the durable lock', async () => {
   const f = fixture(customerEnv), admin = { password: 'correct', confirmed: true }
   f.records.set('room-C105', { room: 'C105' })

@@ -1,7 +1,9 @@
 const PORT = /^COM[1-9]\d{0,2}$/i
 const { supportsCardKey } = require('./card-key-service')
 const { usesIntegratedCash } = require('./cash-device-profile')
+const { enabled: tossFrontEnabled } = require('./toss-front-config')
 const FIELDS = [
+  'tossEnabled',
   'tossTransport', 'tossSerialPath', 'tossSerialBaudRate', 'tossWsUrl', 'tossPairingKey',
   'printerPort', 'acceptorPort', 'dispenserPort', 'bac2400Port', 'sam4sPrinterName', 'woosimPrinterName',
   'cardDispenserPort', 'cardDispenserAddress', 'cardDispenserEnabled',
@@ -14,6 +16,7 @@ function view(config) {
     building: config.property === 'property3' ? env.KIOSK_BUILDING || '' : '',
     pairingKeySet: Boolean(env.TOSS_FRONT_PAIRING_KEY),
     values: {
+      tossEnabled: String(tossFrontEnabled(env)),
       tossTransport: env.TOSS_FRONT_TRANSPORT || 'auto',
       tossSerialPath: env.TOSS_FRONT_SERIAL_PATH || '',
       tossSerialBaudRate: env.TOSS_FRONT_SERIAL_BAUD_RATE || '115200',
@@ -40,6 +43,7 @@ function updatedConfig(config, input) {
   }
   const values = Object.fromEntries(FIELDS.map(key => [key, input[key].trim()]))
   const cardSupported = supportsCardKey(config.property, config.env?.KIOSK_BUILDING)
+  if (!['true', 'false'].includes(values.tossEnabled)) throw new Error('토스 프론트 사용 여부를 확인해주세요.')
   if (!['true', 'false'].includes(values.cardDispenserEnabled) || !cardSupported && values.cardDispenserEnabled !== 'false') throw new Error('이 PC에서는 카드키 발급기를 사용할 수 없습니다.')
   if (FIELDS.some(key => values[key].length > 256 || /[\r\n\0]/.test(values[key]))) throw new Error('장비 설정 값이 너무 길거나 올바르지 않습니다.')
   if (cardSupported && !/^(?:0?[0-9]|1[0-5])$/.test(values.cardDispenserAddress)) throw new Error('카드 발급기 장비 주소는 제조사 데모의 Device Number와 같은 값(00~15)을 입력해주세요.')
@@ -66,17 +70,17 @@ function updatedConfig(config, input) {
       throw new Error('토스 프론트 주소는 ws:// 또는 wss:// 형식으로 입력해주세요.')
     }
   }
-  if (values.tossTransport === 'serial' && !values.tossSerialPath) throw new Error('토스 프론트 시리얼 COM 포트를 선택해주세요.')
-  if (values.tossTransport === 'websocket' && !values.tossWsUrl) throw new Error('토스 프론트 WebSocket 주소를 입력해주세요.')
+  if (values.tossEnabled === 'true' && values.tossTransport === 'serial' && !values.tossSerialPath) throw new Error('토스 프론트 시리얼 COM 포트를 선택해주세요.')
+  if (values.tossEnabled === 'true' && values.tossTransport === 'websocket' && !values.tossWsUrl) throw new Error('토스 프론트 WebSocket 주소를 입력해주세요.')
   if (values.tossPairingKey && (values.tossPairingKey.length < 16 || values.tossPairingKey.length > 128)) {
     throw new Error('새 페어링 키는 16~128자로 입력해주세요.')
   }
   const pairingKey = values.tossPairingKey || config.env?.TOSS_FRONT_PAIRING_KEY || ''
-  if ((values.tossTransport === 'serial' || values.tossTransport === 'websocket' ||
-    values.tossSerialPath || values.tossWsUrl) && !pairingKey) {
+  if (values.tossEnabled === 'true' && (!pairingKey || !(values.tossSerialPath || values.tossWsUrl))) {
     throw new Error('토스 프론트 페어링 키를 입력해주세요.')
   }
   const env = { ...config.env,
+    TOSS_FRONT_ENABLED: values.tossEnabled,
     TOSS_FRONT_TRANSPORT: values.tossTransport,
     TOSS_FRONT_SERIAL_PATH: values.tossSerialPath,
     TOSS_FRONT_SERIAL_BAUD_RATE: String(Number(values.tossSerialBaudRate)),

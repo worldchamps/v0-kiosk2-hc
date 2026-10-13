@@ -155,6 +155,8 @@ def handle_bac2400_message(message):
     command_type = message.get("type")
     if command_type == "cash_board_recover":
         return bac2400.recover(message.get("target"), message.get("requestId"))
+    if command_type == "cash_board_yield":
+        return bac2400.yield_recovery(message.get("requestId"))
     if command_type == "raw_acceptor":
         return bac2400.handle_acceptor_command(bytes(message.get("data", [])))
     if command_type == "raw_dispenser":
@@ -184,6 +186,8 @@ def handle_bac2400_message(message):
 async def poll_bac2400_payout():
     while True:
         for response in bac2400.expire_operations():
+            await broadcast(response)
+        for response in bac2400.advance_recovery():
             await broadcast(response)
         if bac2400.payout_in_progress:
             bac2400.query_dispenser()

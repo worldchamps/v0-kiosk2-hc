@@ -27,6 +27,7 @@ export interface TossFrontQrResult {
 }
 
 export interface KioskDeviceSettingsValues {
+  tossEnabled: "true" | "false"
   tossTransport: "auto" | "serial" | "websocket"
   tossSerialPath: string
   tossSerialBaudRate: string
@@ -108,6 +109,7 @@ export interface ElectronAPI {
   cashAvailable?: () => Promise<boolean>
   reportDeviceFault?: (key: 'acceptor' | 'dispenser' | 'cardTerminal' | 'printer' | 'cardDispenser') => void
   paymentRecovery: {
+    waitForDeviceRecovery?: () => Promise<boolean>
     setDeviceRecoveryBlocked?: (blocked: boolean) => boolean
     onOperationsRequest?: (callback: (request: { kind: string; command?: unknown }) => Promise<unknown>) => () => void
     archiveRemote?: (input: { command: unknown; expectedRaw: string | null; memorySnapshot: string }) => Promise<{ success: boolean; archiveId?: string; error?: string }>

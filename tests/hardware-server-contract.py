@@ -100,6 +100,7 @@ class HardwareContracts(unittest.IsolatedAsyncioTestCase):
                 else:
                     before = after = multi_frame((0x15, [0] * 4), (0x16, [0] * 4), (0x17, [0]))
                 isolated.bac2400.process_incoming(before)
+                isolated.bac2400.advance_recovery()
                 result = isolated.bac2400.process_incoming(after)
                 self.assertTrue(next(m for m in result if m["type"] == "cash_board_result")["verified"])
             self.assertEqual(sent, [bytes.fromhex(h) for h in (

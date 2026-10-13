@@ -26,6 +26,9 @@ function createCashTrace(directory, maxBytes = 5 * 1024 * 1024) {
         .map(key => [key, input.responseFields[key]]))
     }
     if (['ok', 'ng', 'timeout', 'late_ok', 'late_ng', 'send_failed', 'busy', 'unavailable'].includes(input.result)) row.result = input.result
+    if (['adapter', 'board_status', 'board_ng'].includes(input.source)) row.source = input.source
+    if (['acceptor', 'dispenser'].includes(input.target)) row.target = input.target
+    if (typeof input.reason === 'string' && /^[a-z][a-z0-9_]{0,79}$/.test(input.reason)) row.reason = input.reason
     if (Number.isFinite(input.elapsedMs)) row.elapsedMs = Math.max(0, Math.min(60000, input.elapsedMs))
     if (Number.isFinite(input.sentAt)) row.sentAt = input.sentAt
     if (typeof input.serialAt === 'string' && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3}$/.test(input.serialAt)) row.serialAt = input.serialAt
@@ -58,6 +61,11 @@ function createCashTrace(directory, maxBytes = 5 * 1024 * 1024) {
     if (!stream) return
     const lines = readline.createInterface({ input: stream })
     lines.on('line', line => {
+      const outcome = line.match(/BAC2400 - WARNING - Cash adapter outcome: source=(adapter|board_status|board_ng) target=(acceptor|dispenser) reason=([a-z][a-z0-9_]{0,79})$/)
+      if (outcome) {
+        write('serial', { event: 'result', result: 'ng', source: outcome[1], target: outcome[2], reason: outcome[3] })
+        return
+      }
       const bytes = line.match(/SerialManager - INFO - \[(?:Acceptor|BAC2400)\] (Sent|Received): ([A-F0-9]{2,1024})$/)
       if (bytes) {
         write('serial', { event: bytes[1] === 'Sent' ? 'send' : 'receive', bytes: Array.from(Buffer.from(bytes[2], 'hex')), serialAt: line.slice(0, 23) })

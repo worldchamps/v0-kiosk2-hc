@@ -89,6 +89,47 @@ test('all configured devices reset in order after idle without a money, approval
   assert(h.calls.every(value => !/^(?:dispense|acceptor_return|card_issue|payment|cancel)/.test(value.type)))
 })
 
+test('payment yield waits for one outstanding legacy response and stops before reset or money commands', async () => {
+  let listener, idle = true
+  const sent = [], busy = []
+  const recovery = createDeviceRecovery({ configured: ['acceptor'], isIdle: () => idle,
+    bridge: { isConnected: true, subscribeMessage(fn) { listener = fn; return () => { listener = null } },
+      send(message) { sent.push(message); return true } }, onBusy: value => busy.push(value),
+  })
+  const resetting = recovery.reset('acceptor')
+  idle = false; recovery.requestYield()
+  assert.equal(recovery.isBusy(), true)
+  assert.equal(sent.length, 1)
+  listener({ type: 'acceptor_raw', packet: [36,103,97,1,201] })
+  await assert.rejects(resetting, /recovery_yielded/)
+  assert.equal(sent.length, 1)
+  assert.deepEqual(busy, [true, false])
+  assert.equal(recovery.hardware.acceptor.state, 'recovering', 'Contention does not invent a device fault')
+})
+
+test('integrated recovery sends a yield request, retains the guard until reply, and preserves adapter reason', async () => {
+  let listener, idle = true
+  const sent = []
+  const recovery = createDeviceRecovery({ configured: ['acceptor'], property: 'property3', building: 'B', isIdle: () => idle,
+    bridge: { isConnected: true, subscribeMessage(fn) { listener = fn; return () => { listener = null } },
+      send(message) { sent.push(message); return true } },
+  })
+  const resetting = recovery.reset('acceptor')
+  idle = false; recovery.requestYield()
+  assert.equal(sent[1].type, 'cash_board_yield')
+  assert.equal(sent[1].requestId, sent[0].requestId)
+  assert.equal(recovery.isBusy(), true)
+  listener({ type: 'cash_board_result', target: 'acceptor', requestId: sent[0].requestId,
+    success: false, verified: false, source: 'adapter', reason: 'recovery_yielded' })
+  await assert.rejects(resetting, /recovery_yielded/)
+  idle = true
+  const failed = recovery.reset('acceptor')
+  listener({ type: 'cash_board_result', target: 'acceptor', requestId: sent[2].requestId,
+    success: false, verified: false, source: 'adapter', reason: 'payout_uncertain' })
+  await assert.rejects(failed, /adapter:payout_uncertain/)
+  assert.equal(recovery.hardware.acceptor.reason, 'adapter:payout_uncertain')
+})
+
 for (const profile of [{ property: 'property3', building: 'B' }, { property: 'property4', building: '' }]) {
   test(`${profile.property}/${profile.building}: idle integrated board recovery never sends ONEPLUS, payout or return`, async () => {
     const h = fixture(['acceptor', 'dispenser'], profile)

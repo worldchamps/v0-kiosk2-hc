@@ -2,10 +2,12 @@ const { EventEmitter } = require("events")
 const { createHmac, randomUUID, timingSafeEqual } = require("crypto")
 const { SerialPort } = require("serialport")
 const WebSocket = require("ws")
+const { enabled: tossFrontEnabled } = require('./toss-front-config')
 
 class TossFrontBridge extends EventEmitter {
   constructor() {
     super()
+    this.enabled = tossFrontEnabled(process.env)
     this.url = process.env.TOSS_FRONT_WS_URL?.trim() || ""
     // Operators sometimes paste just the LAN IP shown on the Front screen.
     if (/^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$/.test(this.url)) this.url = `ws://${this.url}`
@@ -45,7 +47,7 @@ class TossFrontBridge extends EventEmitter {
   }
 
   get configured() {
-    return Boolean(this.pairingKey) && (this.websocketConfigured || this.serialConfigured)
+    return this.enabled && Boolean(this.pairingKey) && (this.websocketConfigured || this.serialConfigured)
   }
 
   get status() {
@@ -108,6 +110,7 @@ class TossFrontBridge extends EventEmitter {
 
   connect() {
     if (this.closed) return
+    if (!this.enabled) { this.emitStatus(); return }
     if (!this.pairingKey) {
       this.emitStatus("토스 프론트 페어링 키 설정이 필요합니다.")
       return
