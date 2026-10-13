@@ -165,6 +165,54 @@ for (const failure of [409, 400, 503, 'network']) {
   })
 }
 
+test('main recovery guard is set before storage changes and retained after a failed write', async () => {
+  const guards = []
+  let h
+  h = await paymentContext(null, { paymentRecovery: { setDeviceRecoveryBlocked: blocked => {
+    guards.push({ blocked, raw: h?.localStorage.getItem('kiosk-payment-recovery-v1') }); return true
+  } } })
+  assert.equal(guards[0].blocked, false)
+  assert.equal(h.value.startPayment(10000, {}, 'cash'), true)
+  assert.equal(guards[1].blocked, true); assert.equal(guards[1].raw, null)
+  assert.equal(guards.at(-1).blocked, true)
+  h.localStorage.break(); assert.equal(await h.value.cancelPayment(0), false)
+  assert.equal(guards.at(-1).blocked, true)
+  assert.equal(h.value.paymentSession.isActive, true)
+})
+
+test('saved and malformed journals block server restart, and an active native recovery denies new payment', async () => {
+  for (const saved of ['{broken', JSON.stringify({ isActive: true, acceptedAmount: 0, requiredAmount: 10000, acceptedBills: [] })]) {
+    const guards = [], h = await paymentContext(saved, { paymentRecovery: { setDeviceRecoveryBlocked: blocked => { guards.push(blocked); return true } } })
+    assert(guards.length && guards.every(Boolean)); assert.equal(h.localStorage.getItem('kiosk-payment-recovery-v1'), saved)
+  }
+  const guards = [], h = await paymentContext(null, { paymentRecovery: { setDeviceRecoveryBlocked: blocked => { guards.push(blocked); return !blocked } } })
+  assert.equal(h.value.startPayment(10000), false); assert.equal(guards.at(-1), true)
+})
+
+test('screen exception returns to kiosk entry after ten seconds without touching any stored records', () => {
+  for (const href of ['http://localhost:3000?mode=web', 'http://localhost:3000/kiosk/D',
+    'http://localhost:3000?mode=kiosk&popup=true&direct=payment']) {
+    let callback, cancelled, delay
+    const destinations = [], localStorage = storage({ 'kiosk-payment-recovery-v1': '{original}', 'device-setting': 'keep' })
+    const h = load('components/kiosk-error-recovery.tsx', {}, { URL,
+      window: { localStorage, location: { href, replace: url => destinations.push(url) } },
+      setTimeout: (fn, ms) => { callback = fn; delay = ms; return 7 }, clearTimeout: id => cancelled = id })
+    assert.equal(text(h.render()).trim(), '잠시 후 처음 화면으로 돌아갑니다')
+    const cleanup = h.effects[0](); assert.equal(delay, 10000); assert.equal(destinations.length, 0)
+    callback(); const target = new URL(destinations[0])
+    assert.equal(target.pathname, '/'); assert.equal(target.searchParams.get('mode'), 'kiosk')
+    assert.equal(target.searchParams.has('direct'), false)
+    assert.equal(target.searchParams.get('popup') === 'true', href.includes('popup=true'))
+    assert.equal(localStorage.getItem('kiosk-payment-recovery-v1'), '{original}')
+    assert.equal(localStorage.getItem('device-setting'), 'keep')
+    cleanup(); assert.equal(cancelled, 7)
+    const deps = { '@/components/kiosk-error-recovery': { default: h.exports.default } }
+    assert.equal(load('app/error.tsx', deps).exports.default, h.exports.default)
+    const globalTree = load('app/global-error.tsx', deps).render()
+    assert.equal(globalTree.type, 'html'); assert.equal(globalTree.props.lang, 'ko')
+  }
+})
+
 test('remote overlay starts after claim, releases busy after parent becomes non-idle, and never starts if idle is lost during claim', async () => {
   for (const loseIdle of [false, true]) {
     let resolveClaim, resolvePrinter
@@ -1017,7 +1065,7 @@ test('direct administrator URL gates all tabs and exiting clears the shared cred
   let password = '', requests = 0, locks = 0, exits = 0;
   const deps = { '@/contexts/admin-context': { useAdmin: () => ({ password, authenticate: async () => { requests++; return false; }, lock() { locks++; password = ''; } }) },
     '@/components/ui/tabs': {} };
-  for (const file of ['room-info', 'printer-test', 'bill-acceptor-test', 'bill-dispenser-test', 'room-type-settings', 'device-status', 'device-settings',
+  for (const file of ['room-info', 'printer-test', 'room-type-settings', 'device-status', 'device-settings',
     'pms-rate-settings', 'card-payment-cancel', 'cash-device-diagnostics', 'card-key-admin']) deps['@/components/' + file] = { default: file };
   const h = load('components/web-layout.tsx', deps);
   const props = { onChangeMode() { exits++; } };

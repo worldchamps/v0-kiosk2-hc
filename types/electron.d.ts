@@ -108,6 +108,7 @@ export interface ElectronAPI {
   cashAvailable?: () => Promise<boolean>
   reportDeviceFault?: (key: 'acceptor' | 'dispenser' | 'cardTerminal' | 'printer' | 'cardDispenser') => void
   paymentRecovery: {
+    setDeviceRecoveryBlocked?: (blocked: boolean) => boolean
     onOperationsRequest?: (callback: (request: { kind: string; command?: unknown }) => Promise<unknown>) => () => void
     archiveRemote?: (input: { command: unknown; expectedRaw: string | null; memorySnapshot: string }) => Promise<{ success: boolean; archiveId?: string; error?: string }>
     reportCash: (input: { expectedRaw: string | null; memorySnapshot: string; storageError?: string }) => Promise<{ success: boolean; archiveId?: string; error?: string; cashStopped?: boolean }>

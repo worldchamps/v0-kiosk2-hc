@@ -4,7 +4,7 @@ const { createDeviceRecovery, runRemoteReset } = require('../electron/device-rec
 
 function fixture(configured = ['acceptor', 'dispenser', 'cardTerminal', 'printer', 'cardDispenser'], profile = {}) {
   const calls = [], listeners = new Set(), busyChanges = [], timers = new Map()
-  let idle = true, now = 1000000, fault = null, restarts = 0, timerId = 0
+  let idle = true, restartAllowed, now = 1000000, fault = null, restarts = 0, timerId = 0
   const scheduleTimeout = (callback, ms) => {
     const id = ++timerId
     timers.set(id, { at: now + ms, callback })
@@ -62,11 +62,13 @@ function fixture(configured = ['acceptor', 'dispenser', 'cardTerminal', 'printer
     calls.push({ type: 'printer_status' }); if (fault === 'printer_ng') throw Error('printer_unavailable')
   },
     restartServer: async () => { restarts++; bridge.isConnected = true }, isIdle: () => idle,
+    canRestartServer: () => restartAllowed ?? idle,
     onBusy: value => busyChanges.push(value),
     now: () => now, sleep: async ms => { now += ms }, setTimeout: scheduleTimeout,
     clearTimeout: id => timers.delete(id), commandTimeoutMs: 15 })
   return { recovery: { ...recovery, reset: target => run(() => recovery.reset(target)), tick: () => run(() => recovery.tick()) },
-    calls, bridge, busyChanges, now: () => now, setIdle(value) { idle = value }, setFault(value) { fault = value }, advance(ms) { now += ms }, get restarts() { return restarts } }
+    calls, bridge, busyChanges, now: () => now, setIdle(value) { idle = value }, setRestartAllowed(value) { restartAllowed = value },
+    setFault(value) { fault = value }, advance(ms) { now += ms }, get restarts() { return restarts } }
 }
 
 test('all configured devices reset in order after idle without a money, approval or card issue command', async () => {
@@ -178,6 +180,39 @@ test('dead bridge restarts only after a sustained idle failure', async () => {
   h.setIdle(true); await h.recovery.tick()
   assert.equal(h.restarts, 1)
   assert.equal(h.recovery.hardware.acceptor.state, 'ok')
+})
+
+test('dead bridge restarts once without renderer idle when no transaction is active, but device reset still waits', async () => {
+  const h = fixture(['acceptor'])
+  h.setIdle(false); h.setRestartAllowed(true); h.bridge.isConnected = false
+  await h.recovery.tick(); assert.equal(h.restarts, 0)
+  h.advance(30000); await h.recovery.tick(); assert.equal(h.restarts, 1)
+  h.advance(60000); await h.recovery.tick(); assert.equal(h.restarts, 1)
+  assert(h.calls.every(c => c.type === 'ping'))
+  await assert.rejects(h.recovery.reset('acceptor'), /busy/)
+  h.setIdle(true); await h.recovery.tick()
+  assert.equal(h.recovery.hardware.acceptor.state, 'ok')
+})
+
+test('active payment journal blocks a dead bridge restart even after the failure threshold', async () => {
+  const h = fixture(['acceptor'])
+  h.setIdle(false); h.setRestartAllowed(true); h.bridge.isConnected = false
+  await h.recovery.tick()
+  h.setRestartAllowed(false); h.advance(60000)
+  await h.recovery.tick(); await assert.rejects(h.recovery.reset('hardwareServer'), /busy/)
+  assert.equal(h.restarts, 0)
+  assert.equal(h.calls.length, 0)
+  h.setRestartAllowed(true); await h.recovery.tick(); assert.equal(h.restarts, 1)
+})
+
+test('restart failures respect backoff outside the first screen', async () => {
+  const h = fixture(['acceptor'])
+  h.setIdle(false); h.setRestartAllowed(true); h.setFault('timeout')
+  await h.recovery.tick(); h.advance(30000); await h.recovery.tick()
+  assert.equal(h.restarts, 1)
+  h.advance(59000); await h.recovery.tick(); assert.equal(h.restarts, 1)
+  h.advance(1000); await h.recovery.tick(); assert.equal(h.restarts, 2)
+  assert.equal(h.busyChanges.at(-1), false)
 })
 
 test('an overlay with no native devices never probes or restarts a phantom hardware server', async () => {

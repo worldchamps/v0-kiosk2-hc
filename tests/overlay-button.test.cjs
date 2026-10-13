@@ -12,6 +12,7 @@ function harness(property = 'property2', bounds = { x: -1280, y: 20, width: 1280
       super(); this.options = options; this.visible = options.show !== false; this.focusCount = 0
       this.sent = []; this.webContents = new EventEmitter()
       Object.assign(this.webContents, { mainFrame: {}, session: { webRequest: { onHeadersReceived() {} } },
+        isDestroyed: () => !!this.destroyed,
         send: (...args) => this.sent.push(args), setZoomFactor() {} })
       windows.push(this)
     }
@@ -30,7 +31,8 @@ function harness(property = 'property2', bounds = { x: -1280, y: 20, width: 1280
     process: { env: { NODE_ENV: 'production', KIOSK_PROPERTY_ID: property } }, console: { log() {}, error() {} },
     setInterval: fn => { intervals.add(fn); return fn }, clearInterval: fn => intervals.delete(fn),
     require: name => name === 'electron' ? { BrowserWindow: Window, ipcMain, screen: { getPrimaryDisplay: () => ({ bounds }) }, app: { getPath: () => '' } }
-      : name === 'node:fs' ? { appendFileSync() {} } : require(name) }
+      : name === 'node:fs' ? { appendFileSync() {} }
+      : name === './renderer-recovery' ? require('../electron/renderer-recovery') : require(name) }
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../electron/overlay-button.js'), 'utf8'), context)
   const api = context.module.exports, button = api.createOverlayButton()
   button.webContents.emit('did-finish-load')

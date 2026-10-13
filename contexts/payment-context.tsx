@@ -60,6 +60,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(STORAGE_KEY)
+      window.electronAPI?.paymentRecovery?.setDeviceRecoveryBlocked?.(saved !== null)
       if (saved) {
         const value = JSON.parse(saved) as PaymentSession
         if (typeof value.isActive !== "boolean" || !Number.isFinite(value.acceptedAmount) || value.acceptedAmount < 0 ||
@@ -79,6 +80,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
         }
       }
     } catch {
+      window.electronAPI?.paymentRecovery?.setDeviceRecoveryBlocked?.(true)
       setStorageError("이전 결제 기록을 확인하지 못했습니다. 새 결제를 진행하지 말고 관리자에게 문의해주세요.")
     } finally {
       setReady(true)
@@ -88,10 +90,13 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
   const save = useCallback((next: PaymentSession) => {
     // Persist before another money operation or clearing its evidence.
     try {
+      // Synchronous main-process guard must precede storage and the next physical command.
+      if (window.electronAPI?.paymentRecovery?.setDeviceRecoveryBlocked?.(true) === false) throw new Error("Device recovery busy")
       if (next.isActive) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
       else window.localStorage.removeItem(STORAGE_KEY)
       current.current = next
       setPaymentSession(next)
+      window.electronAPI?.paymentRecovery?.setDeviceRecoveryBlocked?.(next.isActive || window.localStorage.getItem(STORAGE_KEY) !== null)
       return true
     } catch {
       const preserved = next.isActive ? next : current.current
@@ -166,6 +171,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
       current.current = { ...initialSession }
       setPaymentSession(current.current)
       setStorageError("")
+      window.electronAPI?.paymentRecovery?.setDeviceRecoveryBlocked?.(false)
       return { success: true }
     } catch {
       return { success: false, error: "잠금 해제를 확인하지 못했습니다. 보관 기록은 유지됩니다. 다시 확인해주세요." }

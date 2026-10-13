@@ -38,6 +38,11 @@ function HomeContent() {
       }
       setIsLoading(false)
       return
+    } else if (mode === "kiosk" && searchParams.get("home") === "true") {
+      setAppMode("kiosk")
+      localStorage.setItem("appMode", "kiosk")
+      setIsLoading(false)
+      return
     }
 
     if (typeof window !== "undefined") {

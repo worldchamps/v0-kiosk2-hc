@@ -13,12 +13,13 @@ function nativeOperations({ overlay = true, property = 'property2' } = {}) {
   let popup = null, answer = { raw: null, memory: 'null' }, resets = 0, reloads = 0
   const events = new Map()
   const context = { global: {}, OVERLAY_MODE: overlay, KIOSK_PROPERTY_ID: property, mainWindow: null,
-    lastOperationsSnapshot: null, lastPrinterResult: null, deviceRecovery: null, cardRendererIdle: false, lastAcceptorCommand: 0,
+    lastOperationsSnapshot: null, lastPrinterResult: null, deviceRecovery: null, cardRendererIdle: false,
+    paymentDeviceRecoveryBlocked: false, lastAcceptorCommand: 0,
     pendingOperations: new Map(), URL, Date: { now: () => 100000 }, require,
     process: { env: { FIREBASE_PRIVATE_KEY: 'test-key' } },
     ipcMain: { on: (name, listener) => events.set(name, listener) },
     setTimeout: callback => setTimeout(callback, 5), clearTimeout, overlayButtonModule: { getKioskPopup: () => popup },
-    hardwareBridge: {}, tossFrontBridge: { configured: true, pending: new Map() }, cardKey: { isBusy: () => false },
+    hardwareBridge: {}, tossFrontBridge: { configured: true, pending: new Map() }, cardKey: { isBusy: () => false, status: () => ({}) },
     cardDispenserEnabled: () => false, usesWoosim: () => property === 'property3',
     createDeviceRecovery: require('../electron/device-recovery').createDeviceRecovery,
     operationsIdentity: () => ({ deviceId: 'property2-kariv-kiosk-01', property, building: '', version: 'QA' }),
@@ -26,7 +27,7 @@ function nativeOperations({ overlay = true, property = 'property2' } = {}) {
     runRemoteReset: async (_request, _store, _recovery, idle) => { assert(idle()); resets++ },
   }
   vm.runInNewContext(source.slice(source.indexOf('function getOperationsWindow()'), source.indexOf("ipcMain.handle('printer:report-result'")) +
-    source.slice(source.indexOf('const cardAutoIdle ='), source.indexOf('const cardStore =')) +
+    source.slice(source.indexOf('const deviceCommandsIdle ='), source.indexOf('const cardStore =')) +
     source.slice(source.indexOf('  const karivOverlay ='), source.indexOf('  setInterval(() => void deviceRecovery.tick()')) +
     source.slice(source.indexOf('  const operations = createOperationsReporter'), source.indexOf('  setInterval(() => void operations.tick()')) +
     '\nglobal.operations = operations; global.cardAutoIdle = cardAutoIdle', context)
