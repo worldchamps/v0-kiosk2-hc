@@ -4,7 +4,7 @@ const crypto = require("node:crypto")
 const { spawnSync } = require("node:child_process")
 const { parseArgs } = require("node:util")
 const { checkArch } = require("../electron/update-protocol")
-const { peArchitecture } = require("./package-architecture.cjs")
+const { peArchitecture, cleanInspectionDirectories } = require("./package-architecture.cjs")
 const root = path.resolve(__dirname, "..")
 process.chdir(root)
 const run = (command, args) => {
@@ -47,6 +47,7 @@ async function main() {
     "--distpath", `.local/hardware-${arch}`, "--workpath", `.local/hardware-work-${arch}`, "--specpath", ".local",
     "--add-binary", `${path.resolve(sdk)}${path.delimiter}bin`, "hardware_server/main.py"])
   run(process.execPath, ["node_modules/next/dist/bin/next", "build"])
+  cleanInspectionDirectories(path.join(root, "dist", arch))
   // Never publish from a build. The deployment tool requires a separate request.
   run(process.execPath, ["node_modules/electron-builder/cli.js", "--win", "nsis", `--${arch}`, `--config.directories.output=dist/${arch}`, "--config.npmRebuild=false", "--publish", "never"])
   run(process.execPath, ["scripts/verify-kiosk-package.cjs", "--arch", arch])

@@ -40,12 +40,12 @@ test("PE inspection checks machine type and rejects invalid or unsupported binar
   assert.throws(() => peArchitecture(file))
 })
 
-function load(file, dependencies, processOverrides = {}) {
+function load(file, dependencies, processOverrides = {}, consoleOverrides = {}) {
   const module = { exports: {} }
   const filename = path.join(__dirname, "..", file)
   const context = { module, exports: module.exports, __dirname: path.dirname(filename),
     process: { arch: "x64", platform: "win32", ...processOverrides }, Buffer, URL,
-    console: { log() {}, error() {} }, require(name) {
+    console: { log() {}, error() {}, ...consoleOverrides }, require(name) {
       assert.ok(name in dependencies, "Unexpected dependency: " + name)
       return dependencies[name]
     } }
@@ -73,6 +73,95 @@ test("embedded payload inspection extracts only app binaries and rejects mixed a
     assert.equal(packed.status, 0, packed.error?.message || packed.stderr)
     if (appArch === hardwareArch) assert.equal(installerArchitecture(archive), appArch)
     else assert.throws(() => installerArchitecture(archive), /Mixed/)
+  }
+})
+
+test("payload inspection stays beside the installer and cleanup locks do not mask verification", () => {
+  const folder = path.resolve("dist/x64"), installer = path.join(folder, "setup.exe")
+  for (const [appMachine, hardwareMachine, status, expected] of [
+    [0x8664, 0x8664, 0, "x64"], [0x14c, 0x14c, 0, "ia32"],
+    [0x8664, 0x14c, 0, /Mixed/], [0x8664, 0x8664, 1, /Unable to inspect/],
+  ]) {
+    const warnings = [], removed = []
+    let directory
+    const api = load("scripts/package-architecture.cjs", {
+      "node:fs": {
+        mkdtempSync: prefix => {
+          assert.equal(prefix, path.join(folder, "kiosk-payload-inspect-"))
+          return directory = prefix + "test01"
+        },
+        openSync: file => file, closeSync() {},
+        readSync: (file, buffer, offset, length, position) => {
+          const pe = Buffer.alloc(128)
+          pe.write("MZ"); pe.writeUInt32LE(64, 60); pe.writeUInt32LE(0x4550, 64)
+          pe.writeUInt16LE(file.endsWith("KioskHardware.exe") ? hardwareMachine : appMachine, 68)
+          return pe.copy(buffer, offset, position, position + length)
+        },
+        rmSync: (dir, options) => {
+          removed.push(dir)
+          assert.equal(options.recursive, true); assert.equal(options.force, true)
+          assert.equal(options.maxRetries, 20); assert.equal(options.retryDelay, 500)
+          throw Object.assign(new Error("AV lock"), { code: "EPERM" })
+        },
+      },
+      "node:path": path, "../electron/update-protocol": protocol, "7zip-bin": { path7za: "7za" },
+      "node:child_process": { spawnSync: (_command, args) => {
+        assert.deepEqual(Array.from(args), ["e", "-y", "-o" + directory, installer, "TheBeachStay Kiosk.exe", "resources/hardware/KioskHardware.exe"])
+        return { status }
+      } },
+    }, {}, { warn: warning => warnings.push(warning) })
+    if (typeof expected === "string") assert.equal(api.installerArchitecture(installer), expected)
+    else assert.throws(() => api.installerArchitecture(installer), expected)
+    assert.deepEqual(removed, [directory])
+    assert.equal(warnings.length, 1)
+    assert.ok(warnings[0].includes(directory)); assert.match(warnings[0], /AV lock/)
+  }
+})
+
+test("inspection cleanup rejects paths outside the direct child prefix boundary", () => {
+  const folder = path.resolve("dist/x64")
+  for (const dir of [folder, path.join(folder, "unrelated"), path.join(folder, "nested/kiosk-payload-inspect-test01"),
+    path.resolve("dist/ia32/kiosk-payload-inspect-test01")]) {
+    let removals = 0
+    const api = load("scripts/package-architecture.cjs", {
+      "node:fs": { mkdtempSync: () => dir, rmSync: () => { removals++ } },
+      "node:path": path, "../electron/update-protocol": protocol, "7zip-bin": { path7za: "7za" },
+      "node:child_process": { spawnSync: () => ({ status: 1 }) },
+    })
+    assert.throws(() => api.installerArchitecture(path.join(folder, "setup.exe")), /Unsafe inspection cleanup path/)
+    assert.equal(removals, 0)
+  }
+})
+
+test("stale inspection cleanup is scoped and continues after locks or listing failures", () => {
+  const folder = path.resolve("dist/ia32"), removed = [], warnings = []
+  const entries = [["kiosk-payload-inspect-locked", true], ["kiosk-payload-inspect-old", true],
+    ["win-ia32-unpacked", true], ["setup.exe", false], ["kiosk-payload-inspect-link", false]]
+  const api = load("scripts/package-architecture.cjs", {
+    "node:fs": {
+      readdirSync: (dir, options) => {
+        assert.equal(dir, folder); assert.equal(options.withFileTypes, true)
+        return entries.map(([name, directory]) => ({ name, isDirectory: () => directory }))
+      },
+      rmSync: dir => {
+        removed.push(dir)
+        if (dir.endsWith("locked")) throw Object.assign(new Error("AV lock"), { code: "EPERM" })
+      },
+    },
+    "node:path": path, "node:child_process": {}, "../electron/update-protocol": protocol,
+  }, {}, { warn: warning => warnings.push(warning) })
+  api.cleanInspectionDirectories(folder)
+  assert.deepEqual(removed, entries.slice(0, 2).map(([name]) => path.join(folder, name)))
+  assert.equal(warnings.length, 1); assert.ok(warnings[0].includes(removed[0]))
+  for (const code of ["ENOENT", "EPERM"]) {
+    const notices = []
+    const missing = load("scripts/package-architecture.cjs", {
+      "node:fs": { readdirSync: () => { throw Object.assign(new Error("Unavailable"), { code }) } },
+      "node:path": path, "node:child_process": {}, "../electron/update-protocol": protocol,
+    }, {}, { warn: warning => notices.push(warning) })
+    assert.doesNotThrow(() => missing.cleanInspectionDirectories(folder))
+    assert.equal(notices.length, code === "ENOENT" ? 0 : 1)
+    if (notices.length) assert.ok(notices[0].includes(folder))
   }
 })
 
@@ -234,7 +323,10 @@ test("combined build is sequential and each target uses its own Python/SDK witho
       "node:util": { parseArgs: () => ({ values: { arch } }) },
       "node:child_process": { spawnSync: (command, args) => { commands.push({ command, args }); return { status: 0, stdout: arch } } },
       "../electron/update-protocol": protocol,
-      "./package-architecture.cjs": { peArchitecture: file => { assert.ok(file.includes(arch)); return arch } },
+      "./package-architecture.cjs": {
+        peArchitecture: file => { assert.ok(file.includes(arch)); return arch },
+        cleanInspectionDirectories: folder => commands.push({ command: "cleanup", args: [folder] }),
+      },
     }, { execPath: "build-node", chdir() {}, env: {
       KIOSK_UPDATE_PUBLIC_KEY_FILE: "public.pem", KIOSK_BUILD_PYTHON: "wrong-generic-python", KIOSK_BIXOLON_SDK_FILE: "wrong-generic-sdk",
       ["KIOSK_BUILD_PYTHON_" + arch.toUpperCase()]: arch + "-python.exe",
@@ -245,6 +337,9 @@ test("combined build is sequential and each target uses its own Python/SDK witho
     assert.equal(hardware.command, arch + "-python.exe")
     assert.equal(hardware.args[hardware.args.indexOf("--add-binary") + 1], path.resolve(sdk) + path.delimiter + "bin")
     const builder = commands.find(c => c.args.includes("node_modules/electron-builder/cli.js"))
+    const cleanup = commands[commands.indexOf(builder) - 1]
+    assert.equal(cleanup.command, "cleanup")
+    assert.deepEqual(cleanup.args, [path.resolve(__dirname, "../dist", arch)])
     assert.ok(builder.args.includes("--" + arch))
     assert.equal(builder.args.at(-1), "never")
     assert.deepEqual(Array.from(commands.at(-1).args), ["scripts/verify-kiosk-package.cjs", "--arch", arch])
