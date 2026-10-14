@@ -568,6 +568,48 @@ for (const [label, result, owed, uncertain] of [
     if (owed) assert(h.visible(uncertain ? '거스름돈 지급을 확인하지 못했습니다(최대 40,000원)' : `거스름돈 ${owed.toLocaleString()}원을 드리지 못했습니다`));
   });
 }
+for (const [label, response] of [
+  ['refused', [0x24, 0x6e, 0x73, 0x21, 0x02]],
+  ['no response', null],
+  ['unreadable acknowledgement', [0x24, 0x69, 0, 0x53, 0xbc]],
+]) {
+  for (const action of ['completion', 'cancellation']) {
+    test(`ONEPLUS reset ${label} during ${action} preserves the full unpaid change or refund`, async () => {
+      const commands = [], incidents = [], faults = [];
+      let onData;
+      const ipc = { getHardwareStatus: async () => ({ connected: true }),
+        onBillDispenserData: callback => { onData = callback; }, onBillDispenserStatus() {},
+        sendToBillDispenser: async command => {
+          commands.push(Array.from(command));
+          const reply = command[1] === 0x48 ? [0x24, 0x6d, 0x65, 0, 0xd2] : response;
+          if (reply) onData({ data: reply });
+          return { success: true };
+        } };
+      const dispenser = load('lib/bill-dispenser-utils.ts', {}, { window: { electronAPI: ipc },
+        setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 20)), clearTimeout }).exports;
+      assert.equal(await dispenser.connectBillDispenser(), true);
+      assert.deepEqual(commands, [[0x24, 0x48, 0x49, 0x3f, 0xd0]], 'connecting must not reset or dispense');
+      commands.length = 0;
+      const h = cashScreen(100000, undefined, {}, dispenser, { reportDeviceFault: key => faults.push(key),
+        paymentRecovery: { reportChangeOwed: async input => { incidents.push(JSON.parse(JSON.stringify(input))); return { success: true }; } } }, 60000);
+      if (action === 'completion') {
+        await h.callbacks[0](100000); await h.callbacks[0](100000); h.render();
+        assert.equal(h.calls.complete, 1); assert.equal(h.calls.recovery, '');
+        assert.deepEqual(JSON.parse(JSON.stringify(h.calls.payment)), { method: 'CASH', changeOwed: 40000, changeUncertain: false });
+        assert.deepEqual(incidents, [{ sessionStartTime: 1789147000000, requiredAmount: 60000, receivedAmount: 100000,
+          returnedAmount: 0, changeOwed: 40000, changeUncertain: false, roomNumber: 'C901' }]);
+        assert(h.visible('거스름돈 40,000원을 드리지 못했습니다. 객실은 정상 배정됩니다'));
+      } else {
+        await h.button('취소').onClick();
+        assert.equal(h.calls.complete, 0); assert.equal(h.calls.cancelled, 0); assert(h.calls.recovery);
+        assert.deepEqual(incidents, []);
+      }
+      assert.equal(h.calls.returned, 0); assert.equal(h.paymentSession.acceptedAmount, 100000);
+      assert.deepEqual(commands, [[0x24, 0x49, 0, 0, 0x49]], 'one reset and zero payout commands');
+      assert.deepEqual(faults, ['dispenser']);
+    });
+  }
+}
 for (const outcome of ['failed', 'rejected', 'unavailable', 'hung']) {
   test(`change incident reporting ${outcome} cannot block a paid room or repeat payout`, async () => {
     const h = cashScreen(100000, { dispensed: 2, complete: false }, {}, {}, { paymentRecovery: {

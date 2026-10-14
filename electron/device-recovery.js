@@ -79,8 +79,11 @@ function createDeviceRecovery({ configured, property, building, bridge, cardKey,
   }
   async function dispenser() {
     const ready = p => (p[2] === 116 && p[3] === 98) || p[3] === 111
-    const before = await exchange('raw_dispenser', packet(83, 0, 0), dispenserReply(115))
-    if (!ready(before)) throw Error('dispenser_not_idle')
+    const before = await exchange('raw_dispenser', packet(83, 0, 0), dispenserReply(115)).catch(error => {
+      if (error.message !== 'timeout') throw error
+      return null
+    })
+    if (before && before[2] === 111 && before[3] === 110) throw Error('dispenser_busy')
     const initialized = await exchange('raw_dispenser', packet(73, 0, 0), dispenserReply(105, 0))
     if (initialized[3] !== 97) throw Error('dispenser_reset_failed')
     const status = await exchange('raw_dispenser', packet(83, 0, 0), dispenserReply(115))

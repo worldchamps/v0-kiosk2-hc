@@ -166,7 +166,8 @@ test('dispenser accepts fragmented status frames but never a bad checksum', asyn
   h.setFault('checksum')
   const startedAt = h.now()
   await assert.rejects(h.recovery.reset('dispenser'), /timeout/)
-  assert.equal(h.now() - startedAt, 15)
+  assert.equal(h.now() - startedAt, 30)
+  assert.equal(h.calls.filter(c => c.data?.[1] === 0x49).length, 1)
   h.setFault('fragment')
   await h.recovery.reset('dispenser')
   assert.equal(h.recovery.hardware.dispenser.state, 'ok')
@@ -254,20 +255,33 @@ for (const ready of [packet(0x73, 0x74, 0x62), packet(0x73, 2, 0x6f), packet(0x5
   })
 }
 
-for (const status of [packet(0x73, 0x6f, 0x6e), packet(0x73, 0x68, 0x21), packet(0x73, 2, 0x6e),
-  ...[0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x8a, 0x8c, 0x8e].map(code => packet(0x73, 0x65, code))]) {
-  test(`PMS dispenser reset rejects non-ready status ${status.slice(1, 4)} without sending init`, async () => {
+for (const status of [packet(0x73, 0x6f, 0x6e), packet(0x53, 0x6f, 0x6e)]) {
+  test(`PMS dispenser reset rejects active dispensing ${status.slice(1, 4)} without sending init`, async () => {
     const h = fixture(['dispenser'])
     h.setDispenserReplies(status)
-    await assert.rejects(h.recovery.reset('dispenser'), /dispenser_not_idle/)
+    await assert.rejects(h.recovery.reset('dispenser'), /dispenser_busy/)
     assert.deepEqual(h.calls.map(c => c.data), [packet(0x53, 0, 0)])
     assert.equal(h.recovery.hardware.dispenser.state, 'needs_attention')
+    assert.equal(h.recovery.hardware.dispenser.reason, 'dispenser_busy')
+    assert.equal(h.recovery.isBusy(), false)
+  })
+}
+
+for (const status of [null, packet(0x73, 0x68, 0x21), packet(0x73, 0, 0x6e), packet(0x73, 2, 0x6e),
+  ...[0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x8a, 0x8c, 0x8e].map(code => packet(0x73, 0x65, code))]) {
+  test(`PMS dispenser reset recovers non-moving status ${status?.slice(1, 4) || 'no response'}`, async () => {
+    const h = fixture(['dispenser'])
+    h.setDispenserReplies(status, packet(0x69, 0, 0x61), packet(0x73, 0x74, 0x62))
+    await h.recovery.reset('dispenser')
+    assert.deepEqual(h.calls.map(c => c.data), [packet(0x53, 0, 0), packet(0x49, 0, 0), packet(0x53, 0, 0)])
+    assert.equal(h.recovery.hardware.dispenser.state, 'ok')
     assert.equal(h.recovery.isBusy(), false)
   })
 }
 
 for (const [label, replies, reason, count] of [
   ['reset refused', [packet(0x73, 0x74, 0x62), packet(0x6e, 0x73, 0x21)], 'device_ng', 2],
+  ['reset refused from error stop', [packet(0x73, 0, 0x6e), packet(0x6e, 0x73, 0x21)], 'device_ng', 2],
   ['wrong init acknowledgement', [packet(0x73, 0x74, 0x62), packet(0x69, 0, 0)], 'dispenser_reset_failed', 2],
   ['not ready after init', [packet(0x73, 0x74, 0x62), packet(0x69, 0, 0x61), packet(0x73, 2, 0x6e)], 'dispenser_not_ready', 3],
 ]) {
@@ -277,6 +291,7 @@ for (const [label, replies, reason, count] of [
     await assert.rejects(h.recovery.reset('dispenser'), new RegExp(reason))
     assert.equal(h.calls.length, count)
     assert.equal(h.recovery.hardware.dispenser.state, 'needs_attention')
+    assert.equal(h.recovery.hardware.dispenser.lastResetResult, reason)
     assert.equal(h.recovery.isBusy(), false)
   })
 }

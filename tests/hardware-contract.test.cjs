@@ -255,7 +255,13 @@ for (const [label, acknowledgement, statuses, expected] of [
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
     const h = device('dispenser', { setTimeout, clearTimeout, Date }); await h.connect()
     const sent = [], replies = [...statuses]
-    h.respond(command => { sent.push({ command, at: Date.now() }); return command[1] === 0x44 ? acknowledgement : replies.shift() })
+    let started = false
+    h.respond(command => {
+      sent.push({ command, at: Date.now() })
+      if (command[1] === 0x49) return packet(0x69, 0, 0x61)
+      if (command[1] === 0x44) { started = true; return acknowledgement }
+      return started ? replies.shift() : packet(0x73, 0x74, 0x62)
+    })
     let done = false, actual
     const pending = h.api.dispenseBillsVerified(4).then(result => { done = true; actual = result })
     for (let elapsed = 0; !done && elapsed < 15000; elapsed += 100) {
@@ -263,20 +269,70 @@ for (const [label, acknowledgement, statuses, expected] of [
     }
     await new Promise(resolve => setImmediate(resolve)); assert(done); await pending
     assert.deepEqual(JSON.parse(JSON.stringify(actual)), expected)
+    assert.deepEqual(sent.slice(0, 3).map(x => Array.from(x.command)), [packet(0x49, 0, 0), packet(0x53, 0, 0), packet(0x44, 4, 0x53)])
+    assert.equal(sent.filter(x => x.command[1] === 0x49).length, 1)
     assert.equal(sent.filter(x => x.command[1] === 0x44).length, 1)
-    for (const query of sent.filter(x => x.command[1] !== 0x44)) assert.deepEqual(Array.from(query.command), packet(0x53, 0, 0))
-    if (statuses.length === 2) assert.equal(sent[2].at - sent[1].at, 300)
+    for (const query of sent.filter(x => x.command[1] === 0x53)) assert.deepEqual(Array.from(query.command), packet(0x53, 0, 0))
+    if (statuses.length === 2) assert.equal(sent[4].at - sent[3].at, 300)
     assert.equal(h.timers.size, 0)
     // Both start/rejection waiters must be removed before the next transaction.
     h.respond(() => packet(0x6e, 0x73, 0x21))
     assert.equal((await h.api.dispenseBillsVerified(4)).dispensed, 0)
   })
 }
+for (const [label, initialized, statuses, expected] of [
+  ['initializing then idle', packet(0x69, 0, 0x61), [packet(0x73, 0x6f, 0x6e), packet(0x73, 0x74, 0x62)], { dispensed: 4, complete: true }],
+  ['previous normal end', packet(0x69, 0, 0x61), [packet(0x73, 2, 0x6f)], { dispensed: 4, complete: true }],
+  ['reset refused', packet(0x6e, 0x73, 0x21), [], { dispensed: 0, complete: false }],
+  ['reset timeout', null, [], { dispensed: 0, complete: false }],
+  ['unreadable reset reply', packet(0x69, 0, 0x53), [], { dispensed: 0, complete: false }],
+  ['wrong reset acknowledgement', packet(0x69, 1, 0x61), [], { dispensed: 0, complete: false }],
+  ['bad reset checksum', [0x24, 0x69, 0, 0x61, 0], [], { dispensed: 0, complete: false }],
+  ['still moving', packet(0x69, 0, 0x61), [packet(0x73, 0x6f, 0x6e)], { dispensed: 0, complete: false }],
+  ['error stop', packet(0x69, 0, 0x61), [packet(0x73, 0, 0x6e)], { dispensed: 0, complete: false }],
+  ['inhibited', packet(0x69, 0, 0x61), [packet(0x73, 0x68, 0x21)], { dispensed: 0, complete: false }],
+  ['missing ready reply', packet(0x69, 0, 0x61), [null], { dispensed: 0, complete: false }],
+]) {
+  test(`ONEPLUS resets once and verifies readiness before any payout: ${label}`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+    const h = device('dispenser', { setTimeout, clearTimeout, Date }); await h.connect()
+    const sent = [], readiness = [...statuses]
+    let started = false
+    h.respond(command => {
+      sent.push({ command, at: Date.now() })
+      if (command[1] === 0x49) return initialized
+      if (command[1] === 0x44) { started = true; return packet(0x64, 4, 0x61) }
+      return started ? packet(0x73, 4, 0x6f) : readiness.length > 1 ? readiness.shift() : readiness[0]
+    })
+    let done = false, actual
+    const pending = h.api.dispenseBillsVerified(4, 'oneplus').then(value => { actual = value; done = true })
+    await new Promise(resolve => setImmediate(resolve))
+    for (let elapsed = 0; !done && elapsed < 7000; elapsed += 100) {
+      t.mock.timers.tick(100); await new Promise(resolve => setImmediate(resolve))
+    }
+    await new Promise(resolve => setImmediate(resolve)); assert(done); await pending
+    assert.deepEqual(JSON.parse(JSON.stringify(actual)), expected)
+    assert.equal(sent.filter(x => x.command[1] === 0x49).length, 1)
+    assert.equal(sent.filter(x => x.command[1] === 0x44).length, expected.complete ? 1 : 0)
+    assert.deepEqual(Array.from(sent[0].command), packet(0x49, 0, 0))
+    if (!statuses.length) {
+      assert.equal(sent.length, 1, 'an unconfirmed reset must not query status or dispense')
+      if (initialized === null || label === 'bad reset checksum') assert.equal(Date.now(), 1500)
+    } else if (!expected.complete) assert.equal(Date.now(), 5000)
+    if (label === 'initializing then idle') assert.equal(sent[2].at - sent[1].at, 300)
+    assert.equal(h.timers.size, 0)
+  })
+}
 for (const count of [4, 250]) {
   test(`verified ONEPLUS ${count} notes bounds moving status by total deadline without retry`, async t => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
     const h = device('dispenser', { setTimeout, clearTimeout, Date }); await h.connect()
-    h.respond(command => command[1] === 0x44 ? packet(0x64, count, 0x61) : packet(0x73, 0x6f, 0x6e))
+    let started = false
+    h.respond(command => {
+      if (command[1] === 0x49) return packet(0x69, 0, 0x61)
+      if (command[1] === 0x44) { started = true; return packet(0x64, count, 0x61) }
+      return started ? packet(0x73, 0x6f, 0x6e) : packet(0x73, 0x74, 0x62)
+    })
     let done = false, actual
     h.api.dispenseBillsVerified(count).then(result => { done = true; actual = result })
     const limit = Math.min(count * 1500 + 5000, 40000)
@@ -438,12 +494,12 @@ test('SAM4S and WOOSIM IPC receive change owed; unified receipt mapping adds no 
   }
 })
 
-test('QA preview preserves after-payout mode and models ONEPLUS start then status, including empty-after-2', {
+test('QA preview models ONEPLUS reset success/refusal and start then status, preserving existing modes', {
   skip: !fs.existsSync(path.join(root, '.local/payment-flow-preview.cjs')),
 }, async () => {
   const source = fs.readFileSync(path.join(root, '.local/payment-flow-preview.cjs'), 'utf8')
   const install = source.slice(source.indexOf('function installMock('), source.indexOf('const runtime ='))
-  for (const mode of ['', 'after-payout', 'empty-after-2']) {
+  for (const mode of ['', 'after-payout', 'empty-after-2', 'reset-fails']) {
     const session = new Map([['qa-dispenser', mode]]), replies = []
     const context = { window: { location: { href: 'http://127.0.0.1:3219', origin: 'http://127.0.0.1:3219' }, fetch: async () => {} },
       localStorage: { getItem: () => null }, sessionStorage: { getItem: key => session.get(key), setItem: (key, value) => session.set(key, value) },
@@ -453,6 +509,9 @@ test('QA preview preserves after-payout mode and models ONEPLUS start then statu
     api.onBillDispenserData(value => replies.push(Array.from(value.data)))
     await api.sendToBillDispenser(packet(0x53, 0, 0))
     assert.deepEqual(replies.at(-1), mode === 'after-payout' ? packet(0x73, 2, 0x6f) : packet(0x73, 0x74, 0x62))
+    await api.sendToBillDispenser(packet(0x49, 0, 0))
+    assert.deepEqual(replies.at(-1), mode === 'reset-fails' ? packet(0x6e, 0x73, 0x21) : packet(0x69, 0, 0x61))
+    if (mode === 'reset-fails') continue
     await api.sendToBillDispenser(packet(0x44, 4, 0x53)); assert.deepEqual(replies.at(-1), packet(0x64, 4, 0x61))
     await api.sendToBillDispenser(packet(0x53, 0, 0))
     assert.deepEqual(replies.at(-1), mode === 'empty-after-2' ? packet(0x73, 2, 0x6e) : packet(0x73, 4, 0x6f))
