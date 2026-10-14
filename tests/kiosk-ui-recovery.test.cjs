@@ -540,13 +540,12 @@ test('cash enable acknowledgement failure requires recovery', async () => {
   assert.equal(h.calls.cancelled, 0); assert.equal(h.calls.unavailable, undefined);
   assert(h.calls.recovery); assert.deepEqual(h.calls.dispense, []);
 });
-for (const [amount, result] of [[35000, true]]) {
-  test(`cash completion ${amount}/${result} cannot complete with unreturned change`, async () => {
-    const h = cashScreen(amount, result); await h.callbacks[0](amount);
-    assert(h.calls.recovery); assert.equal(h.calls.complete, 0); assert.equal(h.calls.returned, 0);
-    if (amount === 35000) assert.deepEqual(h.calls.dispense, []);
-  });
-}
+test('change smaller than one note completes the room and records the whole change as owed without dispensing', async () => {
+  const h = cashScreen(35000, true); await h.callbacks[0](35000);
+  assert.equal(h.calls.recovery, ''); assert.equal(h.calls.complete, 1); assert.equal(h.calls.returned, 0);
+  assert.deepEqual(h.calls.dispense, []);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.calls.payment)), { method: 'CASH', changeOwed: 5000, changeUncertain: false });
+});
 for (const [label, result, owed, uncertain] of [
   ['partial', { dispensed: 2, complete: false }, 20000, false],
   ['unknown', { dispensed: null, complete: false }, 40000, true],

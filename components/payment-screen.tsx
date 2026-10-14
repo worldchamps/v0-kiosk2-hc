@@ -46,6 +46,8 @@ export default function PaymentScreen({
   const [error, setError] = useState<string>("")
   const [statusMessage, setStatusMessage] = useState<string>("현금 결제를 준비하고 있습니다...")
   const [largeBillsOnly, setLargeBillsOnly] = useState(false)
+  const [integratedCash, setIntegratedCash] = useState(false)
+  const [cashPayoutUnit, setCashPayoutUnit] = useState(10000)
   const paymentCompleteRef = useRef(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const cancellingRef = useRef(false)
@@ -63,6 +65,8 @@ export default function PaymentScreen({
   useEffect(() => {
     window.electronAPI?.getHardwareStatus?.().then(status => {
       setLargeBillsOnly(status.cashBackend === "bac2400")
+      setIntegratedCash(status.cashBackend === "bac2400" || status.cashBackend === "multi3400")
+      setCashPayoutUnit(status.cashPayoutUnit || 10000)
     }).catch(() => {})
   }, [])
 
@@ -110,13 +114,10 @@ export default function PaymentScreen({
       let result: { dispensed: number | null; complete: boolean } = { dispensed: null, complete: false }
       const returnedBefore = latestSession.current.returnedAmount || 0
       try {
-        if (overpayment % 10000 !== 0) {
-          requireRecovery(`거스름돈 ${overpayment.toLocaleString()}원을 자동 반환할 수 없습니다. 관리자에게 문의해주세요.`)
-          return
-        }
-        const billCount = overpayment / 10000
+        // Dispense whole change notes; any remainder below one note is recorded as owed (room still assigned).
+        const billCount = Math.floor(overpayment / cashPayoutUnit)
         if (billCount > 0) {
-          console.log(`[v0] Dispensing change: ${billCount} x 10,000`)
+          console.log(`[v0] Dispensing change: ${billCount} x ${cashPayoutUnit}`)
 
           // Ensure dispenser is connected before trying
           if (!isBillDispenserConnected()) {
@@ -125,22 +126,21 @@ export default function PaymentScreen({
           }
 
           result = await dispenseBillsVerified(billCount, largeBillsOnly ? "bac2400" : "oneplus")
-          if (result.dispensed !== null && result.dispensed > 0) recordCashReturned(result.dispensed * 10000)
+          if (result.dispensed !== null && result.dispensed > 0) recordCashReturned(result.dispensed * cashPayoutUnit)
           if (result.complete) {
             console.log("[v0] Change dispensed successfully")
             setStatusMessage(`거스름돈 반환 완료`)
           }
         } else {
-          console.warn("[v0] Change amount less than 1 bill unit (10,000)")
-          requireRecovery(`거스름돈 ${overpayment.toLocaleString()}원을 자동 반환할 수 없습니다. 관리자에게 문의해주세요.`)
-          return
+          console.warn(`[v0] Change amount less than 1 bill unit (${cashPayoutUnit})`)
+          result = { dispensed: 0, complete: false }
         }
       } catch (e) {
         console.error("[v0] Dispenser error:", e)
       }
-      if (!result.complete) {
-        window.electronAPI?.reportDeviceFault?.('dispenser')
-        const returned = (result.dispensed || 0) * 10000
+      if (!result.complete || overpayment % cashPayoutUnit !== 0) {
+        if (!result.complete && overpayment >= cashPayoutUnit) window.electronAPI?.reportDeviceFault?.('dispenser')
+        const returned = (result.dispensed || 0) * cashPayoutUnit
         payment.changeOwed = overpayment - returned
         payment.changeUncertain = result.dispensed === null
         setStatusMessage(payment.changeUncertain
@@ -161,7 +161,7 @@ export default function PaymentScreen({
     console.log("[v0] Payment flow finished, navigating...")
     await new Promise(r => setTimeout(r, 1000))
     await completionCallback.current(payment)
-  }, [requiredAmount, requireRecovery, recordCashReturned, largeBillsOnly])
+  }, [requiredAmount, requireRecovery, recordCashReturned, largeBillsOnly, cashPayoutUnit])
 
   // Polling Function
   const pollDeviceStatus = useCallback(
@@ -223,7 +223,7 @@ export default function PaymentScreen({
           console.log("[v0] Polling: Re-enabling acceptance for next bill...")
           await new Promise((resolve) => setTimeout(resolve, 500))
           if (!await enableAcceptance()) throw new Error("Acceptor enable not confirmed")
-          setStatusMessage(largeBillsOnly ? "1만원권 또는 5만원권을 추가로 투입해주세요..." : "추가 지폐를 투입해주세요...")
+          setStatusMessage(integratedCash ? "1만원권 또는 5만원권을 추가로 투입해주세요..." : "추가 지폐를 투입해주세요...")
 
         }
       } catch (e) {
@@ -233,7 +233,7 @@ export default function PaymentScreen({
         isPollingProcessingRef.current = false
       }
     },
-    [addBill, requiredAmount, handlePaymentCompletion, largeBillsOnly, requireRecovery],
+    [addBill, requiredAmount, handlePaymentCompletion, largeBillsOnly, integratedCash, requireRecovery],
   )
 
   useEffect(() => {
@@ -265,7 +265,7 @@ export default function PaymentScreen({
         if (!isMounted || cancellingRef.current) return
         console.log("[v0] Bill acceptance enabled")
 
-        setStatusMessage(largeBillsOnly ? "1만원권 또는 5만원권을 투입해주세요..." : "지폐를 투입해주세요...")
+        setStatusMessage(integratedCash ? "1만원권 또는 5만원권을 투입해주세요..." : "지폐를 투입해주세요...")
         setIsConnecting(false)
         setIsProcessing(true)
 
@@ -304,7 +304,7 @@ export default function PaymentScreen({
       // exits, wait for enable to settle so the shared OK response cannot clash.
       if (acceptanceAttemptedRef.current) void initialization.then(() => setConfig(0x1c))
     }
-  }, [paymentMethod, pollDeviceStatus, largeBillsOnly])
+  }, [paymentMethod, pollDeviceStatus, integratedCash])
 
   const remainingAmount = requiredAmount - paymentSession.acceptedAmount
 
@@ -345,16 +345,16 @@ export default function PaymentScreen({
       if (acceptedAmount > 0) {
         setStatusMessage(`${acceptedAmount.toLocaleString()}원 반환 중...`)
 
-        if (acceptedAmount % 10000 !== 0) {
+        if (acceptedAmount % cashPayoutUnit !== 0) {
           requireRecovery(`${acceptedAmount.toLocaleString()}원을 자동 반환할 수 없습니다. 관리자에게 문의해주세요.`)
           return
         }
-        const billCount = acceptedAmount / 10000
-        console.log(`[v0] Refunding ${billCount} bills of 10,000 won`)
+        const billCount = acceptedAmount / cashPayoutUnit
+        console.log(`[v0] Refunding ${billCount} bills of ${cashPayoutUnit} won`)
 
         if (!isBillDispenserConnected() && !await connectBillDispenser()) throw new Error("Dispenser disconnected")
         const refunded = await dispenseBillsVerified(billCount, largeBillsOnly ? "bac2400" : "oneplus")
-        if (refunded.dispensed !== null && refunded.dispensed > 0) recordCashReturned(refunded.dispensed * 10000)
+        if (refunded.dispensed !== null && refunded.dispensed > 0) recordCashReturned(refunded.dispensed * cashPayoutUnit)
 
         if (refunded.complete) {
           console.log("[v0] Refund successful")

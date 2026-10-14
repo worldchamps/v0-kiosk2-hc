@@ -3,12 +3,13 @@ import asyncio
 import importlib.util
 import json
 import logging
+import os
 import runpy
 from pathlib import Path
 import sys
 import types
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, mock_open, patch
 
 sys.dont_write_bytecode = True
 root = Path(__file__).resolve().parents[1]
@@ -21,8 +22,10 @@ sys.modules["serial"] = serial
 from serial_manager import SerialDevice
 from acceptor import OnePlusAcceptor
 from bac2400 import Bac2400
+from multi3400 import Multi3400
 from printer import BixolonPrinter
 from test_bac2400 import Bac2400Test, multi_frame
+from test_multi3400 import Multi3400Test, status_frame
 from test_card_dispenser import CardDispenserContracts
 
 spec = importlib.util.spec_from_file_location("qa_hardware_main", root / "hardware_server/main.py")
@@ -70,10 +73,51 @@ class HardwareContracts(unittest.IsolatedAsyncioTestCase):
                 isolated = importlib.util.module_from_spec(spec)
                 with patch("builtins.open", side_effect=FileNotFoundError), patch.dict("os.environ", env, clear=True):
                     spec.loader.exec_module(isolated)
-                self.assertEqual(isolated.USE_BAC2400, integrated)
-                self.assertEqual(isolated.bac2400.port if isolated.bac2400 else None, port)
+                is_b = env.get("KIOSK_PROPERTY_ID") == "property3" and env.get("KIOSK_BUILDING") == "B"
+                self.assertEqual(isolated.USE_MULTI3400, is_b)
+                self.assertEqual(isolated.USE_BAC2400, env.get("KIOSK_PROPERTY_ID") == "property4")
+                board = isolated.multi3400 or isolated.bac2400
+                self.assertEqual(board.port if board else None, port)
+                if integrated:
+                    self.assertIsInstance(board, Multi3400 if is_b else Bac2400)
                 self.assertEqual(isolated.acceptor is None, integrated)
                 self.assertEqual(isolated.dispenser is None, integrated)
+        serial.Serial.assert_not_called()
+
+    def test_B_payout_value_loads_from_local_env_and_invalid_values_refuse_without_io(self):
+        for configured, expected in [(None, 5000), ("1000", 1000), ("5000", 5000), ("10000", 10000),
+                                     ("50000", 50000), ("bad", None), ("2000", 2000), ("", None)]:
+            local_env = "KIOSK_PROPERTY_ID=property3\nKIOSK_BUILDING=B\n"
+            if configured is not None:
+                local_env += "MULTI3400_BD1_VALUE=" + configured + "\n"
+            isolated = importlib.util.module_from_spec(spec)
+            with patch("builtins.open", mock_open(read_data=local_env)), patch.dict("os.environ", {}, clear=True):
+                spec.loader.exec_module(isolated)
+            self.assertEqual(isolated.multi3400.bd1_value, expected)
+            isolated.multi3400.send = Mock(return_value=True)
+            if expected not in Multi3400.PAYOUT_VALUES:
+                result = isolated.handle_bac2400_message({"type": "dispense", "count": 8})
+                self.assertEqual(result[0]["data"][1:4], [0x6E, 0x73, 0x21])
+                isolated.multi3400.send.assert_not_called()
+        serial.Serial.assert_not_called()
+
+    async def test_B_raw_and_generic_dispenser_commands_use_FE_and_oneplus_responses(self):
+        for message in ({"type": "raw_dispenser", "data": list(server.legacy_packet(0x44, 8, 0x53))},
+                        {"type": "dispense", "count": 8}):
+            isolated = importlib.util.module_from_spec(spec)
+            with patch("builtins.open", side_effect=FileNotFoundError), patch.dict("os.environ",
+                    {"KIOSK_PROPERTY_ID": "property3", "KIOSK_BUILDING": "B"}, clear=True):
+                spec.loader.exec_module(isolated)
+            board, sent = isolated.multi3400, []
+            board.send = lambda p: sent.append(bytes(p)) or True
+            await isolated.handle_client(FakeClient([json.dumps(message)]))
+            board.process_incoming(status_frame())
+            board.process_incoming(b"\x11")
+            board.process_incoming(status_frame())
+            result = board.process_incoming(b"\x11")
+            self.assertEqual(sent, [Multi3400._command(0x11), Multi3400._command(0x10, ctrl1=0x10),
+                                    Multi3400._command(0x11), Multi3400._command(0x12, bd1=8)])
+            self.assertEqual(result[0]["data"], list(server.legacy_packet(0x64, 8, 0x61)))
         serial.Serial.assert_not_called()
 
     def test_source_self_test_loads_architecture_matching_bixolon_sdk_without_a_port(self):
@@ -90,6 +134,19 @@ class HardwareContracts(unittest.IsolatedAsyncioTestCase):
             with patch("builtins.open", side_effect=FileNotFoundError), patch.dict("os.environ", env, clear=True):
                 spec.loader.exec_module(isolated)
             sent = []
+            if isolated.multi3400:
+                board = isolated.multi3400
+                board.send = lambda p: sent.append(bytes(p)) or True
+                for target in ("acceptor", "dispenser"):
+                    client = FakeClient([json.dumps({"type": "cash_board_recover", "requestId": "qa-" + target, "target": target})])
+                    await isolated.handle_client(client)
+                    if target == "acceptor":
+                        board.process_incoming(b"\x11")
+                    result = board.process_incoming(status_frame())
+                    self.assertTrue(next(m for m in result if m["type"] == "cash_board_result")["verified"])
+                self.assertEqual(sent, [Multi3400._command(0x10, ctrl1=8), Multi3400._command(0x11), Multi3400._command(0x11)])
+                self.assertIsNone(board.operation)
+                continue
             isolated.bac2400.send = lambda p: sent.append(bytes(p)) or True
             for target in ("acceptor", "dispenser"):
                 client = FakeClient([json.dumps({"type": "cash_board_recover", "requestId": "qa-" + target, "target": target})])
@@ -248,6 +305,7 @@ class HardwareContracts(unittest.IsolatedAsyncioTestCase):
         finally:
             server.connected_clients.clear()
 
+    @unittest.skipIf(os.environ.get("KIOSK_QA_NO_NETWORK") == "1", "Network forbidden for this QA run")
     async def test_main_binds_only_loopback_and_rejects_browser_origins(self):
         # Execute main's startup with all adapters and socket factory replaced; inspect the actual serve contract.
         captured = {}

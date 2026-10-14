@@ -234,7 +234,7 @@ export async function dispenseBillsVerified(count: number, cashBackend: "oneplus
   if (!ready) return notDispensed
   const deadline = Date.now() + Math.min(count * 1500 + 5000, 40000)
   // ONEPLUS acknowledges the start, not delivery. Never repeat this command.
-  const accepted = await sendCommand(createPacket(0x44, count, 0x53), [0x64, 0x6e])
+  const accepted = await sendCommand(createPacket(0x44, count, 0x53), [0x64, 0x6e], undefined, 3000)
   if (accepted?.[1] === 0x6e && accepted[2] === 0x73 && accepted[3] === 0x21) {
     return { dispensed: 0, complete: false }
   }

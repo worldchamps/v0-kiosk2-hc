@@ -10,6 +10,7 @@ import websockets
 
 from acceptor import OnePlusAcceptor
 from bac2400 import Bac2400
+from multi3400 import Multi3400
 from dispenser import OnePlusDispenser
 from printer import BixolonPrinter
 from card_dispenser import CardDispenser, card_enabled
@@ -36,7 +37,7 @@ def load_local_hardware_env():
     wanted = {
         "KIOSK_PROPERTY_ID", "KIOSK_PROPERTY", "NEXT_PUBLIC_KIOSK_PROPERTY_ID",
         "BAC2400_PORT", "BOARD3400_PORT", "PRINTER_PORT", "DISPENSER_PORT", "ACCEPTOR_PORT",
-        "KIOSK_BUILDING", "CARD_DISPENSER_ENABLED", "CARD_DISPENSER_PORT", "CARD_DISPENSER_ADDRESS",
+        "KIOSK_BUILDING", "MULTI3400_BD1_VALUE", "CARD_DISPENSER_ENABLED", "CARD_DISPENSER_PORT", "CARD_DISPENSER_ADDRESS",
     }
     try:
         with open(env_path, encoding="utf-8-sig", errors="ignore") as env_file:
@@ -60,13 +61,22 @@ PROPERTY_ID = (
     or "property3"
 ).lower()
 USE_WOOSIM = PROPERTY_ID == "property3" and os.environ.get("KIOSK_BUILDING") == "B"
-USE_BAC2400 = PROPERTY_ID == "property4" or USE_WOOSIM
+USE_MULTI3400 = PROPERTY_ID == "property3" and os.environ.get("KIOSK_BUILDING") == "B"
+USE_BAC2400 = PROPERTY_ID == "property4"
+try:
+    MULTI3400_BD1_VALUE = int(os.environ.get("MULTI3400_BD1_VALUE", "5000"))
+except ValueError:
+    MULTI3400_BD1_VALUE = None  # Invalid local configuration must never issue a payout.
+
+multi3400 = Multi3400(
+    os.environ.get("BAC2400_PORT") or os.environ.get("BOARD3400_PORT") or "COM5", MULTI3400_BD1_VALUE
+) if USE_MULTI3400 else None
 
 bac2400 = Bac2400(
     os.environ.get("BAC2400_PORT") or os.environ.get("BOARD3400_PORT") or "COM5"
 ) if USE_BAC2400 else None
-dispenser = None if USE_BAC2400 else OnePlusDispenser(DISPENSER_PORT)
-acceptor = None if USE_BAC2400 else OnePlusAcceptor(ACCEPTOR_PORT)
+dispenser = None if USE_BAC2400 or USE_MULTI3400 else OnePlusDispenser(DISPENSER_PORT)
+acceptor = None if USE_BAC2400 or USE_MULTI3400 else OnePlusAcceptor(ACCEPTOR_PORT)
 printer = None if USE_BAC2400 or USE_WOOSIM else BixolonPrinter(PRINTER_PORT, baud_rate=115200)
 
 # Only Electron creates this per-launch secret. Card contents are never broadcast.
@@ -143,7 +153,7 @@ def acceptor_callback(data):
 
 
 def bac2400_callback(data):
-    for message in bac2400.process_incoming(data):
+    for message in (multi3400 or bac2400).process_incoming(data):
         asyncio.run_coroutine_threadsafe(broadcast(message), main_loop)
 
 
@@ -152,13 +162,14 @@ def legacy_packet(command1, command2, data):
 
 
 def handle_bac2400_message(message):
+    board = multi3400 or bac2400
     command_type = message.get("type")
     if command_type == "cash_board_recover":
-        return bac2400.recover(message.get("target"), message.get("requestId"))
+        return board.recover(message.get("target"), message.get("requestId"))
     if command_type == "raw_acceptor":
-        return bac2400.handle_acceptor_command(bytes(message.get("data", [])))
+        return board.handle_acceptor_command(bytes(message.get("data", [])))
     if command_type == "raw_dispenser":
-        return bac2400.handle_dispenser_command(bytes(message.get("data", [])))
+        return board.handle_dispenser_command(bytes(message.get("data", [])))
 
     acceptor_commands = {
         "acceptor_enable": (0x53, 0x41, 0x0D),
@@ -169,20 +180,25 @@ def handle_bac2400_message(message):
         "acceptor_reset": (0x52, 0x53, 0x54),
     }
     if command_type in acceptor_commands:
-        return bac2400.handle_acceptor_command(legacy_packet(*acceptor_commands[command_type]))
+        return board.handle_acceptor_command(legacy_packet(*acceptor_commands[command_type]))
     if command_type == "acceptor_config":
-        return bac2400.handle_acceptor_command(legacy_packet(0x53, 0x43, message.get("value", 0x3C)))
+        return board.handle_acceptor_command(legacy_packet(0x53, 0x43, message.get("value", 0x3C)))
     if command_type == "dispense":
-        return bac2400.handle_dispenser_command(legacy_packet(0x44, message.get("count", 1), 0x53))
+        return board.handle_dispenser_command(legacy_packet(0x44, message.get("count", 1), 0x53))
     if command_type == "dispenser_status":
-        return bac2400.handle_dispenser_command(legacy_packet(0x53, 0x74, 0x3F))
+        return board.handle_dispenser_command(legacy_packet(0x53, 0, 0) if multi3400 else legacy_packet(0x53, 0x74, 0x3F))
     if command_type == "dispenser_init":
-        return bac2400.handle_dispenser_command(legacy_packet(0x49, 0, 0))
+        return board.handle_dispenser_command(legacy_packet(0x49, 0, 0))
     return None
 
 
 async def poll_bac2400_payout():
     while True:
+        if multi3400:
+            for response in multi3400.poll():
+                await broadcast(response)
+            await asyncio.sleep(0.05)
+            continue
         for response in bac2400.expire_operations():
             await broadcast(response)
         if bac2400.payout_in_progress:
@@ -208,7 +224,7 @@ async def handle_client(websocket, *args):
                     task.add_done_callback(card_tasks.discard)
                     continue
 
-                if bac2400:
+                if multi3400 or bac2400:
                     responses = handle_bac2400_message(msg)
                     if responses is not None:
                         for response in responses:
@@ -292,7 +308,13 @@ async def main():
     if card_dispenser:
         card_dispenser.connect()
 
-    if bac2400:
+    if multi3400:
+        logger.info("%s building=B: using MULTI3400 FE adapter on %s (BD1=%s won)",
+                    PROPERTY_ID, multi3400.port, MULTI3400_BD1_VALUE)
+        multi3400.connect()
+        multi3400.start(bac2400_callback)
+        asyncio.create_task(poll_bac2400_payout())
+    elif bac2400:
         logger.info("%s building=%s: using BAC-2400/3400 adapter (BV1/BD1) on %s; firmware unverified",
                     PROPERTY_ID, os.environ.get("KIOSK_BUILDING", ""), bac2400.port)
         bac2400.connect()
@@ -317,7 +339,9 @@ async def main():
     finally:
         if card_dispenser:
             card_dispenser.stop()
-        if bac2400:
+        if multi3400:
+            multi3400.stop()
+        elif bac2400:
             bac2400.stop()
         else:
             dispenser.stop()

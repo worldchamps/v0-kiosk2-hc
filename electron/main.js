@@ -19,7 +19,7 @@ const { createPaymentRecovery } = require("./payment-recovery")
 const { createOperationsReporter, verifyRecoveryCommand } = require("./kiosk-operations")
 const { deviceFiles } = require("./device-setup")
 const { createDeviceSettings } = require("./device-settings")
-const { usesIntegratedCash } = require("./cash-device-profile")
+const { cashBackend, cashPayoutUnit } = require("./cash-device-profile")
 const { createCardKeyStore } = require("./card-key-store")
 const { createCardKeyService, enabled: cardDispenserEnabled } = require("./card-key-service")
 const { createDeviceRecovery, runRemoteReset } = require("./device-recovery")
@@ -140,7 +140,8 @@ const cashDiagnostics = createCashDiagnostics({
   bridge: { get isConnected() { return hardwareBridge.isConnected }, subscribeMessage: hardwareBridge.subscribeMessage,
     send: message => { lastAcceptorCommand = Date.now(); return hardwareBridge.send(message) } },
   trace: cashTrace,
-  hardwareInfo: () => ({ cashBackend: usesIntegratedCash(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING) ? 'bac2400' : 'oneplus', cashBoard: cashBoardInfo }),
+  hardwareInfo: () => ({ cashBackend: cashBackend(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING),
+    cashPayoutUnit: cashPayoutUnit(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING, process.env), cashBoard: cashBoardInfo }),
 })
 ipcMain.handle('cash-diagnostics:read', (event, password) => cashDiagnostics.read(event, password))
 ipcMain.handle('cash-diagnostics:run', (event, input) => cashDiagnostics.run(event, input))
@@ -1004,7 +1005,8 @@ ipcMain.handle("reconnect-printer", async () => {
 ipcMain.handle("get-hardware-status", async () => {
   return {
     connected: hardwareBridge.isConnected,
-    cashBackend: usesIntegratedCash(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING) ? 'bac2400' : 'oneplus',
+    cashBackend: cashBackend(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING),
+    cashPayoutUnit: cashPayoutUnit(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING, process.env),
     cashBoard: cashBoardInfo,
   }
 })
