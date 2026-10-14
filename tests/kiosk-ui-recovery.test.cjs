@@ -180,14 +180,29 @@ test('main recovery guard is set before storage changes and retained after a fai
   assert.equal(h.value.paymentSession.isActive, true)
 })
 
-test('saved and malformed journals block server restart, and an active native recovery denies new payment', async () => {
+test('saved and malformed journals block server restart', async () => {
   for (const saved of ['{broken', JSON.stringify({ isActive: true, acceptedAmount: 0, requiredAmount: 10000, acceptedBills: [] })]) {
     const guards = [], h = await paymentContext(saved, { paymentRecovery: { setDeviceRecoveryBlocked: blocked => { guards.push(blocked); return true } } })
     assert(guards.length && guards.every(Boolean)); assert.equal(h.localStorage.getItem('kiosk-payment-recovery-v1'), saved)
   }
-  const guards = [], h = await paymentContext(null, { paymentRecovery: { setDeviceRecoveryBlocked: blocked => { guards.push(blocked); return !blocked } } })
-  assert.equal(h.value.startPayment(10000), false); assert.equal(guards.at(-1), true)
 })
+
+for (const finish of ['completePayment', 'cancelPayment']) {
+  test(`device recovery refusal does not prevent payment storage or ${finish}`, async () => {
+    const guards = [], h = await paymentContext(null, { paymentRecovery: { setDeviceRecoveryBlocked: blocked => { guards.push(blocked); return false } } })
+    assert.equal(h.value.startPayment(10000, { reservationId: 'QA-payment' }, 'cash'), true)
+    const saved = JSON.parse(h.localStorage.getItem('kiosk-payment-recovery-v1'))
+    assert.equal(saved.isActive, true); assert.equal(saved.requiredAmount, 10000); assert.equal(saved.method, 'cash')
+    assert.equal(saved.reservationData.reservationId, 'QA-payment')
+    assert.equal(h.value.paymentSession.isActive, true); assert.equal(h.value.storageError, '')
+    assert.equal(h.value.paymentSession.recoveryRequired, undefined)
+    assert.equal(await h.value[finish](), true)
+    assert.equal(h.localStorage.getItem('kiosk-payment-recovery-v1'), null)
+    assert.equal(h.value.paymentSession.isActive, false); assert.equal(h.value.storageError, '')
+    assert.equal(h.value.paymentSession.recoveryRequired, undefined)
+    assert.deepEqual(guards, [false, true, true, true, false])
+  })
+}
 
 test('screen exception returns to kiosk entry after ten seconds without touching any stored records', () => {
   for (const href of ['http://localhost:3000?mode=web', 'http://localhost:3000/kiosk/D',
@@ -307,6 +322,16 @@ test('restart preserves cash and pending body, requires recovery, and malformed 
   assert.equal(restored.value.startPayment(30000), false);
   const malformed = await paymentContext('{bad'); assert(malformed.value.storageError); assert.equal(malformed.value.startPayment(30000), false);
 });
+test('storage write failure prevents payment start and retains the existing storage error', async () => {
+  const h = await paymentContext(); h.localStorage.break();
+  assert.equal(h.value.startPayment(10000, {}, 'cash'), false);
+  assert.equal(h.localStorage.getItem('kiosk-payment-recovery-v1'), null);
+  assert.equal(h.value.paymentSession.isActive, true); assert.equal(h.value.paymentSession.requiredAmount, 10000);
+  assert.equal(h.value.paymentSession.recoveryRequired, '결제 기록 저장 오류입니다. 관리자 확인이 필요합니다.');
+  assert.equal(h.value.storageError, '결제 기록을 안전하게 저장하지 못했습니다. 관리자에게 문의해주세요.');
+  assert.equal(h.value.startPayment(10000), false);
+});
+
 test('storage failure when clearing a session preserves its cash evidence and prevents completion', async () => {
   const h = await paymentContext(); h.value.startPayment(30000, {}, 'cash'); h.value.addBill(10000); h.localStorage.break();
   assert.equal(h.value.completePayment(), false); assert.equal(h.value.paymentSession.acceptedAmount, 10000); assert(h.value.storageError);

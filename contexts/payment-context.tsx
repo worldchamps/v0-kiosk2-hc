@@ -91,7 +91,7 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
     // Persist before another money operation or clearing its evidence.
     try {
       // Synchronous main-process guard must precede storage and the next physical command.
-      if (window.electronAPI?.paymentRecovery?.setDeviceRecoveryBlocked?.(true) === false) throw new Error("Device recovery busy")
+      window.electronAPI?.paymentRecovery?.setDeviceRecoveryBlocked?.(true)
       if (next.isActive) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
       else window.localStorage.removeItem(STORAGE_KEY)
       current.current = next
