@@ -613,7 +613,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         )}
 
         {currentScreen === "onSiteReservation" && (
-          <OnSiteReservation key={homeSessionKey} onNavigate={handleNavigate} location={kioskLocation} onUpdateSafeChange={setOnSiteUpdateSafe} onCardIdleChange={setOnSiteCardIdle} />
+          <OnSiteReservation key={homeSessionKey} onNavigate={handleNavigate} location={kioskLocation} building={kioskScope.building} onUpdateSafeChange={setOnSiteUpdateSafe} onCardIdleChange={setOnSiteCardIdle} />
         )}
 
         {deliveringCard && <CheckInCardProgress />}

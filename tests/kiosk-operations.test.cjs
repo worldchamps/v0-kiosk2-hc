@@ -6,6 +6,19 @@ const identity = { deviceId: 'property3-kiosk-b-32', property: 'property3', buil
 const firebaseOrder = value => Object.fromEntries(Object.keys(value).sort().map(field => [field, value[field]]))
 const raw = JSON.stringify({ isActive: true, acceptedAmount: 70000, recoveryRequired: '예약 충돌', reservationData: { roomNumber: 'B101', guestName: 'private' } })
 
+test('native operation and screen identity report optional C/D scope without inventing a building for Camp or Kariv', () => {
+  const fs = require('node:fs'), vm = require('node:vm'), path = require('node:path')
+  const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8')
+  const identityCode = source.slice(source.indexOf('const operationsIdentity ='), source.indexOf('let lastPrinterResult ='))
+  for (const [property, building, expected] of [['property1', 'C', 'C'], ['property1', 'D', 'D'], ['property1', '', ''],
+    ['property3', 'A', 'A'], ['property3', 'B', 'B'], ['property2', 'B', ''], ['property4', 'C', '']]) {
+    const context = { process: { env: { KIOSK_PROPERTY_ID: property, KIOSK_BUILDING: building } }, app: { getVersion: () => 'test' } }
+    vm.runInNewContext(identityCode + '\nresult = operationsIdentity()', context)
+    assert.equal(context.result.building, expected)
+  }
+  assert.match(source, /createKioskScreenReporter\(\{\s*identity: operationsIdentity\(\)/)
+})
+
 // Run native configuration, renderer selection and report callbacks without opening Electron or devices.
 function nativeOperations({ overlay = true, property = 'property2' } = {}) {
   const fs = require('node:fs'), vm = require('node:vm'), path = require('node:path')
@@ -21,6 +34,8 @@ function nativeOperations({ overlay = true, property = 'property2' } = {}) {
     setTimeout: callback => setTimeout(callback, 5), clearTimeout, overlayButtonModule: { getKioskPopup: () => popup },
     hardwareBridge: {}, tossFrontBridge: { configured: true, pending: new Map() }, cardKey: { isBusy: () => false, status: () => ({}) },
     cardDispenserEnabled: () => false, usesWoosim: () => property === 'property3',
+    hardwareProfile: require('../electron/cash-device-profile').hardwareProfile,
+    usesSam4s: () => property === 'property4', bridgeDevices: [],
     createDeviceRecovery: require('../electron/device-recovery').createDeviceRecovery,
     operationsIdentity: () => ({ deviceId: 'property2-kariv-kiosk-01', property, building: '', version: 'QA' }),
     createOperationsReporter: options => options, cardStore: {},

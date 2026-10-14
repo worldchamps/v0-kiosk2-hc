@@ -10,6 +10,7 @@ import threading
 import time
 
 from serial_manager import SerialDevice
+from hardware_profile import hardware_profile
 
 ISSUE_BUDGET = 30
 PRESENT_BUDGET = 5
@@ -29,7 +30,8 @@ def card_enabled(env):
     prop = (env.get("KIOSK_PROPERTY_ID") or env.get("KIOSK_PROPERTY") or
             env.get("NEXT_PUBLIC_KIOSK_PROPERTY_ID") or "property3").lower()
     return env.get("CARD_DISPENSER_ENABLED", "").lower() == "true" and (
-        prop == "property1" or prop == "property3" and env.get("KIOSK_BUILDING") == "A")
+        prop == "property1" or prop == "property3" and env.get("KIOSK_BUILDING") in ("A", "B")) and \
+        hardware_profile(prop, env.get("KIOSK_BUILDING"), env) == "oneplus"
 
 
 def validate_profile(profile):

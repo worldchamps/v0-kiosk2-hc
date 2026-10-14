@@ -5,7 +5,6 @@ import { useAdmin } from "@/contexts/admin-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { KioskDeviceSettingsRead, KioskDeviceSettingsValues } from "@/types/electron"
-import { propertyUsesCardKey } from "@/lib/property-utils"
 
 export default function DeviceSettings() {
   const { password } = useAdmin()
@@ -42,6 +41,7 @@ export default function DeviceSettings() {
       setCurrent(null)
       setValues(null)
       setMessage("장비 설정을 저장했습니다. 진행 중인 거래가 끝난 뒤 설치형 앱을 정상 종료하고 다시 실행하면 적용됩니다.")
+      if (values.building !== current?.building) setMessage("판매 동을 저장했습니다. 키오스크가 다시 시작됩니다.")
     } catch {
       setMessage("프로그램 업데이트나 다른 장비 작업 중입니다. 완료 후 다시 시도해주세요.")
     } finally { setBusy(false) }
@@ -65,6 +65,16 @@ export default function DeviceSettings() {
         <p className="font-medium">등록 숙소: {current.property}</p>
         <Button variant="outline" disabled={busy} onClick={() => { setValues(null); setCurrent(null) }}>설정 닫기</Button>
       </div>
+      {(current.property === "property1" || current.property === "property3") && <label className="block space-y-1">
+        <span className="font-medium">판매 동</span>
+        <select className="flex h-10 w-full rounded-md border px-3" value={values.building} disabled={busy}
+          onChange={event => set("building", event.target.value)}>
+          {current.property === "property1" ? <>
+            <option value="">C·D동 전체</option><option value="C">C동</option><option value="D">D동</option>
+          </> : <><option value="A">A동</option><option value="B">B동</option></>}
+        </select>
+        <span className="block text-sm text-gray-600">변경하면 키오스크가 다시 시작됩니다.</span>
+      </label>}
       <datalist id="kiosk-device-serial-ports">
         {current.serialPorts?.map(port => <option key={port.path} value={port.path}>{port.manufacturer}</option>)}
       </datalist>
@@ -93,13 +103,13 @@ export default function DeviceSettings() {
           <span className="block text-sm text-gray-600">기존 키는 화면에 표시하지 않습니다. 새 키를 입력하면 저장 시 교체됩니다.</span>
         </label>
       </div>
-      {current.property === "property4" || current.property === "property3" && current.building === "B" ? <div className="rounded border p-4 space-y-4">
-        <h3 className="text-xl font-semibold">현금 통합 보드 · {current.property === "property4" ? "SAM4S" : "WOOSIM"} 프린터</h3>
+      {current.hardwareProfile === "camp" || current.hardwareProfile === "beach-b" ? <div className="rounded border p-4 space-y-4">
+        <h3 className="text-xl font-semibold">현금 통합 보드 · {current.hardwareProfile === "camp" ? "SAM4S" : "WOOSIM"} 프린터</h3>
         {portInput("bac2400Port", "BAC-2400 / 3400 통합 보드", "지폐 인식기와 방출기가 공유하는 보드 COM 포트입니다. 기본값은 COM5입니다.")}
-        <label className="block space-y-1">Windows에 설치된 {current.property === "property4" ? "SAM4S" : "WOOSIM WSP-CP383"} 프린터 이름
-          <Input list="kiosk-device-printers" value={current.property === "property4" ? values.sam4sPrinterName : values.woosimPrinterName}
-            onChange={event => set(current.property === "property4" ? "sam4sPrinterName" : "woosimPrinterName", event.target.value)}
-            placeholder={current.property === "property4" ? "비우면 SAM4S GCUBE 자동 검색" : "비우면 WSP-CP383 자동 검색"} autoComplete="off" />
+        <label className="block space-y-1">Windows에 설치된 {current.hardwareProfile === "camp" ? "SAM4S" : "WOOSIM WSP-CP383"} 프린터 이름
+          <Input list="kiosk-device-printers" value={current.hardwareProfile === "camp" ? values.sam4sPrinterName : values.woosimPrinterName}
+            onChange={event => set(current.hardwareProfile === "camp" ? "sam4sPrinterName" : "woosimPrinterName", event.target.value)}
+            placeholder={current.hardwareProfile === "camp" ? "비우면 SAM4S GCUBE 자동 검색" : "비우면 WSP-CP383 자동 검색"} autoComplete="off" />
           <span className="block text-sm text-gray-600">프린터의 COM 포트는 Windows 프린터 속성에서 설정합니다.</span>
         </label>
         <datalist id="kiosk-device-printers">
@@ -107,13 +117,13 @@ export default function DeviceSettings() {
         </datalist>
       </div> : current.property === "property2" ? <p className="rounded border p-4">
         이 숙소는 현재 현금 장비와 영수증 프린터를 사용하지 않습니다. 토스 프론트 연결 설정만 등록할 수 있습니다.
-      </p> : <div className="rounded border p-4 space-y-4">
+      </p> : current.hardwareProfile === null ? <p role="alert">KIOSK_HARDWARE 장비 설정을 확인해주세요.</p> : <div className="rounded border p-4 space-y-4">
         <h3 className="text-xl font-semibold">지폐 장비 · Bixolon 프린터</h3>
         {portInput("printerPort", "Bixolon 프린터", "Hardware Server와 Electron 인쇄 경로에 같은 COM 포트를 적용합니다.")}
         {portInput("acceptorPort", "지폐 인식기", "지폐 인식기 COM 포트입니다.")}
         {portInput("dispenserPort", "지폐 방출기", "지폐 방출기 COM 포트입니다.")}
       </div>}
-      {propertyUsesCardKey(current.property || "", current.building) && <div className="rounded border p-4 space-y-4">
+      {current.cardKeySupported && <div className="rounded border p-4 space-y-4">
         <h3 className="text-xl font-semibold">SNR-K750L 카드키 발급기</h3>
         {portInput("cardDispenserPort", "카드키 발급기 COM 포트", "장치 관리자에서 확인한 카드 발급기 포트를 입력하세요. 제조사 데모 프로그램은 종료해야 합니다.")}
         <label className="block space-y-2">장비 주소 (Device Number)

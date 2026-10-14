@@ -104,11 +104,19 @@ export async function printRoomInfoReceipt(roomData: any): Promise<boolean> {
 export async function printTestPage(): Promise<boolean> {
   if (!shouldUsePrinter()) return false
   const property = getKioskPropertyId()
-  const windowsStatus = property === "property3" ? await window.electronAPI?.getReceiptPrinterStatus?.() : null
+  const windowsStatus = typeof window !== "undefined" ? await window.electronAPI?.getReceiptPrinterStatus?.() : null
+  if (windowsStatus?.backend === "disabled") return false
   if (property === "property4" || windowsStatus?.backend === "woosim") {
+    let roomNumber = "Camp101"
+    if (windowsStatus?.backend === "woosim") {
+      const response = await fetch("/api/kiosk-config", { cache: "no-store" })
+      const scope = await response.json()
+      if (!response.ok || scope.property !== property || !["A", "B", "C", "D", null].includes(scope.building)) return false
+      roomNumber = `${scope.building || "C"}101`
+    }
     return HardwarePrinter.printReceipt({
       hotelName: property === "property4" ? "THE CAMP STAY" : "THE BEACH STAY",
-      roomNumber: property === "property4" ? "Camp101" : "B101",
+      roomNumber,
       password: "1234",
       checkInDate: "2026-08-22",
       checkOutDate: "2026-08-23",

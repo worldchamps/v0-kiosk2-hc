@@ -88,6 +88,7 @@ test('remote queue claims and print transitions reject wrong devices, stale jobs
     'next/server': { NextResponse: { json: (value, options) => Response.json(value, options) } },
     '@/lib/kiosk-scope': { getKioskScope: () => ({ property: 'property1' }) },
     '@/electron/pms-card-request': { verifyRequest },
+    '@/electron/card-issue-proof': require('../electron/card-issue-proof'),
     '@/lib/firebase-beach-rooms': { getRoomInfoByMatchingNumber: async () => ({ password: 'hidden-on-C', floor: '1F' }) },
     '@/lib/firebase-admin': { getDB: () => ({ ref: name => { assert.equal(name, 'kiosk_key_jobs/property1'); return {
       orderByChild(field) { assert.equal(field, 'request/createdAt'); return this },

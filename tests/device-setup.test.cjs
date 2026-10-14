@@ -102,6 +102,21 @@ test("property2 registration requires the existing overlay setting", async t => 
   assert.equal((await valid.completion).env.OVERLAY_MODE, "true")
 })
 
+test("property1 setup accepts all C/D or one building and rejects foreign or malformed scope", async t => {
+  for (const building of [undefined, '', 'C', 'D', 'A', 'B', 'c', 'CD']) {
+    const h = harness(t, { registration: { property: 'property1' },
+      env: 'KIOSK_PROPERTY_ID=property1' + (building === undefined ? '' : `\nKIOSK_BUILDING=${building}`) })
+    const result = await h.submit()
+    if (building === undefined || ['', 'C', 'D'].includes(building)) {
+      assert.equal(result.ok, true)
+      assert.equal((await h.completion).env.KIOSK_BUILDING, building)
+    } else {
+      assert.match(result.error, /KIOSK_BUILDING/)
+      assert.equal(h.snapshot.pairs, 0); assert.equal(h.snapshot.writes, 0)
+    }
+  }
+})
+
 test("Windows case-insensitive execution-control variables cannot be imported", async t => {
   for (const key of ["NODE_OPTIONS", "node_options", "PaTh", "nOdE_pAtH", "electron_run_as_node", "kiosk_update_public_key_file"]) {
     const h = harness(t, { env: `KIOSK_PROPERTY_ID=property3\nKIOSK_BUILDING=B\n${key}=qa-blocked` })

@@ -1,5 +1,6 @@
 const { verify, createHash } = require('node:crypto')
 const { publicKey } = require('./pms-card-public-key.json')
+const { supported, roomInScope } = require('./card-issue-proof')
 const requestFields = ['id', 'room', 'property', 'deviceId', 'createdAt', 'expiresAt']
 
 function verifyRequest(envelope, env, now = Date.now(), key = publicKey) {
@@ -15,7 +16,7 @@ function verifyRequest(envelope, env, now = Date.now(), key = publicKey) {
     throw new Error('invalid_remote_request')
   const { id, room, property, deviceId, createdAt, expiresAt } = request
   if (!/^[a-f0-9-]{36}$/.test(id || '') || deviceId !== env.KIOSK_DEVICE_ID || property !== env.KIOSK_PROPERTY_ID ||
-      !(property === 'property1' ? /^[CD]\d{3}$/ : property === 'property3' && env.KIOSK_BUILDING === 'A' ? /^A\d{3}$/ : /a^/).test(room) ||
+      !supported(env) || !roomInScope(room, env) ||
       !Number.isFinite(createdAt) || !Number.isFinite(expiresAt) || createdAt > now + 30000 ||
       expiresAt <= now || expiresAt - createdAt !== 600000) throw new Error('invalid_remote_request')
   return { ...request, operationId: createHash('sha256').update(`remote-key:${property}:${id}`).digest('hex') }

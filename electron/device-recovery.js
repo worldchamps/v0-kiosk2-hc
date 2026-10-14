@@ -3,7 +3,7 @@ const { createHash, randomUUID } = require('node:crypto')
 const { usesIntegratedCash } = require('./cash-device-profile')
 const clean = value => String(value || 'reset_failed').replace(/[^a-z0-9_:-]/gi, '_').slice(0, 80)
 
-function createDeviceRecovery({ configured, property, building, bridge, cardKey, terminal, printer, restartServer, isIdle, canRestartServer = isIdle, onRecovered = () => {}, onBusy = () => {}, now = Date.now, sleep = wait, setTimeout: scheduleTimeout = setTimeout, clearTimeout: cancelTimeout = clearTimeout, commandTimeoutMs = 3000 }) {
+function createDeviceRecovery({ configured, property, building, env = {}, bridge, cardKey, terminal, printer, restartServer, isIdle, canRestartServer = isIdle, onRecovered = () => {}, onBusy = () => {}, now = Date.now, sleep = wait, setTimeout: scheduleTimeout = setTimeout, clearTimeout: cancelTimeout = clearTimeout, commandTimeoutMs = 3000 }) {
   const hardware = Object.fromEntries(configured.map(key => [key, { state: 'ok', reason: null, lastResetAt: null, lastResetResult: null }]))
   let busy = false
   const update = (key, state, reason, result) => {
@@ -95,7 +95,7 @@ function createDeviceRecovery({ configured, property, building, bridge, cardKey,
     if (!isIdle()) throw Error('busy')
     hardware[key] = { ...hardware[key], state: 'recovering', reason: null }
     try {
-      if ((key === 'acceptor' || key === 'dispenser') && usesIntegratedCash(property, building)) await integratedRecovery(key)
+      if ((key === 'acceptor' || key === 'dispenser') && usesIntegratedCash(property, building, env)) await integratedRecovery(key)
       else if (key === 'acceptor') await acceptor()
       else if (key === 'dispenser') await dispenser()
       else if (key === 'cardTerminal') {

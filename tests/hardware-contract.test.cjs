@@ -591,11 +591,50 @@ test("Woosim IPC rejects another building before reaching the Windows printer", 
   vm.runInNewContext(block, {
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
     KIOSK_PROPERTY_ID: "property3", process: { env: { KIOSK_BUILDING: "B" } },
+    ...require('../electron/cash-device-profile'),
     Buffer, console, buildSam4sPrintLines: () => { throw new Error("Wrong building reached printer") },
   })
   const result = await handlers.get("print-to-woosim")({}, { roomNumber: "A101" })
   assert.equal(result.success, false)
   assert.match(result.error, /B동/)
+})
+
+test('Woosim on the moved A machine prints only its A rooms; invalid hardware never probes a Windows printer', async () => {
+  const source = fs.readFileSync(path.join(root, 'electron/main.js'), 'utf8')
+  const block = source.slice(source.indexOf('const usesWoosim ='), source.indexOf('ipcMain.handle("print-to-sam4s"'))
+  for (const hardware of ['beach-b', 'invalid']) {
+    const handlers = new Map(); let probes = 0, prints = 0
+    vm.runInNewContext(block, { ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+      KIOSK_PROPERTY_ID: 'property3', process: { env: { KIOSK_BUILDING: 'A', KIOSK_HARDWARE: hardware } },
+      ...require('../electron/cash-device-profile'), ...require('../electron/sam4s-receipt'),
+      Buffer, Date, console, lastPrinterResult: null, deviceRecovery: { fault() {} },
+      printSam4sWithWindows: async (_name, _lines, route) => { assert.equal(route, 'woosim'); prints++ } })
+    const event = { sender: { getPrintersAsync: async () => { probes++; return [{ name: 'WOOSIM WSP-CP383' }] } } }
+    const status = await handlers.get('receipt-printer-status')(event)
+    assert.equal(status.backend, hardware === 'beach-b' ? 'woosim' : 'disabled')
+    assert.equal((await handlers.get('print-to-woosim')(event, { roomNumber: 'B101' })).success, false)
+    assert.equal((await handlers.get('print-to-woosim')(event, { roomNumber: 'A101' })).success, hardware === 'beach-b')
+    assert.equal(prints, hardware === 'beach-b' ? 1 : 0)
+    assert.equal(probes, hardware === 'beach-b' ? 2 : 0)
+  }
+})
+
+test('Windows printer test pages follow sales building on moved hardware while Camp keeps its existing sample', async () => {
+  for (const [property, building, backend, expected] of [
+    ['property3', 'A', 'woosim', 'A101'], ['property3', 'B', 'woosim', 'B101'],
+    ['property1', 'C', 'woosim', 'C101'], ['property1', 'D', 'woosim', 'D101'],
+    ['property1', null, 'woosim', 'C101'], ['property4', null, 'sam4s', 'Camp101'],
+    ['property3', 'A', 'disabled', null],
+  ]) {
+    const printed = []; let queries = 0
+    const { api } = load('lib/printer-utils-unified.ts', { getReceiptPrinterStatus: async () => ({ backend }) }, {
+      './property-utils': { getKioskPropertyId: () => property, propertyUsesPrinter: () => true },
+      '@/lib/printer-utils': { printReceipt: async data => { printed.push(data.roomNumber); return true } },
+    }, new Set(), { fetch: async url => { assert.equal(url, '/api/kiosk-config'); queries++; return { ok: true, json: async () => ({ property, building }) } } })
+    assert.equal(await api.printTestPage(), expected !== null)
+    assert.deepEqual(printed, expected ? [expected] : [])
+    assert.equal(queries, backend === 'woosim' ? 1 : 0)
+  }
 })
 
 test('Windows printer faults expose short PMS codes instead of printer names or process errors', async () => {
@@ -614,6 +653,7 @@ test('Windows printer faults expose short PMS codes instead of printer names or 
       console: { log() {}, error() {} }, lastPrinterResult: null,
       deviceRecovery: { fault: (key, reason) => faults.push([key, reason]) },
       ...require('../electron/sam4s-receipt'),
+      ...require('../electron/cash-device-profile'),
       printSam4sWithWindows: async (_name, _lines, route = 'sam4s') => {
         assert.equal(route, backend)
         if (printBroken) throw Error('Internal spooler details'); return 'OK'

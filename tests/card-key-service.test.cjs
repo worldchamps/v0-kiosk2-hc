@@ -195,7 +195,7 @@ test('card port configuration defaults off and rejects collisions and unsupporte
     assert.throws(() => updatedConfig(config, { ...values, cardDispenserAddress: address }), /장비 주소/)
   }
   assert.throws(() => updatedConfig({ ...config, property: 'property3', env: { KIOSK_BUILDING: 'B' } },
-    { ...values, cardDispenserEnabled: 'true', cardDispenserPort: 'COM8' }), /사용할 수 없습니다/)
+    { ...values, building: 'B', cardDispenserEnabled: 'true', cardDispenserPort: 'COM8' }), /사용할 수 없습니다/)
   assert.deepEqual(publicResult({ success: true, blocks: 'secret', uid: 'secret', profile: 'secret', token: 'secret' }), { success: true })
 })
 

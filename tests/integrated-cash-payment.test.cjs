@@ -192,3 +192,35 @@ test('MULTI3400 environment uses the same native loading and child inheritance a
   const spawn = main.slice(main.indexOf('hardwareServerProcess = spawn('), main.indexOf('cashTrace.capture(hardwareServerProcess.stdout)'))
   assert.doesNotMatch(spawn, /\benv\s*:/, 'no replacement environment may drop the native local setting')
 })
+
+test('moved hardware is reported natively and invalid hardware fails the cash preflight before acceptance', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8')
+  const block = source.slice(source.indexOf('ipcMain.handle("get-hardware-status"'), source.indexOf('ipcMain.handle("disconnect-printer"')) +
+    source.slice(source.indexOf("ipcMain.handle('cash:available'"), source.indexOf('const cashDiagnostics ='))
+  for (const [configured, expected, available] of [['beach-b', 'multi3400', true], ['bad', null, false], ['camp', null, false]]) {
+    const handlers = new Map()
+    vm.runInNewContext(block, { ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+      global: {}, KIOSK_PROPERTY_ID: 'property3', process: { env: { KIOSK_BUILDING: 'A', KIOSK_HARDWARE: configured } },
+      hardwareBridge: { isConnected: true }, cashBoardInfo: null, ...profile })
+    const status = await handlers.get('get-hardware-status')()
+    assert.equal(status.cashBackend, expected)
+    assert.equal(status.connected, available)
+    if (available) assert.equal(status.cashPayoutUnit, 5000)
+    assert.equal(handlers.get('cash:available')(), available)
+  }
+})
+
+test('startup prefers the configured A/B or C/D sales building but keeps unpartitioned and Camp/Kariv locations', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8')
+  const start = source.match(/const KIOSK_START_LOCATION = .*/)[0]
+  const url = source.slice(source.indexOf('function getKioskStartUrl('), source.indexOf('async function startNextServer('))
+  for (const [property, building, location, expected] of [
+    ['property3', 'A', 'B', 'A'], ['property3', 'B', 'A', 'B'],
+    ['property1', 'C', 'D', 'C'], ['property1', 'D', 'C', 'D'], ['property1', '', 'C', 'C'],
+    ['property4', '', 'CAMP', 'CAMP'], ['property2', 'B', 'KARIV', 'KARIV'],
+  ]) {
+    const context = { KIOSK_PROPERTY_ID: property, process: { env: { KIOSK_BUILDING: building, KIOSK_START_LOCATION: location } }, encodeURIComponent }
+    vm.runInNewContext(start + '\n' + url + '\nresult = getKioskStartUrl("http://localhost:3000/")', context)
+    assert.equal(context.result, `http://localhost:3000/kiosk/${expected}`)
+  }
+})

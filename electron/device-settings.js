@@ -1,7 +1,8 @@
 const PORT = /^COM[1-9]\d{0,2}$/i
 const { supportsCardKey } = require('./card-key-service')
-const { usesIntegratedCash } = require('./cash-device-profile')
+const { hardwareProfile, usesIntegratedCash } = require('./cash-device-profile')
 const FIELDS = [
+  'building',
   'tossTransport', 'tossSerialPath', 'tossSerialBaudRate', 'tossWsUrl', 'tossPairingKey',
   'printerPort', 'acceptorPort', 'dispenserPort', 'bac2400Port', 'sam4sPrinterName', 'woosimPrinterName',
   'cardDispenserPort', 'cardDispenserAddress', 'cardDispenserEnabled',
@@ -11,9 +12,12 @@ function view(config) {
   const env = config.env || {}
   return {
     property: config.property,
-    building: config.property === 'property3' ? env.KIOSK_BUILDING || '' : '',
+    building: ['property1', 'property3'].includes(config.property) ? env.KIOSK_BUILDING || '' : '',
+    hardwareProfile: hardwareProfile(config.property, env.KIOSK_BUILDING, env),
+    cardKeySupported: supportsCardKey(config.property, env.KIOSK_BUILDING, env),
     pairingKeySet: Boolean(env.TOSS_FRONT_PAIRING_KEY),
     values: {
+      building: ['property1', 'property3'].includes(config.property) ? env.KIOSK_BUILDING || '' : '',
       tossTransport: env.TOSS_FRONT_TRANSPORT || 'auto',
       tossSerialPath: env.TOSS_FRONT_SERIAL_PATH || '',
       tossSerialBaudRate: env.TOSS_FRONT_SERIAL_BAUD_RATE || '115200',
@@ -27,7 +31,7 @@ function view(config) {
       woosimPrinterName: env.WOOSIM_PRINTER_NAME || '',
       cardDispenserPort: env.CARD_DISPENSER_PORT || '',
       cardDispenserAddress: env.CARD_DISPENSER_ADDRESS || '00',
-      cardDispenserEnabled: supportsCardKey(config.property, env.KIOSK_BUILDING) && env.CARD_DISPENSER_ENABLED === 'true' ? 'true' : 'false',
+      cardDispenserEnabled: supportsCardKey(config.property, env.KIOSK_BUILDING, env) && env.CARD_DISPENSER_ENABLED === 'true' ? 'true' : 'false',
     },
   }
 }
@@ -39,12 +43,16 @@ function updatedConfig(config, input) {
     throw new Error('장비 설정 형식이 올바르지 않습니다.')
   }
   const values = Object.fromEntries(FIELDS.map(key => [key, input[key].trim()]))
-  const cardSupported = supportsCardKey(config.property, config.env?.KIOSK_BUILDING)
+  const buildings = config.property === 'property3' ? ['A', 'B'] : config.property === 'property1' ? ['', 'C', 'D'] : ['']
+  if (!buildings.includes(values.building)) throw new Error('이 숙소에서 사용할 수 없는 판매 동입니다.')
+  const profile = hardwareProfile(config.property, config.env?.KIOSK_BUILDING, config.env)
+  if (!profile) throw new Error('KIOSK_HARDWARE 장비 설정을 확인해주세요.')
+  const cardSupported = supportsCardKey(config.property, values.building, { ...config.env, KIOSK_HARDWARE: profile })
   if (!['true', 'false'].includes(values.cardDispenserEnabled) || !cardSupported && values.cardDispenserEnabled !== 'false') throw new Error('이 PC에서는 카드키 발급기를 사용할 수 없습니다.')
   if (FIELDS.some(key => values[key].length > 256 || /[\r\n\0]/.test(values[key]))) throw new Error('장비 설정 값이 너무 길거나 올바르지 않습니다.')
   if (cardSupported && !/^(?:0?[0-9]|1[0-5])$/.test(values.cardDispenserAddress)) throw new Error('카드 발급기 장비 주소는 제조사 데모의 Device Number와 같은 값(00~15)을 입력해주세요.')
   if (!['auto', 'serial', 'websocket'].includes(values.tossTransport)) throw new Error('토스 프론트 연결 방식을 확인해주세요.')
-  const integratedCash = usesIntegratedCash(config.property, config.env?.KIOSK_BUILDING)
+  const integratedCash = usesIntegratedCash(config.property, config.env?.KIOSK_BUILDING, config.env)
   const portKeys = integratedCash ? ['bac2400Port']
     : config.property === 'property2' ? []
     : ['printerPort', 'acceptorPort', 'dispenserPort']
@@ -77,11 +85,16 @@ function updatedConfig(config, input) {
     throw new Error('토스 프론트 페어링 키를 입력해주세요.')
   }
   const env = { ...config.env,
+    KIOSK_BUILDING: values.building,
     TOSS_FRONT_TRANSPORT: values.tossTransport,
     TOSS_FRONT_SERIAL_PATH: values.tossSerialPath,
     TOSS_FRONT_SERIAL_BAUD_RATE: String(Number(values.tossSerialBaudRate)),
     TOSS_FRONT_WS_URL: values.tossWsUrl,
   }
+  if (values.building !== (config.env?.KIOSK_BUILDING || '') && ['property1', 'property3'].includes(config.property)) {
+    if (!env.KIOSK_HARDWARE) env.KIOSK_HARDWARE = profile
+  }
+  if (values.building) env.KIOSK_START_LOCATION = values.building
   if (values.tossPairingKey) env.TOSS_FRONT_PAIRING_KEY = values.tossPairingKey
   if (cardSupported) {
     env.CARD_DISPENSER_PORT = values.cardDispenserPort
@@ -90,7 +103,7 @@ function updatedConfig(config, input) {
   }
   if (integratedCash) {
     env.BAC2400_PORT = values.bac2400Port
-    if (config.property === 'property4') env.SAM4S_PRINTER_NAME = values.sam4sPrinterName
+    if (profile === 'camp') env.SAM4S_PRINTER_NAME = values.sam4sPrinterName
     else env.WOOSIM_PRINTER_NAME = values.woosimPrinterName
   } else if (config.property !== 'property2') {
     env.PRINTER_PORT = values.printerPort; env.PRINTER_PATH = values.printerPort
@@ -100,7 +113,7 @@ function updatedConfig(config, input) {
   return { ...config, env }
 }
 
-function createDeviceSettings({ enabled, authorize, readConfig, writeConfig, listPorts, listPrinters }) {
+function createDeviceSettings({ enabled, authorize, readConfig, writeConfig, listPorts, listPrinters, isIdle = () => true, restart = () => {} }) {
   const access = (event, password) => {
     if (!enabled()) throw new Error('설치형 키오스크에서만 장비를 등록할 수 있습니다.')
     const result = authorize(event, password)
@@ -125,9 +138,11 @@ function createDeviceSettings({ enabled, authorize, readConfig, writeConfig, lis
     save(event, input) {
       try {
         access(event, input?.password)
+        if (!isIdle()) throw new Error('진행 중인 결제·기록 또는 장비 작업이 있습니다. 완료 후 다시 시도해주세요.')
         const config = readConfig()
         const next = updatedConfig(config, input?.values)
         writeConfig(next)
+        if (['property1', 'property3'].includes(config.property) && next.env.KIOSK_BUILDING !== (config.env?.KIOSK_BUILDING || '')) restart()
         return { success: true, restartRequired: true }
       } catch (error) { return failed(error) }
     },

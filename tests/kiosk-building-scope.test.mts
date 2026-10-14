@@ -128,7 +128,7 @@ function harness(building: string | undefined = "A", property = "property3") {
   }
 }
 
-test("device scope is runtime-only, mandatory for property3, and leaves other properties unpartitioned", () => {
+test("device scope is runtime-only, mandatory for property3, and optional C/D for property1", () => {
   for (const building of ["A", "B"]) {
     assert.equal(scope.getKioskScope({ KIOSK_PROPERTY_ID: "property3", KIOSK_BUILDING: building }).building, building)
     assert.equal(scope.getKioskScope({ NEXT_PUBLIC_KIOSK_PROPERTY_ID: "property3", KIOSK_BUILDING: building }).building, building)
@@ -143,6 +143,62 @@ test("device scope is runtime-only, mandatory for property3, and leaves other pr
   assert.equal(scope.getKioskScope({ KIOSK_PROPERTY_ID: "property3", NEXT_PUBLIC_KIOSK_PROPERTY_ID: "property1", KIOSK_BUILDING: "B" }).building, "B")
   for (const value of ["A131", " a131 ", "A 131", "A-131"]) assert.equal(scope.isRoomInBuilding(value, "A"), true)
   for (const value of ["B131", "131", "A동", "A131,B131", "A131-extra", "", null, 131]) assert.equal(scope.isRoomInBuilding(value, "A"), false)
+})
+
+test("property1 defaults to both C/D and validates a single building using room codes", () => {
+  for (const building of [undefined, '']) assert.equal(scope.getKioskScope({ KIOSK_PROPERTY_ID: 'property1', KIOSK_BUILDING: building }).building, null)
+  for (const building of ['C', 'D'] as const) {
+    assert.equal(scope.getKioskScope({ KIOSK_PROPERTY_ID: 'property1', KIOSK_BUILDING: building }).building, building)
+    for (const code of [`${building}213`, ` ${building.toLowerCase()}213 `, `${building} 213`, `${building}-213`]) {
+      assert.equal(scope.isRoomInBuilding(code, building), true)
+    }
+    assert.equal(scope.isRoomInBuilding(building === 'C' ? 'D213' : 'C105', building), false)
+  }
+  for (const building of ['A', 'B', 'c', 'CD', ' ']) assert.throws(() => scope.getKioskScope({ KIOSK_PROPERTY_ID: 'property1', KIOSK_BUILDING: building }), /KIOSK_BUILDING/)
+})
+
+test("C/D single-building sale, lookup, check-in and payment cannot be widened by URLs or request bodies", async () => {
+  for (const building of ['C', 'D']) {
+    const api = harness(building, 'property1')
+    api.rooms.splice(0, api.rooms.length, room('C105'), room('D213'))
+    api.rows.splice(0, api.rows.length, reservation('C105'), reservation('D213'), reservation(''))
+    const code = building === 'C' ? 'C105' : 'D213', other = building === 'C' ? 'D213' : 'C105'
+    assert.deepEqual(await (await api.get('kiosk-config')).json(), { property: 'property1', building })
+    for (const query of ['', 'location=ALL', 'location=A', `location=${other[0]}`]) {
+      const data = await (await api.get('available-rooms', query)).json()
+      assert.deepEqual(data.availableRooms.map((item: any) => item.roomCode), [code])
+      assert.equal(data.location, building)
+    }
+    for (const query of ['name=Test%20Guest', 'searchAll=true', 'kioskProperty=property3&searchAll=true']) {
+      assert.deepEqual((await (await api.get('reservations', query)).json()).reservations.map((item: any) => item.roomNumber), [code])
+    }
+    assert.deepEqual((await (await api.get('reservations', `reservationId=id-${other}&searchAll=true`)).json()).reservations, [])
+    for (const foreign of [other, '']) {
+      const response = await api.post('check-in', { reservationId: `id-${foreign}`, roomNumber: code, kioskProperty: 'property1', adminOverride: true })
+      assert.equal(response.status, 403)
+      assert.equal((await response.json()).message, scope.buildingRestrictionMessage(building as scope.KioskBuilding))
+      assert.equal((await api.post('on-site-booking', { roomCode: foreign, payment: { method: 'CASH' } })).status, 403)
+    }
+    assert.equal((await api.post('toss-payments/create', { building: `Beach ${other[0]}`, roomType: 'Test', stayType: 'overnight' })).status, 403)
+    assert.deepEqual(api.effects, [])
+    assert.equal((await api.post('check-in', { reservationId: `id-${code}`, kioskProperty: 'property1' })).status, 200)
+    assert.deepEqual(api.effects, ['check-in', 'queue'])
+    api.effects.splice(0)
+    assert.equal((await api.post('on-site-booking', { requestId: 'qa-cd-building-sale', roomNumber: code, roomCode: code,
+      guestName: 'Test Guest', phoneNumber: '000', roomType: 'Test', building: `Beach ${building}`, price: 100,
+      checkInDate: '2026-09-06', checkOutDate: '2026-09-07', stayType: 'overnight', payment: { method: 'CASH' } })).status, 200)
+    assert.deepEqual(api.effects, ['booking', 'room-status', 'queue'])
+  }
+})
+
+test("unpartitioned C/D keeps selling both buildings despite a saved map location", async () => {
+  const api = harness('', 'property1')
+  api.rooms.splice(0, api.rooms.length, room('C105'), room('D213'))
+  for (const query of ['', 'location=C', 'location=D']) {
+    const data = await (await api.get('available-rooms', query)).json()
+    assert.deepEqual(data.availableRooms.map((item: any) => item.roomCode), ['C105', 'D213'])
+    assert.equal(data.location, 'ALL')
+  }
 })
 
 test("Kariv name lookup tolerates spacing and Unicode composition but not partial or already checked-in names", async () => {
@@ -280,13 +336,13 @@ test("print listeners use only their property and building and do not duplicate 
         update: async (path: string) => { updated.push(path) },
       },
     })
-    PrintQueueListener({ scope: { property: "property3", building } })
+    PrintQueueListener({ scope: { property: 'property3', building } })
     const snapshot = { val: () => Object.fromEntries(["A131", "B121", "Camp211"].map((code) => [code,
       { status: "pending", action: "remote-print", roomNumber: code, password: "test" }])) }
     callback(snapshot)
     callback(snapshot)
-    assert.deepEqual(paths, ["print_queue/property3"])
-    assert.deepEqual(printed, [building === "A" ? "A131" : "B121"])
+    assert.deepEqual(paths, ['print_queue/property3'])
+    assert.deepEqual(printed, [building === 'A' ? 'A131' : 'B121'])
     finishPrint(true)
     await new Promise((resolve) => setImmediate(resolve))
     assert.deepEqual(updated, [`print_queue/property3/${printed[0]}`])
@@ -296,7 +352,7 @@ test("print listeners use only their property and building and do not duplicate 
 })
 
 test("kiosk UI waits for PC config, overrides a conflicting URL/location, and blocks on config failure", async () => {
-  for (const configuredBuilding of ["A", "B", null]) {
+  for (const configuredBuilding of ["A", "B", "C", "D", null]) {
     const state: any[] = [], effects: any[] = []
     let cursor = 0
     const element = (type: any, props: any) => ({ type, props })
@@ -332,7 +388,7 @@ test("kiosk UI waits for PC config, overrides a conflicting URL/location, and bl
       window: { location: { search: "?location=B", reload() {} }, electronAPI: {}, addEventListener() {}, removeEventListener() {} },
       document: { body: { classList: { add() {}, remove() {} } } },
       URLSearchParams,
-      fetch: async () => Response.json(configuredBuilding ? { property: "property3", building: configuredBuilding } : { error: "Missing building" },
+      fetch: async () => Response.json(configuredBuilding ? { property: ['C', 'D'].includes(configuredBuilding) ? 'property1' : "property3", building: configuredBuilding } : { error: "Missing building" },
         { status: configuredBuilding ? 200 : 503 }),
     })
     const props = { initialLocation: configuredBuilding === "A" ? "B" : "A", onChangeMode() {} }
@@ -353,6 +409,7 @@ test("kiosk UI waits for PC config, overrides a conflicting URL/location, and bl
     const rendered = Layout(props)
     if (configuredBuilding) {
       assert.equal(find(rendered, "on-site-reservation").props.location, configuredBuilding)
+      assert.equal(find(rendered, "on-site-reservation").props.building, configuredBuilding)
       assert.equal(find(rendered, "PrintQueueListener").props.scope.building, configuredBuilding)
     } else {
       assert.equal(find(rendered, "on-site-reservation"), null)

@@ -19,7 +19,7 @@ const { createPaymentRecovery } = require("./payment-recovery")
 const { createOperationsReporter, verifyRecoveryCommand } = require("./kiosk-operations")
 const { deviceFiles } = require("./device-setup")
 const { createDeviceSettings } = require("./device-settings")
-const { cashBackend, cashPayoutUnit } = require("./cash-device-profile")
+const { hardwareProfile, cashBackend, cashPayoutUnit } = require("./cash-device-profile")
 const { createCardKeyStore } = require("./card-key-store")
 const { createCardKeyService, enabled: cardDispenserEnabled } = require("./card-key-service")
 const { createDeviceRecovery, runRemoteReset } = require("./device-recovery")
@@ -41,7 +41,7 @@ let nextServer = null
 let lastAcceptorCommand = 0
 const cashTrace = createCashTrace(path.join(app.getPath('userData'), 'logs'))
 const operationsIdentity = () => ({ deviceId: process.env.KIOSK_DEVICE_ID, property: process.env.KIOSK_PROPERTY_ID,
-  building: process.env.KIOSK_PROPERTY_ID === 'property3' ? process.env.KIOSK_BUILDING || '' : '', version: app.getVersion() })
+  building: ['property1', 'property3'].includes(process.env.KIOSK_PROPERTY_ID) ? process.env.KIOSK_BUILDING || '' : '', version: app.getVersion() })
 let lastPrinterResult = null
 let cashBoardInfo = null
 let lastOperationsSnapshot = null
@@ -129,7 +129,7 @@ ipcMain.handle("payment-recovery:report-cash", async (event, input) => {
   }
   return result
 })
-ipcMain.handle('cash:available', () => !global.kioskCashBlocked)
+ipcMain.handle('cash:available', () => !!hardwareProfile(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING, process.env) && !global.kioskCashBlocked)
 
 const cashDiagnostics = createCashDiagnostics({
   authorize: (event, password) => paymentRecovery.authorize(event, password),
@@ -140,7 +140,7 @@ const cashDiagnostics = createCashDiagnostics({
   bridge: { get isConnected() { return hardwareBridge.isConnected }, subscribeMessage: hardwareBridge.subscribeMessage,
     send: message => { lastAcceptorCommand = Date.now(); return hardwareBridge.send(message) } },
   trace: cashTrace,
-  hardwareInfo: () => ({ cashBackend: cashBackend(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING),
+  hardwareInfo: () => ({ cashBackend: cashBackend(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING, process.env),
     cashPayoutUnit: cashPayoutUnit(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING, process.env), cashBoard: cashBoardInfo }),
 })
 ipcMain.handle('cash-diagnostics:read', (event, password) => cashDiagnostics.read(event, password))
@@ -175,6 +175,22 @@ const deviceSettings = createDeviceSettings({
   writeConfig: config => registeredDevice.write(config),
   listPorts: () => SerialPort.list(),
   listPrinters: event => event.sender.getPrintersAsync(),
+  isIdle: () => !paymentDeviceRecoveryBlocked && !global.kioskMaintenance && !global.kioskPaymentRecoveryActive &&
+    !global.kioskHttpActive && !global.kioskDeviceRecoveryActive && !global.kioskCardBusy &&
+    !cardKey.needsRecovery() && !cardKey.isBusy() && tossFrontBridge.pending.size === 0 &&
+    (global.kioskActiveOperations?.() || 1) === 1 && Date.now() - lastAcceptorCommand > 8000,
+  restart: () => {
+    global.kioskMaintenance = true
+    global.kioskPaymentRecoveryActive = true
+    setTimeout(async () => {
+      try { await global.shutdownKiosk(); app.relaunch(); app.quit() }
+      catch (error) {
+        console.error('[DEVICE_SETTINGS] Restart failed; saved settings apply on next launch:', error)
+        global.kioskPaymentRecoveryActive = false
+        global.kioskMaintenance = false
+      }
+    }, 100)
+  },
 })
 ipcMain.handle("device-settings:read", (event, password) => deviceSettings.read(event, password))
 ipcMain.handle("device-settings:save", (event, input) => deviceSettings.save(event, input))
@@ -230,7 +246,11 @@ ipcMain.handle('card-key:issue-remote', (event, envelope) => global.kioskDeviceR
 
 const OVERLAY_MODE = process.env.OVERLAY_MODE === "true"
 const KIOSK_PROPERTY_ID = process.env.KIOSK_PROPERTY_ID || "property3"
-const KIOSK_START_LOCATION = process.env.KIOSK_START_LOCATION || ""
+const KIOSK_START_LOCATION = (['property1', 'property3'].includes(KIOSK_PROPERTY_ID) && process.env.KIOSK_BUILDING) || process.env.KIOSK_START_LOCATION || ""
+if (!hardwareProfile(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING, process.env)) {
+  console.error('[HARDWARE] Invalid KIOSK_HARDWARE; cash, printer and card devices disabled')
+}
+let bridgeDevices = []
 const KIOSK_WINDOW_MODE = process.env.KIOSK_WINDOW_MODE === "true"
 const isDev = !app.isPackaged && process.env.NODE_ENV !== "production"
 const useKioskChrome = KIOSK_WINDOW_MODE || !isDev
@@ -479,7 +499,7 @@ function createWindow() {
 
       // Hardware Server Bridge initialization
       hardwareBridge.onStatus((status) => {
-        if (!status.connected) for (const key of ['acceptor', 'dispenser', 'cardDispenser', ...(usesWoosim() || KIOSK_PROPERTY_ID === 'property4' ? [] : ['printer'])]) deviceRecovery?.fault(key, 'bridge_disconnected')
+        if (!status.connected) for (const key of bridgeDevices) deviceRecovery?.fault(key, 'bridge_disconnected')
         cashTrace.write('bridge', { event: status.connected ? 'connected' : 'disconnected' })
         if (mainWindow && mainWindow.webContents) {
           mainWindow.webContents.send("bill-acceptor-status", { connected: status.connected })
@@ -587,6 +607,7 @@ async function detectPrinterPort() {
 // Printer connection logic remains
 
 async function connectPrinter() {
+  if (hardwareProfile(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING, process.env) !== 'oneplus') return
   if (printerConnecting) {
     if (isDev) {
       console.log("[PRINTER] Connection attempt already in progress, waiting...")
@@ -923,7 +944,8 @@ function printSam4sWithWindows(printerName, lines, backend = 'sam4s') {
   })
 }
 
-const usesWoosim = () => KIOSK_PROPERTY_ID === "property3" && process.env.KIOSK_BUILDING === "B"
+const usesWoosim = () => hardwareProfile(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING, process.env) === 'beach-b'
+const usesSam4s = () => hardwareProfile(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING, process.env) === 'camp'
 
 function printerFailure(reason, roomNumber = '') {
   lastPrinterResult = { status: 'failed', error: reason, roomNumber: String(roomNumber).slice(0, 40), at: Date.now() }
@@ -932,7 +954,8 @@ function printerFailure(reason, roomNumber = '') {
 }
 
 ipcMain.handle("receipt-printer-status", async (event) => {
-  if (KIOSK_PROPERTY_ID !== "property4" && !usesWoosim()) return { backend: "bixolon" }
+  if (!hardwareProfile(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING, process.env)) return { backend: 'disabled', connected: false, error: 'invalid_hardware_profile' }
+  if (!usesSam4s() && !usesWoosim()) return { backend: "bixolon" }
   const backend = usesWoosim() ? "woosim" : "sam4s"
   try {
     const printers = await event.sender.getPrintersAsync()
@@ -947,9 +970,13 @@ ipcMain.handle("receipt-printer-status", async (event) => {
 })
 
 ipcMain.handle("print-to-woosim", async (event, receipt) => {
-  if (!usesWoosim()) return { success: false, error: "B동 키오스크에서만 사용할 수 있습니다." }
+  if (!usesWoosim()) return { success: false, error: "WOOSIM 장비 구성에서만 사용할 수 있습니다." }
   if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) return { success: false, error: "영수증 데이터가 올바르지 않습니다." }
-  if (!/^B[\s-]?\d{3}$/i.test(String(receipt.roomNumber || ""))) return { success: false, error: "B동 객실 영수증만 출력할 수 있습니다." }
+  const roomBuilding = String(receipt.roomNumber || '').trim().toUpperCase().match(/^([A-D])[\s-]?\d{3}$/)?.[1]
+  const buildings = KIOSK_PROPERTY_ID === 'property1' ? ['C', 'D'] : KIOSK_PROPERTY_ID === 'property3' ? ['A', 'B'] : []
+  if (!buildings.includes(roomBuilding) || process.env.KIOSK_BUILDING && roomBuilding !== process.env.KIOSK_BUILDING) {
+    return { success: false, error: `${process.env.KIOSK_BUILDING || buildings.join('·')}동 객실 영수증만 출력할 수 있습니다.` }
+  }
   try {
     const lines = buildSam4sPrintLines(receipt)
     if (!lines.length || Buffer.byteLength(JSON.stringify(lines), "utf8") > 100_000) throw new Error("영수증 내용이 올바르지 않습니다.")
@@ -965,7 +992,7 @@ ipcMain.handle("print-to-woosim", async (event, receipt) => {
 })
 
 ipcMain.handle("print-to-sam4s", async (event, receipt) => {
-  if (KIOSK_PROPERTY_ID !== "property4") {
+  if (!usesSam4s()) {
     return { success: false, error: "SAM4S 인쇄는 property4에서만 사용할 수 있습니다." }
   }
 
@@ -1004,8 +1031,8 @@ ipcMain.handle("reconnect-printer", async () => {
 
 ipcMain.handle("get-hardware-status", async () => {
   return {
-    connected: hardwareBridge.isConnected,
-    cashBackend: cashBackend(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING),
+    connected: !!hardwareProfile(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING, process.env) && hardwareBridge.isConnected,
+    cashBackend: cashBackend(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING, process.env),
     cashPayoutUnit: cashPayoutUnit(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING, process.env),
     cashBoard: cashBoardInfo,
   }
@@ -1376,15 +1403,17 @@ app.on('before-quit', () => overlayButtonModule.destroyOverlayButton())
 
 app.whenReady().then(async () => {
   const karivOverlay = OVERLAY_MODE && KIOSK_PROPERTY_ID === 'property2'
-  const configured = karivOverlay ? [] : ['acceptor', 'dispenser', 'printer']
+  const profile = hardwareProfile(KIOSK_PROPERTY_ID, process.env.KIOSK_BUILDING, process.env)
+  const configured = karivOverlay || !profile ? [] : ['acceptor', 'dispenser', 'printer']
   if (!karivOverlay && tossFrontBridge.configured) configured.push('cardTerminal')
   if (cardDispenserEnabled(process.env)) configured.push('cardDispenser')
-  deviceRecovery = createDeviceRecovery({ configured, property: KIOSK_PROPERTY_ID, building: process.env.KIOSK_BUILDING,
+  bridgeDevices = configured.filter(key => key !== 'cardTerminal' && (key !== 'printer' || profile === 'oneplus'))
+  deviceRecovery = createDeviceRecovery({ configured, property: KIOSK_PROPERTY_ID, building: process.env.KIOSK_BUILDING, env: process.env,
     bridge: hardwareBridge, cardKey, terminal: tossFrontBridge,
     isIdle: cardAutoIdle, canRestartServer, onBusy: value => { global.kioskDeviceRecoveryActive = value },
     onRecovered: key => { if (key === 'acceptor') global.kioskCashBlocked = false },
     printer: async () => {
-      if (usesWoosim() || KIOSK_PROPERTY_ID === 'property4') {
+      if (usesWoosim() || usesSam4s()) {
         if (!mainWindow || mainWindow.isDestroyed()) throw Error('printer_unavailable')
         const printers = await mainWindow.webContents.getPrintersAsync()
         const found = usesWoosim() ? findWoosimPrinter(printers, process.env.WOOSIM_PRINTER_NAME || '')
@@ -1463,8 +1492,7 @@ app.whenReady().then(async () => {
   setInterval(() => void operations.tick(), 15000).unref()
   const { desktopCapturer, screen } = require("electron")
   const screenReporter = require("./kiosk-screen").createKioskScreenReporter({
-    identity: { deviceId: process.env.KIOSK_DEVICE_ID, property: process.env.KIOSK_PROPERTY_ID,
-      building: process.env.KIOSK_PROPERTY_ID === "property3" ? process.env.KIOSK_BUILDING || "" : "", version: app.getVersion() },
+    identity: operationsIdentity(),
     key: process.env.FIREBASE_PRIVATE_KEY,
     capture: async () => {
       const display = OVERLAY_MODE ? screen.getPrimaryDisplay()

@@ -47,6 +47,7 @@ async function ensureDevice({ app, BrowserWindow, ipcMain, dialog, files }) {
           check((env.KIOSK_PROPERTY_ID || env.NEXT_PUBLIC_KIOSK_PROPERTY_ID) === parsed.property, "등록 숙소와 PC 설정의 숙소가 다릅니다.")
           check(parsed.property !== "property2" || env.OVERLAY_MODE === "true", "카리브 PC 설정에 OVERLAY_MODE=true가 필요합니다.")
           check(parsed.property !== "property3" || /^[AB]$/.test(env.KIOSK_BUILDING || ""), "property3 PC 설정에 KIOSK_BUILDING=A 또는 B가 필요합니다.")
+          check(parsed.property !== "property1" || !env.KIOSK_BUILDING || /^[CD]$/.test(env.KIOSK_BUILDING), "property1 PC 설정에 KIOSK_BUILDING은 비어 있거나 C 또는 D여야 합니다.")
           for (const key of Object.keys(env)) check(!/^(NODE_OPTIONS|ELECTRON_|KIOSK_UPDATE_|PATH$|NODE_PATH$)/i.test(key), "실행기 제어 설정은 가져올 수 없습니다.")
           config = { projectId: parsed.projectId, deviceId: parsed.deviceId, property: parsed.property, arch: process.arch, code: parsed.code, env }
           files.write(config) // enables safe retry if the pairing response is lost

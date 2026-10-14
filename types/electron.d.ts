@@ -27,6 +27,7 @@ export interface TossFrontQrResult {
 }
 
 export interface KioskDeviceSettingsValues {
+  building: string
   tossTransport: "auto" | "serial" | "websocket"
   tossSerialPath: string
   tossSerialBaudRate: string
@@ -80,6 +81,8 @@ export interface KioskDeviceSettingsRead {
   error?: string
   property?: string
   building?: string
+  hardwareProfile?: "oneplus" | "camp" | "beach-b" | null
+  cardKeySupported?: boolean
   pairingKeySet?: boolean
   values?: KioskDeviceSettingsValues
   serialPorts?: { path: string; manufacturer: string }[]
@@ -131,7 +134,7 @@ export interface ElectronAPI {
   }
 
   // 지폐 인식기
-  getHardwareStatus: () => Promise<{ connected: boolean | null; cashBackend?: "bac2400" | "multi3400" | "oneplus"; cashPayoutUnit?: number; cashBoard?: { version: string | null; versionVerified: boolean; responseFields: Record<string, string> } | null }>
+  getHardwareStatus: () => Promise<{ connected: boolean | null; cashBackend?: "bac2400" | "multi3400" | "oneplus" | null; cashPayoutUnit?: number; cashBoard?: { version: string | null; versionVerified: boolean; responseFields: Record<string, string> } | null }>
   cashDiagnostics?: {
     read: (password: string) => Promise<{ success: boolean; path?: string; text?: string; error?: string; cashBackend?: "bac2400" | "multi3400" | "oneplus"; cashPayoutUnit?: number;
       cashBoard?: { version: string | null; versionVerified: boolean; responseFields: Record<string, string>; protocol?: string } | null }>
@@ -163,7 +166,7 @@ export interface ElectronAPI {
   cutBixolonPaper: () => Promise<boolean>
   sendRawToBixolon: (data: number[]) => Promise<boolean>
   printToSam4s: (receipt: unknown) => Promise<{ success: boolean; printer?: string; error?: string }>
-  getReceiptPrinterStatus: () => Promise<{ backend: "bixolon" | "sam4s" | "woosim"; connected?: boolean; error?: string }>
+  getReceiptPrinterStatus: () => Promise<{ backend: "bixolon" | "sam4s" | "woosim" | "disabled"; connected?: boolean; error?: string }>
   reportPrinterResult?: (result: { status: 'sent' | 'failed'; roomNumber: string; error: string }) => Promise<void>
   printToWoosim: (receipt: unknown) => Promise<{ success: boolean; printer?: string; error?: string }>
 

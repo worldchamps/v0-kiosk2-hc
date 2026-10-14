@@ -1,6 +1,10 @@
 const { createHash, createHmac, timingSafeEqual } = require('node:crypto')
-const supported = env => env.KIOSK_PROPERTY_ID === 'property1' ||
-  (env.KIOSK_PROPERTY_ID || 'property3') === 'property3' && env.KIOSK_BUILDING === 'A'
+const { hardwareProfile } = require('./cash-device-profile')
+const supported = env => (env.KIOSK_PROPERTY_ID === 'property1' ||
+  (env.KIOSK_PROPERTY_ID || 'property3') === 'property3' && ['A', 'B'].includes(env.KIOSK_BUILDING)) &&
+  hardwareProfile(env.KIOSK_PROPERTY_ID || 'property3', env.KIOSK_BUILDING, env) === 'oneplus'
+const roomInScope = (room, env) => (env.KIOSK_PROPERTY_ID === 'property1' ? /^[CD]\d{3}$/ : /^[AB]\d{3}$/).test(room) &&
+  (!env.KIOSK_BUILDING || room[0] === env.KIOSK_BUILDING)
 const operationId = (property, reservationId) => createHash('sha256').update(`checkin:${property}:${reservationId}`).digest('hex')
 const mac = (body, key) => createHmac('sha256', key).update('card-issue-v1:' + body).digest()
 
@@ -23,7 +27,7 @@ function verifyTicket(ticket, env, now = Date.now()) {
   if (!supported(env) || claim.property !== (env.KIOSK_PROPERTY_ID || 'property3') ||
       typeof claim.reservationId !== 'string' || !claim.reservationId.trim() || claim.reservationId.length > 200 ||
       !Number.isFinite(claim.expiresAt) || claim.expiresAt <= now || claim.expiresAt > now + 300000 ||
-      !(claim.property === 'property1' ? /^[CD]\d{3}$/ : /^A\d{3}$/).test(claim.room)) throw new Error('invalid_checkin_ticket')
+      !roomInScope(claim.room, env)) throw new Error('invalid_checkin_ticket')
   return { ...claim, operationId: operationId(claim.property, claim.reservationId) }
 }
-module.exports = { issueTicket, verifyTicket, operationId, supported }
+module.exports = { issueTicket, verifyTicket, operationId, supported, roomInScope }

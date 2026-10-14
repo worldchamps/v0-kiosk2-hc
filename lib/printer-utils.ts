@@ -137,18 +137,17 @@ export async function printReceipt(data: KioskReceiptData): Promise<boolean> {
 async function printReceiptConnected(data: KioskReceiptData): Promise<boolean> {
   const cardEntry = getKioskPropertyId() === "property1" && /^C\d{3}$/i.test(data.roomNumber.replace(/[\s-]+/g, ""))
   if (cardEntry) data = { ...data, password: undefined }
-  if (getKioskPropertyId() === "property4") {
-    return printSam4sReceipt(data)
-  }
-  if (getKioskPropertyId() === "property3" && typeof window !== "undefined" && window.electronAPI?.getReceiptPrinterStatus) {
+  if (typeof window !== "undefined" && window.electronAPI?.getReceiptPrinterStatus) {
     const status = await hardwareCallWithin(() => window.electronAPI!.getReceiptPrinterStatus())
-    if (!status) return false
+    if (!status || status.backend === "disabled") return false
+    if (status.backend === "sam4s") return printSam4sReceipt(data)
     if (status.backend === "woosim") {
       const result = await window.electronAPI.printToWoosim(data)
       if (!result.success) throw Error(result.error || 'WOOSIM 인쇄 요청에 실패했습니다.')
       return result.success
     }
   }
+  if (getKioskPropertyId() === "property4" && !(typeof window !== "undefined" && window.electronAPI?.getReceiptPrinterStatus)) return printSam4sReceipt(data)
 
   console.log("[Bixolon] Printing receipt...", data)
 
@@ -357,15 +356,16 @@ function formatReceiptAmount(value: number): string {
 export async function autoConnectPrinter(): Promise<boolean> {
   const property = getKioskPropertyId()
   const api = typeof window !== "undefined" ? window.electronAPI : undefined
-  if ((property === "property4" || property === "property3") && api?.getReceiptPrinterStatus) {
+  if (api?.getReceiptPrinterStatus) {
     try {
       const status = await hardwareCallWithin(() => api.getReceiptPrinterStatus())
       if (!status) { lastPrinterError = '프린터 목록 조회 응답이 없습니다.'; return printTransportConnected = false }
+      if (status.backend === "disabled") { lastPrinterError = status.error || '장비 설정을 확인해주세요.'; return printTransportConnected = false }
       windowsPrinterBackend = status.backend === "sam4s" || status.backend === "woosim" ? status.backend : null
       if (windowsPrinterBackend) { lastPrinterError = status.connected ? '' : status.error || 'Windows 프린터를 찾지 못했습니다.'; return printTransportConnected = !!status.connected }
     } catch (error) { lastPrinterError = error instanceof Error ? error.message : '프린터 목록을 조회하지 못했습니다.'; return printTransportConnected = false }
   }
-  if (property === "property4") {
+  if (property === "property4" && !api?.getReceiptPrinterStatus) {
     return printTransportConnected = typeof window !== "undefined" && !api && typeof window.print === "function"
   }
 

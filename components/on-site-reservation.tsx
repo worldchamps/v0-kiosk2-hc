@@ -72,6 +72,7 @@ function KioskHomeCanvas({ children }: { children: ReactNode }) {
 interface OnSiteReservationProps {
   onNavigate: (screen: string) => void
   location?: string
+  building?: string | null
   onUpdateSafeChange?: (safe: boolean) => void
   onCardIdleChange?: (idle: boolean) => void
   assistantOpen?: boolean
@@ -143,7 +144,7 @@ function getBookingDates(stayType: StayType) {
   }
 }
 
-export default function OnSiteReservation({ onNavigate, location, onUpdateSafeChange, onCardIdleChange, assistantOpen = false, onAssistantStepChange }: OnSiteReservationProps) {
+export default function OnSiteReservation({ onNavigate, location, building, onUpdateSafeChange, onCardIdleChange, assistantOpen = false, onAssistantStepChange }: OnSiteReservationProps) {
   const [step, setStep] = useState<BookingStep>("stayType")
   useEffect(() => { onAssistantStepChange?.(step) }, [step, onAssistantStepChange])
   const [loading, setLoading] = useState(true)
@@ -195,7 +196,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
   }, [ready, hasPaymentProblem, step, loading, submitting, checkingCard, deliveringCard, paymentSession.isActive, paymentSession.cardInFlight, onCardIdleChange])
   const selectedRates = selectedRoom && selectedStay ? selectedRoom.rates?.[selectedStay.type] : undefined
 
-  const locationName = location === "C" || location === "D" ? "C·D동" : location === "CAMP" ? "캠프" : location ? `${location}동` : ""
+  const locationName = building ? `${building}동` : location === "C" || location === "D" ? "C·D동" : location === "CAMP" ? "캠프" : location ? `${location}동` : ""
 
   const fetchAvailableRooms = useCallback(
     async (showLoading = true) => {

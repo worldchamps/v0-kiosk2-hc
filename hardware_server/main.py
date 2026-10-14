@@ -14,6 +14,7 @@ from multi3400 import Multi3400
 from dispenser import OnePlusDispenser
 from printer import BixolonPrinter
 from card_dispenser import CardDispenser, card_enabled
+from hardware_profile import hardware_profile
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,7 +38,7 @@ def load_local_hardware_env():
     wanted = {
         "KIOSK_PROPERTY_ID", "KIOSK_PROPERTY", "NEXT_PUBLIC_KIOSK_PROPERTY_ID",
         "BAC2400_PORT", "BOARD3400_PORT", "PRINTER_PORT", "DISPENSER_PORT", "ACCEPTOR_PORT",
-        "KIOSK_BUILDING", "MULTI3400_BD1_VALUE", "CARD_DISPENSER_ENABLED", "CARD_DISPENSER_PORT", "CARD_DISPENSER_ADDRESS",
+        "KIOSK_BUILDING", "KIOSK_HARDWARE", "MULTI3400_BD1_VALUE", "CARD_DISPENSER_ENABLED", "CARD_DISPENSER_PORT", "CARD_DISPENSER_ADDRESS",
     }
     try:
         with open(env_path, encoding="utf-8-sig", errors="ignore") as env_file:
@@ -60,9 +61,12 @@ PROPERTY_ID = (
     or os.environ.get("NEXT_PUBLIC_KIOSK_PROPERTY_ID")
     or "property3"
 ).lower()
-USE_WOOSIM = PROPERTY_ID == "property3" and os.environ.get("KIOSK_BUILDING") == "B"
-USE_MULTI3400 = PROPERTY_ID == "property3" and os.environ.get("KIOSK_BUILDING") == "B"
-USE_BAC2400 = PROPERTY_ID == "property4"
+HARDWARE_PROFILE = hardware_profile(PROPERTY_ID, os.environ.get("KIOSK_BUILDING"), os.environ)
+USE_WOOSIM = HARDWARE_PROFILE == "beach-b"
+USE_MULTI3400 = HARDWARE_PROFILE == "beach-b"
+USE_BAC2400 = HARDWARE_PROFILE == "camp"
+if HARDWARE_PROFILE is None:
+    logger.error("Invalid KIOSK_HARDWARE for %s; cash, printer and card devices disabled", PROPERTY_ID)
 try:
     MULTI3400_BD1_VALUE = int(os.environ.get("MULTI3400_BD1_VALUE", "5000"))
 except ValueError:
@@ -75,9 +79,9 @@ multi3400 = Multi3400(
 bac2400 = Bac2400(
     os.environ.get("BAC2400_PORT") or os.environ.get("BOARD3400_PORT") or "COM5"
 ) if USE_BAC2400 else None
-dispenser = None if USE_BAC2400 or USE_MULTI3400 else OnePlusDispenser(DISPENSER_PORT)
-acceptor = None if USE_BAC2400 or USE_MULTI3400 else OnePlusAcceptor(ACCEPTOR_PORT)
-printer = None if USE_BAC2400 or USE_WOOSIM else BixolonPrinter(PRINTER_PORT, baud_rate=115200)
+dispenser = OnePlusDispenser(DISPENSER_PORT) if HARDWARE_PROFILE == "oneplus" else None
+acceptor = OnePlusAcceptor(ACCEPTOR_PORT) if HARDWARE_PROFILE == "oneplus" else None
+printer = BixolonPrinter(PRINTER_PORT, baud_rate=115200) if HARDWARE_PROFILE == "oneplus" else None
 
 # Only Electron creates this per-launch secret. Card contents are never broadcast.
 CARD_BRIDGE_TOKEN = os.environ.get("CARD_BRIDGE_TOKEN", "")
@@ -224,6 +228,10 @@ async def handle_client(websocket, *args):
                     task.add_done_callback(card_tasks.discard)
                     continue
 
+                if HARDWARE_PROFILE is None and cmd_type not in ("ping", "printer_status", "shutdown"):
+                    await websocket.send(json.dumps({"type": "error", "reason": "invalid_hardware_profile"}))
+                    continue
+
                 if multi3400 or bac2400:
                     responses = handle_bac2400_message(msg)
                     if responses is not None:
@@ -309,8 +317,8 @@ async def main():
         card_dispenser.connect()
 
     if multi3400:
-        logger.info("%s building=B: using MULTI3400 FE adapter on %s (BD1=%s won)",
-                    PROPERTY_ID, multi3400.port, MULTI3400_BD1_VALUE)
+        logger.info("%s building=%s: using MULTI3400 FE adapter on %s (BD1=%s won)",
+                    PROPERTY_ID, os.environ.get("KIOSK_BUILDING", ""), multi3400.port, MULTI3400_BD1_VALUE)
         multi3400.connect()
         multi3400.start(bac2400_callback)
         asyncio.create_task(poll_bac2400_payout())
@@ -320,7 +328,7 @@ async def main():
         bac2400.connect()
         bac2400.start(bac2400_callback)
         asyncio.create_task(poll_bac2400_payout())
-    else:
+    elif dispenser and acceptor:
         dispenser.connect()
         dispenser.start(dispenser_callback)
         acceptor.connect()
@@ -343,7 +351,7 @@ async def main():
             multi3400.stop()
         elif bac2400:
             bac2400.stop()
-        else:
+        elif dispenser and acceptor:
             dispenser.stop()
             acceptor.stop()
         if printer:

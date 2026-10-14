@@ -18,8 +18,8 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
     const scope = getKioskScope()
-    // C/D share one kiosk. Its saved map location must not hide either building.
-    const location = scope.property === "property1" ? undefined : scope.building || searchParams.get("location")?.toUpperCase()
+    // Unpartitioned C/D kiosks keep both buildings regardless of map location.
+    const location = scope.building || (scope.property === "property1" ? undefined : searchParams.get("location")?.toUpperCase())
 
     console.log("[v0] Filtering by location:", location || "ALL")
 

@@ -56,6 +56,46 @@ class FakeClient:
 
 
 class HardwareContracts(unittest.IsolatedAsyncioTestCase):
+    def test_moved_beach_b_hardware_loads_from_local_env_and_uses_8N1_without_oneplus(self):
+        isolated = importlib.util.module_from_spec(spec)
+        local_env = "KIOSK_PROPERTY_ID=property3\nKIOSK_BUILDING=A\nKIOSK_HARDWARE=beach-b\nCARD_DISPENSER_ENABLED=true\n"
+        with patch("builtins.open", mock_open(read_data=local_env)), patch.dict("os.environ", {}, clear=True):
+            spec.loader.exec_module(isolated)
+        self.assertEqual(isolated.HARDWARE_PROFILE, "beach-b")
+        self.assertTrue(isolated.USE_MULTI3400)
+        self.assertTrue(isolated.USE_WOOSIM)
+        self.assertFalse(isolated.USE_BAC2400)
+        self.assertIsInstance(isolated.multi3400, Multi3400)
+        self.assertEqual(isolated.multi3400.bd1_value, 5000)
+        self.assertEqual(isolated.multi3400.parity, serial.PARITY_NONE)
+        with patch.object(serial, "Serial", return_value=Mock(is_open=True)) as fake_serial:
+            isolated.multi3400.connect()
+            self.assertEqual(fake_serial.call_args.kwargs["parity"], "N")
+            # pyserial defaults are one stop bit and eight data bits.
+            self.assertEqual(fake_serial.call_args.kwargs.get("stopbits", 1), 1)
+            self.assertEqual(fake_serial.call_args.kwargs.get("bytesize", 8), 8)
+        for device in (isolated.bac2400, isolated.acceptor, isolated.dispenser, isolated.printer, isolated.card_dispenser):
+            self.assertIsNone(device)
+        serial.Serial.assert_not_called()
+
+    async def test_invalid_hardware_and_foreign_camp_disable_all_devices_and_reject_commands(self):
+        for profile in ("unknown", "ONEPLUS", " beach-b ", "camp"):
+            isolated = importlib.util.module_from_spec(spec)
+            env = {"KIOSK_PROPERTY_ID": "property3", "KIOSK_BUILDING": "A", "KIOSK_HARDWARE": profile,
+                   "CARD_DISPENSER_ENABLED": "true", "CARD_BRIDGE_TOKEN": "a" * 64}
+            with patch("builtins.open", side_effect=FileNotFoundError), patch.dict("os.environ", env, clear=True):
+                spec.loader.exec_module(isolated)
+                self.assertIsNone(isolated.HARDWARE_PROFILE)
+                for device in (isolated.multi3400, isolated.bac2400, isolated.acceptor, isolated.dispenser, isolated.printer, isolated.card_dispenser):
+                    self.assertIsNone(device)
+                client = FakeClient([json.dumps({"type": "acceptor_enable"}), json.dumps({"type": "raw_dispenser", "data": [36, 68, 8, 83, 159]}),
+                                     json.dumps({"type": "printer_status"}), json.dumps({"type": "ping"})])
+                await isolated.handle_client(client)
+                self.assertEqual(client.sent[:2], [{"type": "error", "reason": "invalid_hardware_profile"}] * 2)
+                self.assertEqual(client.sent[2], {"type": "printer_status", "ready": False})
+                self.assertEqual(client.sent[3], {"type": "pong"})
+        serial.Serial.assert_not_called()
+
     def test_cash_board_scope_and_local_port_priority_without_opening_any_com(self):
         cases = [
             ({"KIOSK_PROPERTY_ID": "property3", "KIOSK_BUILDING": "B"}, True, "COM5"),

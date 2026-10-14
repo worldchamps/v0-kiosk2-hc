@@ -1,13 +1,13 @@
 const { randomUUID, createHash } = require('node:crypto')
-const { verifyTicket, operationId, supported } = require('./card-issue-proof')
+const { verifyTicket, operationId, supported, roomInScope } = require('./card-issue-proof')
 const { verifyRequest } = require('./pms-card-request')
 
-const supportsCardKey = (property, building) => property === 'property1' || property === 'property3' && building === 'A'
-const enabled = env => supportsCardKey(env.KIOSK_PROPERTY_ID || 'property3', env.KIOSK_BUILDING) && env.CARD_DISPENSER_ENABLED === 'true'
+const supportsCardKey = (property, building, env = {}) => supported({ ...env, KIOSK_PROPERTY_ID: property, KIOSK_BUILDING: building })
+const enabled = env => supported(env) && env.CARD_DISPENSER_ENABLED === 'true'
 const roomKey = value => typeof value === 'string' ? value.replace(/[\s-]+/g, '').toUpperCase() : ''
 function scopedRoom(value, env) {
   const room = roomKey(value)
-  if (!(env.KIOSK_PROPERTY_ID === 'property1' ? /^[CD]\d{3}$/ : /^A\d{3}$/).test(room) || !enabled(env)) throw new Error('room_out_of_scope')
+  if (!roomInScope(room, env) || !enabled(env)) throw new Error('room_out_of_scope')
   return room
 }
 const defaultProfile = () => ({ sectors: Array.from({ length: 16 }, (_, sector) => ({ sector, keyA: 'FFFFFFFFFFFF', keyB: 'FFFFFFFFFFFF' })) })

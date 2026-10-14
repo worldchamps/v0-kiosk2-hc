@@ -5,7 +5,7 @@ const { usesIntegratedCash } = require('../electron/cash-device-profile')
 
 const config = property => ({
   registered: true, property, deviceId: 'field-pc', refreshToken: 'preserve-me',
-  env: { KIOSK_PROPERTY_ID: property, KIOSK_BUILDING: 'B', PRIVATE_API_KEY: 'preserve-me',
+  env: { KIOSK_PROPERTY_ID: property, KIOSK_BUILDING: property === 'property3' ? 'B' : '', PRIVATE_API_KEY: 'preserve-me',
     TOSS_FRONT_PAIRING_KEY: 'existing-pairing-key' },
 })
 
@@ -18,6 +18,10 @@ test('only Camp and property3 B use one configurable cash board port; individual
     const original = config(property)
     Object.assign(original.env, { KIOSK_BUILDING: building, ACCEPTOR_PORT: 'COM4', DISPENSER_PORT: 'COM6' })
     const input = { ...view(original).values, bac2400Port: 'com9', woosimPrinterName: 'field Woosim', sam4sPrinterName: 'field SAM4S' }
+    if (property === 'property1' && building === 'B' || property === 'property3' && building === '') {
+      assert.throws(() => updatedConfig(original, input), /판매 동/)
+      continue
+    }
     const saved = updatedConfig(original, input)
     assert.equal(saved.env.BAC2400_PORT, integrated ? 'COM9' : undefined)
     assert.equal(saved.env.ACCEPTOR_PORT, 'COM4')
@@ -30,6 +34,104 @@ test('only Camp and property3 B use one configurable cash board port; individual
       assert.equal(updatedConfig(original, { ...input, acceptorPort: 'COM9', dispenserPort: 'COM9' }).env.BAC2400_PORT, 'COM9')
     }
   }
+})
+
+test('sales building changes freeze inferred hardware before updating scope and start location', () => {
+  const original = config('property3')
+  original.env.KIOSK_START_LOCATION = 'B'
+  const saved = updatedConfig(original, { ...view(original).values, building: 'A', bac2400Port: 'COM9' })
+  assert.equal(saved.env.KIOSK_BUILDING, 'A')
+  assert.equal(saved.env.KIOSK_HARDWARE, 'beach-b')
+  assert.equal(saved.env.BAC2400_PORT, 'COM9')
+  assert.equal(saved.env.KIOSK_START_LOCATION, 'A')
+  assert.equal(view(saved).hardwareProfile, 'beach-b')
+  assert.equal(view(saved).cardKeySupported, false)
+  assert.equal(original.env.KIOSK_HARDWARE, undefined)
+  assert.equal(original.env.KIOSK_BUILDING, 'B')
+  const back = updatedConfig(saved, { ...view(saved).values, building: 'B' })
+  assert.equal(back.env.KIOSK_HARDWARE, 'beach-b')
+  const oneplus = config('property3'); oneplus.env.KIOSK_BUILDING = 'A'
+  const moved = updatedConfig(oneplus, { ...view(oneplus).values, building: 'B' })
+  assert.equal(moved.env.KIOSK_HARDWARE, 'oneplus')
+  assert.equal(view(moved).cardKeySupported, true)
+})
+
+test('only buildings belonging to the registered property can be saved; property cannot be changed', () => {
+  for (const [property, allowed, rejected] of [
+    ['property3', ['A', 'B'], ['', 'C', 'D', 'a', 'AB']],
+    ['property1', ['', 'C', 'D'], ['A', 'B', 'c', 'CD']],
+    ['property2', [''], ['A', 'C']], ['property4', [''], ['A', 'C']],
+  ]) {
+    const original = config(property)
+    for (const building of allowed) {
+      const saved = updatedConfig(original, { ...view(original).values, building })
+      assert.equal(saved.env.KIOSK_BUILDING, building)
+      assert.equal(saved.property, property)
+      if (building) assert.equal(saved.env.KIOSK_START_LOCATION, building)
+    }
+    for (const building of rejected) assert.throws(() => updatedConfig(original, { ...view(original).values, building }), /판매 동/)
+    assert.throws(() => updatedConfig(original, { ...view(original).values, property: 'property1' }), /형식/)
+  }
+  const original = config('property1'); original.env.KIOSK_START_LOCATION = 'D'
+  const c = updatedConfig(original, { ...view(original).values, building: 'C' })
+  assert.equal(c.env.KIOSK_HARDWARE, 'oneplus')
+  assert.equal(c.env.KIOSK_START_LOCATION, 'C')
+  const all = updatedConfig(c, { ...view(c).values, building: '' })
+  assert.equal(all.env.KIOSK_START_LOCATION, 'C')
+  assert.equal(all.env.KIOSK_HARDWARE, 'oneplus')
+  assert.throws(() => updatedConfig({ ...c, env: { ...c.env, KIOSK_HARDWARE: 'invalid' } }, view(c).values), /KIOSK_HARDWARE/)
+})
+
+test('active payment or records block saving; a valid building change writes once and requests restart', () => {
+  let idle = false, writes = 0, restarts = 0, stored = config('property3')
+  const service = createDeviceSettings({ enabled: () => true, authorize: () => ({ success: true }),
+    readConfig: () => stored, writeConfig: next => { stored = next; writes++ },
+    isIdle: () => idle, restart: () => { restarts++ } })
+  const input = { password: 'correct', values: { ...view(stored).values, building: 'A' } }
+  assert.match(service.save({}, input).error, /결제·기록/)
+  assert.equal(writes, 0); assert.equal(restarts, 0)
+  idle = true
+  assert.equal(service.save({}, { ...input, values: { ...input.values, building: 'C' } }).success, false)
+  assert.equal(writes, 0); assert.equal(restarts, 0)
+  assert.equal(service.save({}, input).restartRequired, true)
+  assert.equal(writes, 1); assert.equal(restarts, 1)
+  assert.equal(stored.env.KIOSK_HARDWARE, 'beach-b')
+  assert.equal(service.save({}, input).success, true)
+  assert.equal(restarts, 1)
+})
+
+test('native save guards reject payment evidence and concurrent work; building restart drains software before relaunch', async () => {
+  const fs = require('node:fs'), vm = require('node:vm'), path = require('node:path')
+  const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8')
+  let stored = config('property3'), writes = 0, callback, shutdowns = 0, relaunched = 0, quits = 0
+  const context = { createDeviceSettings, registeredDevice: { read: () => stored, write: next => { stored = next; writes++ } },
+    app: { isPackaged: true, relaunch: () => { relaunched++ }, quit: () => { quits++ } },
+    paymentRecovery: { authorize: () => ({ success: true }) }, paymentDeviceRecoveryBlocked: false,
+    global: { kioskActiveOperations: () => 1, shutdownKiosk: async () => { shutdowns++ } },
+    cardKey: { needsRecovery: () => false, isBusy: () => false }, tossFrontBridge: { pending: new Map() },
+    lastAcceptorCommand: 0, Date: { now: () => 10000 }, SerialPort: { list: () => { throw Error('No port access in QA') } },
+    setTimeout: fn => { callback = fn }, console }
+  const block = source.slice(source.indexOf('const deviceSettings ='), source.indexOf('ipcMain.handle("device-settings:read"'))
+  vm.runInNewContext(block + '\nservice = deviceSettings', context)
+  const input = { values: { ...view(stored).values, building: 'A' } }
+  context.paymentDeviceRecoveryBlocked = true
+  assert.equal(context.service.save({}, input).success, false)
+  context.paymentDeviceRecoveryBlocked = false
+  for (const field of ['kioskHttpActive', 'kioskCardBusy', 'kioskDeviceRecoveryActive', 'kioskMaintenance', 'kioskPaymentRecoveryActive']) {
+    context.global[field] = true
+    assert.equal(context.service.save({}, input).success, false)
+    context.global[field] = false
+  }
+  context.global.kioskActiveOperations = () => 2
+  assert.equal(context.service.save({}, input).success, false)
+  context.global.kioskActiveOperations = () => 1
+  assert.equal(writes, 0); assert.equal(callback, undefined)
+  assert.equal(context.service.save({}, input).success, true)
+  assert.equal(stored.env.KIOSK_HARDWARE, 'beach-b')
+  assert.equal(context.global.kioskMaintenance, true)
+  assert.equal(context.service.save({}, input).success, false)
+  await callback()
+  assert.equal(writes, 1); assert.equal(shutdowns, 1); assert.equal(relaunched, 1); assert.equal(quits, 1)
 })
 
 test('registration view hides pairing key and preserves device identity when saving all property types', () => {

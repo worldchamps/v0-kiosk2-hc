@@ -9,6 +9,7 @@ import { WebSocketServer } from "ws"
 import { initializeApp, deleteApp } from "firebase-admin/app"
 import { getDatabase } from "firebase-admin/database"
 import { verifyRequest } from "../electron/pms-card-request.js"
+import cardProof from "../electron/card-issue-proof.js"
 import * as firebaseTransaction from "../lib/firebase-transaction.ts"
 
 test("remote-key route with real Firebase SDK and an empty cache: claim, printing, complete and fail use server state", { timeout: 15000 }, async t => {
@@ -75,6 +76,7 @@ test("remote-key route with real Firebase SDK and an empty cache: claim, printin
     "@/lib/firebase-transaction": firebaseTransaction,
     "@/lib/kiosk-scope": { getKioskScope: () => ({ property: "property1" }) },
     "@/electron/pms-card-request": { verifyRequest: (job: any, config: any) => verifyRequest(job, config, now, keys.publicKey) },
+    "@/electron/card-issue-proof": cardProof,
     "@/lib/firebase-beach-rooms": { getRoomInfoByMatchingNumber: async () => {
       if (removeDuringRoomRead) records.clear()
       if (expireDuringRoomRead) now += 600000

@@ -4,11 +4,12 @@ import { transactionWithReadCache } from "@/lib/firebase-transaction"
 import { getKioskScope } from "@/lib/kiosk-scope"
 import { getRoomInfoByMatchingNumber } from "@/lib/firebase-beach-rooms"
 import { verifyRequest } from "@/electron/pms-card-request"
+import { supported } from "@/electron/card-issue-proof"
 
 export const dynamic = "force-dynamic"
 function queue() {
   const scope = getKioskScope()
-  if (!(scope.property === "property1" || scope.property === "property3" && scope.building === "A") ||
+  if (!supported(process.env) ||
       !process.env.KIOSK_DEVICE_ID || process.env.CARD_DISPENSER_ENABLED !== "true") throw Error("카드 발급기 설정이 필요합니다.")
   return getDB().ref(`kiosk_key_jobs/${scope.property}`)
 }
