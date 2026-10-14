@@ -39,6 +39,102 @@ function fixture(session = base, overrides = {}) {
     advance: value => { clock += value }, archive: options => service.archive(event, { ...input, ...options }) }
 }
 
+test('change owed IPC archives one encrypted record per session without altering or blocking payment', () => {
+  const h = fixture({ ...base, acceptedAmount: 80000, acceptedBills: [50000, 50000], returnedAmount: 20000 })
+  h.setIdle(false)
+  const input = { sessionStartTime: base.sessionStartTime, requiredAmount: 60000, receivedAmount: 100000,
+    returnedAmount: 20000, changeOwed: 20000, changeUncertain: false, roomNumber: 'C901' }
+  const result = h.service.reportChangeOwed(h.event, input)
+  assert.equal(result.success, true)
+  const file = path.join(h.directory, 'payment-recovery-archive', result.archiveId + '.bin'), bytes = fs.readFileSync(file)
+  h.advance(1000)
+  assert.deepEqual(h.service.reportChangeOwed(h.event, input), result)
+  assert.equal(fs.readdirSync(path.dirname(file)).length, 1); assert(fs.readFileSync(file).equals(bytes))
+  assert(!bytes.includes(Buffer.from('C901')))
+  const record = JSON.parse(h.safeStorage.decryptString(bytes)), incident = incidentFromArchive(record)
+  assert.equal(record.kind, 'payment-incident-awaiting-review'); assert.equal(record.incidentKind, 'change_owed')
+  assert.equal(record.financialCommandsSent, 0)
+  assert.equal(incident.kind, 'change_owed'); assert.equal(incident.reason, '거스름돈 미지급 20,000원 · 객실 배정 진행')
+  assert.equal(incident.receivedAmount, 100000); assert.equal(incident.requiredAmount, 60000)
+  assert.equal(incident.confirmedReturnedAmount, 20000); assert.equal(incident.expectedChange, 20000)
+  const scoped = { ...incident, property: 'property1', building: 'C' }, key = 'synthetic-key'
+  assert(verifyIncident(scoped, incidentSignature(scoped, key), key, { property: 'property1' }))
+  assert.equal(h.raw(), h.original); assert.equal(h.calls.stop, 0); assert.deepEqual(h.calls.busy, [])
+})
+test('change owed IPC validates the main local frame and every amount without weakening other incident checks', () => {
+  const h = fixture(), input = { sessionStartTime: base.sessionStartTime, requiredAmount: 60000, receivedAmount: 100000,
+    returnedAmount: 0, changeOwed: 40000, changeUncertain: true, roomNumber: 'D901' }
+  for (const event of [{ ...h.event, senderFrame: { url: 'http://localhost:3000/' } },
+    (() => { const frame = { url: 'https://external.invalid/' }; return { senderFrame: frame, sender: { mainFrame: frame } } })()]) {
+    assert.equal(h.service.reportChangeOwed(event, input).success, false)
+  }
+  for (const extra of [{ sessionStartTime: 0 }, { receivedAmount: 50000 }, { returnedAmount: -1 }, { changeOwed: 40001 },
+    { requiredAmount: 1.5 }, { changeUncertain: 'true' }, { roomNumber: 'X'.repeat(41) }]) {
+    assert.equal(h.service.reportChangeOwed(h.event, { ...input, ...extra }).success, false)
+  }
+  const saved = h.service.reportChangeOwed(h.event, input)
+  const record = JSON.parse(h.safeStorage.decryptString(fs.readFileSync(path.join(h.directory, 'payment-recovery-archive', saved.archiveId + '.bin'))))
+  const incident = { ...incidentFromArchive(record), property: 'property1' }, key = 'synthetic-key'
+  assert.equal(incident.reason, '거스름돈 지급 미확인(최대 40,000원) · 객실 배정 진행')
+  assert.equal(incident.expectedChange, 40000); assert.equal(incident.confirmedReturnedAmount, 0)
+  assert(verifyIncident(incident, incidentSignature(incident, key), key, { property: 'property1' }))
+  for (const extra of [{ status: 'complete' }, { bookingCreated: true }, { refundConfirmed: true }, { expectedChange: -1 }, { kind: 'invalid' }]) {
+    const invalid = { ...incident, ...extra }
+    assert(!verifyIncident(invalid, incidentSignature(invalid, key), key, { property: 'property1' }))
+  }
+})
+test('native retry saves change owed after transient encryption failure and delivery retries only the incident', async () => {
+  const h = fixture(), input = { sessionStartTime: base.sessionStartTime, requiredAmount: 60000, receivedAmount: 100000,
+    returnedAmount: 20000, changeOwed: 20000, changeUncertain: false, roomNumber: 'C901' }
+  let encryption = false
+  h.safeStorage.isEncryptionAvailable = () => encryption
+  assert.equal(h.service.reportChangeOwed(h.event, input).success, false)
+  encryption = true; h.service.retryChangeOwed(); h.service.retryChangeOwed()
+  const directory = path.join(h.directory, 'payment-recovery-archive')
+  assert.equal(fs.readdirSync(directory).length, 1)
+  let offline = true; const bodies = [], previous = process.env.FIREBASE_PRIVATE_KEY
+  process.env.FIREBASE_PRIVATE_KEY = 'synthetic-change-delivery-key'
+  try {
+    const deliver = createCashIncidentDelivery({ app: { getPath: () => h.directory }, safeStorage: h.safeStorage,
+      fetcher: async (_url, options) => { const body = JSON.parse(options.body); bodies.push(body)
+        if (offline) throw Error('offline'); return { ok: true, json: async () => ({ success: true, id: body.id }) }
+      } })
+    await deliver(); offline = false; await deliver(); await deliver()
+    assert.equal(bodies.length, 2); assert.deepEqual(bodies[0], bodies[1]); assert.equal(bodies[1].kind, 'change_owed')
+    assert.equal(fs.readdirSync(directory).filter(name => name.endsWith('.bin')).length, 1)
+    assert.equal(h.raw(), h.original); assert.equal(h.calls.stop, 0); assert.deepEqual(h.calls.busy, [])
+  } finally { if (previous === undefined) delete process.env.FIREBASE_PRIVATE_KEY; else process.env.FIREBASE_PRIVATE_KEY = previous }
+})
+test('native retry recovers a failed first archive write without overwriting an existing transaction', t => {
+  const h = fixture(), input = { sessionStartTime: base.sessionStartTime, requiredAmount: 60000, receivedAmount: 100000,
+    returnedAmount: 20000, changeOwed: 20000, changeUncertain: false, roomNumber: 'C901' }
+  const write = fs.writeFileSync
+  const mocked = t.mock.method(fs, 'writeFileSync', (...args) => { write(...args); throw Error('synthetic fsync/write failure') })
+  assert.equal(h.service.reportChangeOwed(h.event, input).success, false)
+  mocked.mock.restore(); h.service.retryChangeOwed()
+  const directory = path.join(h.directory, 'payment-recovery-archive'), files = fs.readdirSync(directory)
+  assert.equal(files.length, 1)
+  const file = path.join(directory, files[0]), original = fs.readFileSync(file)
+  assert.equal(h.service.reportChangeOwed(h.event, { ...input, returnedAmount: 0, changeOwed: 40000 }).success, false)
+  h.service.retryChangeOwed(); assert(fs.readFileSync(file).equals(original))
+})
+test('change owed IPC wiring starts incident delivery immediately and the preload forwards only the supplied record', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8')
+  const start = source.indexOf("ipcMain.handle('payment-recovery:report-change-owed'")
+  const end = source.indexOf('ipcMain.handle("payment-recovery:report-cash"', start)
+  const handlers = new Map(), input = { test: true }, event = {}; let deliveries = 0
+  vm.runInNewContext(source.slice(start, end), {
+    ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, paymentRecovery: { reportChangeOwed: (receivedEvent, receivedInput) => {
+      assert.equal(receivedEvent, event); assert.equal(receivedInput, input); return { success: true, archiveId: 'qa' }
+    } }, deliverCashIncidents: async () => { deliveries++ },
+  })
+  assert.equal(handlers.get('payment-recovery:report-change-owed')(event, input).success, true); assert.equal(deliveries, 1)
+  const preload = fs.readFileSync(path.join(__dirname, '../electron/preload.js'), 'utf8')
+  const expression = preload.match(/reportChangeOwed: (input => ipcRenderer.invoke\([^\n]+\)),/)[1]
+  const calls = [], forward = vm.runInNewContext(expression, { ipcRenderer: { invoke: (...args) => calls.push(args) } })
+  forward(input); assert.deepEqual(calls, [['payment-recovery:report-change-owed', input]])
+})
+
 test('operator recovery requires existing password, same-origin main frame and rate limits incorrect attempts', () => {
   const h = fixture()
   const nested = { ...h.event, senderFrame: { url: 'http://localhost:3000/' } }

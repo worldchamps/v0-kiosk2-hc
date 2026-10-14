@@ -387,22 +387,26 @@ test('mismatched approval evidence survives restart and cannot be cleared by nav
   assert.equal(JSON.stringify(restored.value.paymentSession.recoveryEvidence), JSON.stringify(evidence));
   assert.equal(await restored.value.cancelPayment(), false); assert.equal(restored.value.startPayment(30000), false);
 });
-function cashScreen(amount, dispenseResult, acceptor = {}, dispenser = {}, electronAPI = {}) {
-  const calls = { dispense: [], cancelled: 0, complete: 0, recovery: '', returned: 0, polling: 0 };
-  const paymentSession = { isActive: true, acceptedAmount: amount, acceptedBills: amount ? [amount] : [], requiredAmount: 30000, overpaymentAmount: Math.max(0, amount - 30000) };
+function cashScreen(amount, dispenseResult, acceptor = {}, dispenser = {}, electronAPI = {}, requiredAmount = 30000) {
+  const calls = { dispense: [], backends: [], cancelled: 0, complete: 0, recovery: '', returned: 0, polling: 0 };
+  const paymentSession = { isActive: true, acceptedAmount: amount, acceptedBills: amount ? [amount] : [], requiredAmount,
+    sessionStartTime: 1789147000000, reservationData: { roomNumber: 'C901' }, overpaymentAmount: Math.max(0, amount - requiredAmount) };
   const payment = { paymentSession, startPayment: () => true, addBill() {}, isPaymentComplete: () => amount >= 30000,
     cancelPayment: async () => { calls.cancelled++; return true; }, requireRecovery: message => calls.recovery = message,
     recordCashReturned: value => { calls.returned += value; paymentSession.acceptedAmount -= value; } };
   const h = load('components/payment-screen.tsx', {
+    '@/lib/hardware-timeout': load('lib/hardware-timeout.ts', {}, { setTimeout, clearTimeout }).exports,
     '@/contexts/payment-context': { usePayment: () => payment }, '@/components/toss-front-card-payment': { default: 'Front' },
     '@/lib/bill-acceptor-utils': { initializeDevice: async () => true, setEventCallback() {}, setConfig: async () => true, isBillAcceptorConnected: () => true,
       connectBillAcceptor: async () => true, enableAcceptance: async () => true, getBillData: async () => 0x32, getStatus: async () => 0x01, ...acceptor },
-    '@/lib/bill-dispenser-utils': { dispenseBills: async n => { calls.dispense.push(n); return dispenseResult; }, connectBillDispenser: async () => true, isBillDispenserConnected: () => true, getDispenserStatus: async () => 0x62, ...dispenser },
+    '@/lib/bill-dispenser-utils': { dispenseBillsVerified: async (n, backend) => { calls.dispense.push(n); calls.backends.push(backend); return typeof dispenseResult === 'boolean'
+      ? { dispensed: dispenseResult ? n : null, complete: dispenseResult } : dispenseResult; }, connectBillDispenser: async () => true, isBillDispenserConnected: () => true, getDispenserStatus: async () => 0x62, ...dispenser },
     '@/lib/printer-utils': { printReceipt() {} },
   }, { window: { electronAPI }, setTimeout: fn => { fn(); return 1; }, clearInterval() {}, setInterval() { calls.polling++; return 1; } });
-  const props = { cardAmount: 30000, cashAmount: 30000, onCancel: () => calls.cancelled++, onPaymentComplete: () => calls.complete++, onUnavailable: message => calls.unavailable = message };
+  const props = { cardAmount: requiredAmount, cashAmount: requiredAmount, onCancel: () => calls.cancelled++,
+    onPaymentComplete: payment => { calls.complete++; calls.payment = payment; }, onUnavailable: message => calls.unavailable = message };
   const render = () => h.render(props);
-  render(); h.button('현금 결제 30,000원').onClick(); render();
+  render(); h.button(`현금 결제 ${requiredAmount.toLocaleString()}원`).onClick(); render();
   return { ...h, calls, paymentSession, render };
 }
 for (const [amount, result] of [[10000, false], [15000, true], [5000, true]]) {
@@ -536,13 +540,74 @@ test('cash enable acknowledgement failure requires recovery', async () => {
   assert.equal(h.calls.cancelled, 0); assert.equal(h.calls.unavailable, undefined);
   assert(h.calls.recovery); assert.deepEqual(h.calls.dispense, []);
 });
-for (const [amount, result] of [[35000, true], [50000, false]]) {
+for (const [amount, result] of [[35000, true]]) {
   test(`cash completion ${amount}/${result} cannot complete with unreturned change`, async () => {
     const h = cashScreen(amount, result); await h.callbacks[0](amount);
     assert(h.calls.recovery); assert.equal(h.calls.complete, 0); assert.equal(h.calls.returned, 0);
     if (amount === 35000) assert.deepEqual(h.calls.dispense, []);
   });
 }
+for (const [label, result, owed, uncertain] of [
+  ['partial', { dispensed: 2, complete: false }, 20000, false],
+  ['unknown', { dispensed: null, complete: false }, 40000, true],
+  ['rejected', { dispensed: 0, complete: false }, 40000, false],
+  ['complete', { dispensed: 4, complete: true }, 0, false],
+]) {
+  test(`fully paid room proceeds once with ${label} change and records only confirmed cash`, async () => {
+    const incidents = [];
+    const h = cashScreen(100000, result, {}, {}, { paymentRecovery: { reportChangeOwed: async input => {
+      incidents.push(JSON.parse(JSON.stringify(input))); return { success: true };
+    } } }, 60000);
+    await h.callbacks[0](100000); await h.callbacks[0](100000); h.render();
+    assert.deepEqual(h.calls.dispense, [4]); assert.equal(h.calls.returned, (result.dispensed || 0) * 10000);
+    assert.equal(h.calls.complete, 1); assert.equal(h.calls.recovery, '');
+    assert.deepEqual(JSON.parse(JSON.stringify(h.calls.payment)), owed
+      ? { method: 'CASH', changeOwed: owed, changeUncertain: uncertain } : { method: 'CASH' });
+    assert.deepEqual(incidents, owed ? [{ sessionStartTime: 1789147000000, requiredAmount: 60000, receivedAmount: 100000,
+      returnedAmount: (result.dispensed || 0) * 10000, changeOwed: owed, changeUncertain: uncertain, roomNumber: 'C901' }] : []);
+    if (owed) assert(h.visible(uncertain ? '거스름돈 지급을 확인하지 못했습니다(최대 40,000원)' : `거스름돈 ${owed.toLocaleString()}원을 드리지 못했습니다`));
+  });
+}
+for (const outcome of ['failed', 'rejected', 'unavailable', 'hung']) {
+  test(`change incident reporting ${outcome} cannot block a paid room or repeat payout`, async () => {
+    const h = cashScreen(100000, { dispensed: 2, complete: false }, {}, {}, { paymentRecovery: {
+      reportChangeOwed: outcome === 'unavailable' ? undefined : async () => {
+        if (outcome === 'hung') return new Promise(() => {});
+        if (outcome === 'rejected') throw Error('synthetic IPC failure'); return { success: false };
+      },
+    } }, 60000);
+    await h.callbacks[0](100000);
+    assert.equal(h.calls.complete, 1); assert.equal(h.calls.recovery, ''); assert.deepEqual(h.calls.dispense, [4]);
+  });
+}
+test('partial cancellation refund records actual payout and retains recovery without assigning a room', async () => {
+  const h = cashScreen(50000, { dispensed: 2, complete: false });
+  await h.button('취소').onClick();
+  assert.equal(h.calls.returned, 20000); assert(h.calls.recovery); assert.equal(h.calls.complete, 0);
+  assert.equal(h.calls.cancelled, 0); assert.deepEqual(h.calls.dispense, [5]);
+});
+
+test('cash completion and cancellation use bac2400 only when native hardware status declares that backend', async () => {
+  for (const cashBackend of ['bac2400', 'oneplus']) {
+    for (const action of ['completion', 'cancellation']) {
+      const h = cashScreen(100000, true, {}, {}, { getHardwareStatus: async () => ({ connected: true, cashBackend }) }, 60000)
+      h.effects[0](); await new Promise(resolve => setImmediate(resolve)); h.render()
+      if (action === 'completion') await h.callbacks[0](100000)
+      else await h.button('취소').onClick()
+      assert.deepEqual(h.calls.backends, [cashBackend]); assert.equal(h.calls.recovery, '')
+      assert.equal(h.calls.returned, action === 'completion' ? 40000 : 100000)
+    }
+  }
+});
+
+test('cash context allows booking and completion with recorded change owed and unreturned excess', async () => {
+  const h = await paymentContext(); h.value.startPayment(60000, {}, 'cash'); h.value.addBill(50000); h.value.addBill(50000);
+  h.value.recordCashReturned(20000);
+  const requestId = randomUUID(), payment = { method: 'CASH', changeOwed: 20000, changeUncertain: false };
+  assert(h.value.savePendingBooking({ requestId, body: JSON.stringify({ requestId, payment }) }));
+  assert.equal(h.value.paymentSession.acceptedAmount, 80000); assert.equal(h.value.completePayment(), true);
+  assert.equal(h.localStorage.getItem('kiosk-payment-recovery-v1'), null);
+});
 for (const stage of ['RESET', 'STOP']) {
   test(`exact cash payment identifies ${stage} failure without booking or refund`, async () => {
     let configCalls = 0;
@@ -611,7 +676,10 @@ async function onsite(stay = 'shortStay', scenario = {}) {
       if (responseMode === 'waiting') await new Promise(resolve => release = resolve);
       return { ok: true, status: responseMode === 'pending' ? 202 : 200,
         json: async () => responseMode === 'pending' ? { success: false, pending: true } : responseMode === 'reject' ?
-          { success: false, canCancelPayment: true, error: 'Room unavailable' } : { success: true, cardIssue: scenario.cardIssue, data: { roomCode: 'B901', password: responseMode === 'missing-key' ? undefined : responseMode === 'empty-key' ? '' : 'SERVER-TEST' } } };
+          { success: false, canCancelPayment: true, error: 'Room unavailable' } : { success: true, cardIssue: scenario.cardIssue, data: {
+            roomCode: 'B901', password: responseMode === 'missing-key' ? undefined : responseMode === 'empty-key' ? '' : 'SERVER-TEST',
+            ...(JSON.parse(options.body).payment?.changeOwed !== undefined ? { payment: JSON.parse(options.body).payment } : {}),
+          } } };
     } });
   const render = () => h.render({ location: 'B', onNavigate() {} });
   const settle = async () => { await new Promise(resolve => setImmediate(resolve)); render(); };
@@ -626,6 +694,18 @@ async function onsite(stay = 'shortStay', scenario = {}) {
     async roomLookupFailure(value = true) { roomLookupFails = value; intervals[0](); await settle(); },
     async malformedRooms(value) { roomPayload = value; intervals[0](); await settle(); } };
 }
+
+test('CASH change owed payment remains in the booking request and completion reservation after card issuance', async () => {
+  const outcome = { success: true, settled: true }, issued = []
+  const h = await onsite('overnight', { cardIssue: { required: true }, cardHelpers: {
+    checkCardBeforePayment: async () => ({ success: true }), issueCheckInCard: async input => { issued.push(input); return outcome },
+  } }); await h.pay()
+  const payment = { method: 'CASH', changeOwed: 20000, changeUncertain: false }
+  await h.component('PaymentScreen').props.onPaymentComplete(payment); await h.settle()
+  assert.deepEqual(JSON.parse(h.posts[0]).payment, payment); assert.equal(issued.length, 1); assert.equal(h.observed.completed, 1)
+  const reservation = h.component('CheckInComplete').props.reservation
+  assert.deepEqual(reservation.payment, payment); assert.deepEqual(reservation.cardDelivery, outcome)
+})
 
 test('unresolved payment returns home after five seconds, preserves evidence and permits lookup but not another sale', async () => {
   const h = await onsite(); await h.pay(); h.mode('lost');
@@ -1025,6 +1105,26 @@ test('confirmed empty password displays assistance, never a false password-print
   h.render({ reservation: { roomNumber: 'B901', password: '' }, revealedInfo: { roomNumber: 'B901', password: '', floor: '9' } });
   assert(h.visible('결제와 체크인이 완료되었습니다')); assert(h.visible('관리자에게 문의해주세요')); assert(!h.visible('객실번호와 비밀번호가 적혀 있습니다'));
 });
+
+test('change owed completion displays the contact line, passes receipt data, and returns home unattended', async () => {
+  for (const payment of [undefined, { method: 'CASH', changeOwed: 20000, changeUncertain: false },
+    { method: 'CASH', changeOwed: 40000, changeUncertain: true }]) {
+    const timers = [], printed = [], navigation = []
+    const h = load('components/check-in-complete.tsx', { 'next/image': { default: 'img' },
+      '@/lib/location-utils': { getBuildingZoomImagePath: () => '/test.png' },
+      '@/lib/printer-utils-unified': { printReceipt: async data => { printed.push(data); return true } },
+      '@/lib/audio-utils': {}, '@/hooks/use-idle-timer': { useIdleTimer() {} }, '@/lib/property-utils': {},
+    }, { setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length }, clearTimeout() {}, setInterval: () => 1, clearInterval() {} })
+    const props = { reservation: { roomNumber: 'C901', payment }, onNavigate: screen => navigation.push(screen) }
+    h.render(props); h.effects[1](); timers.find(timer => timer.ms === 1000).fn()
+    await new Promise(resolve => setImmediate(resolve)); h.render(props)
+    assert.equal(printed.length, 1)
+    assert.equal(Object.hasOwn(printed[0], 'changeOwed'), !!payment)
+    if (payment) { assert.equal(printed[0].changeOwed, payment.changeOwed); assert(h.visible(`미지급 거스름돈 ${payment.changeOwed.toLocaleString()}원 · 문의 010-5126-4644`)) }
+    else assert(!h.visible('미지급 거스름돈'))
+    timers.find(timer => timer.ms === 25000).fn(); assert.deepEqual(navigation, ['standby'])
+  }
+})
 
 test('failed check-in print retries only the receipt once and preserves room information', async () => {
   const timers = []; let prints = 0, finish;

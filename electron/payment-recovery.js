@@ -36,6 +36,7 @@ function automaticKind(session, raw, storageError) {
 
 function createPaymentRecovery({ app, safeStorage, isIdle, stopCash, setBusy, authorizeRemote = () => false, now = Date.now }) {
   let failures = 0, blockedUntil = 0, busy = false
+  const pendingChangeOwed = new Map()
   function localFrame(event) {
     check(event.senderFrame === event.sender.mainFrame &&
       new URL(event.senderFrame.url).origin === 'http://localhost:3000', '키오스크 화면에서만 복구할 수 있습니다.')
@@ -56,7 +57,68 @@ function createPaymentRecovery({ app, safeStorage, isIdle, stopCash, setBusy, au
   const failed = error => ({ success: false, error: error instanceof RecoveryError ? error.message :
     '복구 기록을 안전하게 보관하지 못했습니다. 기존 거래는 유지됩니다. 다시 확인해주세요.' })
 
+  function saveChangeOwed(record) {
+    check(safeStorage.isEncryptionAvailable(), '암호화 보관을 사용할 수 없습니다.')
+    const directory = path.join(app.getPath('userData'), 'payment-recovery-archive')
+    fs.mkdirSync(directory, { recursive: true })
+    check(!fs.lstatSync(directory).isSymbolicLink(), '복구 보관 폴더를 확인해주세요.')
+    const file = path.join(directory, record.archiveId + '.bin')
+    let created = false
+    try {
+      const encrypted = safeStorage.encryptString(JSON.stringify(record))
+      const fd = fs.openSync(file, 'wx', 0o600)
+      created = true
+      try { fs.writeFileSync(fd, encrypted); fs.fsyncSync(fd) } finally { fs.closeSync(fd) }
+    } catch (error) {
+      if (error.code !== 'EEXIST') {
+        // Remove only our failed new write so the native retry can finish it.
+        if (created) fs.unlinkSync(file)
+        throw error
+      }
+    }
+    const stat = fs.lstatSync(file)
+    check(stat.isFile() && !stat.isSymbolicLink() && stat.size < 1024 * 1024, '복구 보관 파일을 확인해주세요.')
+    const saved = JSON.parse(safeStorage.decryptString(fs.readFileSync(file)))
+    check(saved.archiveId === record.archiveId && saved.incidentKind === 'change_owed' &&
+      saved.memorySnapshot === record.memorySnapshot, '미지급 기록 보관 확인에 실패했습니다.')
+    pendingChangeOwed.delete(record.archiveId)
+    return { success: true, archiveId: record.archiveId }
+  }
+
   return {
+    reportChangeOwed(event, input) {
+      try {
+        localFrame(event)
+        check(input && Number.isSafeInteger(input.sessionStartTime) && input.sessionStartTime > 0 &&
+          typeof input.roomNumber === 'string' && input.roomNumber.length <= 40 && typeof input.changeUncertain === 'boolean',
+          '미지급 결제 정보를 확인해주세요.')
+        for (const field of ['requiredAmount', 'receivedAmount', 'returnedAmount', 'changeOwed']) {
+          check(Number.isSafeInteger(input[field]) && input[field] >= 0 && input[field] <= 100000000, '미지급 금액을 확인해주세요.')
+        }
+        check(input.requiredAmount > 0 && input.receivedAmount >= input.requiredAmount &&
+          input.changeOwed === input.receivedAmount - input.requiredAmount - input.returnedAmount, '미지급 금액이 결제 기록과 다릅니다.')
+        const property = process.env.KIOSK_PROPERTY_ID || null
+        const building = process.env.KIOSK_BUILDING || process.env.KIOSK_START_LOCATION || null
+        const archiveId = hash(JSON.stringify(['change_owed', property, building, input.sessionStartTime]))
+        const session = { isActive: true, method: 'cash', sessionStartTime: input.sessionStartTime,
+          requiredAmount: input.requiredAmount, acceptedAmount: input.receivedAmount - input.returnedAmount,
+          receivedAmount: input.receivedAmount, returnedAmount: input.returnedAmount,
+          changeOwed: input.changeOwed, changeUncertain: input.changeUncertain,
+          reservationData: { roomNumber: input.roomNumber } }
+        const record = { archiveId, original: null, memorySnapshot: JSON.stringify(session),
+          resolution: 'payment_incident', note: '객실 배정 진행', reviewedAt: new Date(now()).toISOString(),
+          version: app.getVersion(), property, building, kind: 'payment-incident-awaiting-review',
+          incidentKind: 'change_owed', financialCommandsSent: 0 }
+        // Keep native ownership of retries even if the renderer proceeds or loses the IPC reply.
+        pendingChangeOwed.set(archiveId, record)
+        return saveChangeOwed(record)
+      } catch (error) { return failed(error) }
+    },
+    retryChangeOwed() {
+      for (const record of pendingChangeOwed.values()) {
+        try { saveChangeOwed(record) } catch { console.warn('Change owed archive pending; retained for native retry.') }
+      }
+    },
     authorize(event, password) {
       try { authenticate(event, password); return { success: true } } catch (error) { return failed(error) }
     },

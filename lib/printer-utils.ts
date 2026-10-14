@@ -118,6 +118,7 @@ export interface KioskReceiptData {
   reservationId?: string
   paymentReceipt?: CardPaymentReceiptData | null
   business?: ReceiptBusinessInfo
+  changeOwed?: number
 }
 
 export async function printReceipt(data: KioskReceiptData): Promise<boolean> {
@@ -258,6 +259,7 @@ async function printReceiptConnected(data: KioskReceiptData): Promise<boolean> {
     await printText("\n")
   }
 
+  if (data.changeOwed) await printText(`미지급 거스름돈 ${data.changeOwed.toLocaleString("ko-KR")}원 · 문의 010-5126-4644\n`)
   await printText(
     "즐거운 시간 보내시기 바랍니다.\n감사합니다.\n\n\n",
     {

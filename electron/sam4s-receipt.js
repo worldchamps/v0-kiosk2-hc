@@ -130,7 +130,7 @@ function buildSam4sReceiptHtml(data = {}) {
       </ol>
     </section>
     ${checkInDate || checkOutDate ? `<div class="separator"></div><div class="dates">${checkInDate ? `<div>체크인&nbsp;&nbsp; ${escapeHtml(checkInDate)}</div>` : ""}${checkOutDate ? `<div>체크아웃 ${escapeHtml(checkOutDate)}</div>` : ""}</div>` : ""}
-    <p class="thanks">즐거운 시간 보내시기 바랍니다.<br>감사합니다.</p>
+    ${data.changeOwed ? `<p class="guide">미지급 거스름돈 ${escapeHtml(formatAmount(data.changeOwed))} · 문의 010-5126-4644</p>` : ""}<p class="thanks">즐거운 시간 보내시기 바랍니다.<br>감사합니다.</p>
   </main>
 </body>
 </html>`
@@ -199,6 +199,7 @@ function buildSam4sPrintLines(data = {}) {
     if (checkInDate) text(`체크인    ${checkInDate}`, { size: 11, gapAfter: 0.5 })
     if (checkOutDate) text(`체크아웃 ${checkOutDate}`, { size: 11, gapAfter: 0.5 })
   }
+  if (data.changeOwed) text(`미지급 거스름돈 ${formatAmount(data.changeOwed)} · 문의 010-5126-4644`)
   text("즐거운 시간 보내시기 바랍니다.\n감사합니다.", {
     size: 12,
     bold: true,

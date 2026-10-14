@@ -238,6 +238,68 @@ test('reset can become ready on a later status query without a second reset', as
   assert.equal(ready, true); assert.equal(polls, 2); assert.equal(resets, 1)
 })
 
+for (const [label, acknowledgement, statuses, expected] of [
+  ['start, moving, complete', packet(0x64, 4, 0x61), [packet(0x73, 0x6f, 0x6e), packet(0x73, 4, 0x6f)], { dispensed: 4, complete: true }],
+  ['partial abnormal end', packet(0x64, 4, 0x61), [packet(0x73, 2, 0x6e)], { dispensed: 2, complete: false }],
+  ['partial normal end', packet(0x64, 4, 0x61), [packet(0x73, 2, 0x6f)], { dispensed: 2, complete: false }],
+  ['all notes out, then empty detected', packet(0x64, 4, 0x61), [packet(0x73, 4, 0x6e)], { dispensed: 4, complete: true }],
+  ['cannot dispense', packet(0x6e, 0x73, 0x21), [], { dispensed: 0, complete: false }],
+  ['missing start reply', null, [], { dispensed: null, complete: false }],
+  ['unreadable start reply', packet(0x64, 4, 0x53), [], { dispensed: null, complete: false }],
+  ['mismatched start count', packet(0x64, 3, 0x61), [], { dispensed: null, complete: false }],
+  ['missing status reply', packet(0x64, 4, 0x61), [null], { dispensed: null, complete: false }],
+  ['unreadable status', packet(0x64, 4, 0x61), [packet(0x73, 0x74, 0x62)], { dispensed: null, complete: false }],
+  ['count above request', packet(0x64, 4, 0x61), [packet(0x73, 5, 0x6f)], { dispensed: null, complete: false }],
+]) {
+  test(`verified ONEPLUS payout: ${label}; one payout command only`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+    const h = device('dispenser', { setTimeout, clearTimeout, Date }); await h.connect()
+    const sent = [], replies = [...statuses]
+    h.respond(command => { sent.push({ command, at: Date.now() }); return command[1] === 0x44 ? acknowledgement : replies.shift() })
+    let done = false, actual
+    const pending = h.api.dispenseBillsVerified(4).then(result => { done = true; actual = result })
+    for (let elapsed = 0; !done && elapsed < 15000; elapsed += 100) {
+      await new Promise(resolve => setImmediate(resolve)); t.mock.timers.tick(100)
+    }
+    await new Promise(resolve => setImmediate(resolve)); assert(done); await pending
+    assert.deepEqual(JSON.parse(JSON.stringify(actual)), expected)
+    assert.equal(sent.filter(x => x.command[1] === 0x44).length, 1)
+    for (const query of sent.filter(x => x.command[1] !== 0x44)) assert.deepEqual(Array.from(query.command), packet(0x53, 0, 0))
+    if (statuses.length === 2) assert.equal(sent[2].at - sent[1].at, 300)
+    assert.equal(h.timers.size, 0)
+    // Both start/rejection waiters must be removed before the next transaction.
+    h.respond(() => packet(0x6e, 0x73, 0x21))
+    assert.equal((await h.api.dispenseBillsVerified(4)).dispensed, 0)
+  })
+}
+for (const count of [4, 250]) {
+  test(`verified ONEPLUS ${count} notes bounds moving status by total deadline without retry`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+    const h = device('dispenser', { setTimeout, clearTimeout, Date }); await h.connect()
+    h.respond(command => command[1] === 0x44 ? packet(0x64, count, 0x61) : packet(0x73, 0x6f, 0x6e))
+    let done = false, actual
+    h.api.dispenseBillsVerified(count).then(result => { done = true; actual = result })
+    const limit = Math.min(count * 1500 + 5000, 40000)
+    for (let elapsed = 0; !done && elapsed <= limit; elapsed += 100) {
+      await new Promise(resolve => setImmediate(resolve)); t.mock.timers.tick(100)
+    }
+    await new Promise(resolve => setImmediate(resolve)); assert(done)
+    assert.deepEqual(JSON.parse(JSON.stringify(actual)), { dispensed: null, complete: false })
+    assert(Date.now() >= limit && Date.now() <= limit + 100)
+    assert.equal(h.commands.filter(command => command[1] === 0x44).length, 1)
+  })
+}
+test('verified bac2400 keeps the adapter completion meaning and never adds ONEPLUS status polls', async () => {
+  const h = device('dispenser'); await h.connect()
+  for (const success of [true, false]) {
+    h.respond(command => success ? packet(0x64, command[2], 0x53) : null)
+    const before = h.commands.length
+    const actual = await h.api.dispenseBillsVerified(4, 'bac2400')
+    assert.deepEqual(JSON.parse(JSON.stringify(actual)), { dispensed: success ? 4 : null, complete: success })
+    assert.deepEqual(h.commands.slice(before), [packet(0x44, 4, 0x53)])
+  }
+})
+
 test("dispenser: integer count and the existing response command/count must match", async () => {
   const h = device("dispenser")
   await h.connect()
@@ -328,6 +390,74 @@ function printer(ipc, property = "property3") {
     "@/lib/property-utils": { getKioskPropertyId: () => property },
   }).api
 }
+
+test('receipt without change owed remains byte-identical to 1.3.43; unpaid change adds one line', async () => {
+  const crypto = require('node:crypto'), receipts = require('../electron/sam4s-receipt')
+  const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex')
+  const data = { hotelName: 'THE BEACH STAY', roomNumber: 'D212', password: '1234', checkInDate: '2026-10-14', checkOutDate: '2026-10-15' }
+  const note = '미지급 거스름돈 20,000원 · 문의 010-5126-4644'
+  const html = receipts.buildSam4sReceiptHtml(data), lines = receipts.buildSam4sPrintLines(data)
+  // Baselines captured from HEAD 6428347 with the same input, before this change.
+  assert.equal(hash(html), '19afc8f240c20890262ff10844d513cd9e9486fffcc2303d6743baf4ec6807e7')
+  assert.equal(hash(lines), '3fc4900a8e20f6b0fc0873582cfbb27b0e52a2e485a8cce39579cb9b6b912c8f')
+  const owedHtml = receipts.buildSam4sReceiptHtml({ ...data, changeOwed: 20000 })
+  assert.equal(owedHtml.replace(`<p class="guide">${note}</p>`, ''), html)
+  const owedLines = receipts.buildSam4sPrintLines({ ...data, changeOwed: 20000 })
+  assert.equal(owedLines.filter(line => line.text === note).length, 1)
+  assert.deepEqual(owedLines.filter(line => line.text !== note), lines)
+  const print = async input => {
+    const output = [], p = printer({ getHardwareStatus: async () => ({ connected: true }),
+      sendRawToBixolon: async value => { output.push(['raw', value]); return true },
+      printToBixolon: async (...args) => { output.push(['text', ...args]); return true },
+      cutBixolonPaper: async () => { output.push(['cut']); return true },
+    }, 'property1')
+    assert.equal(await p.printReceipt(input), true)
+    return output
+  }
+  const original = await print(data), owed = await print({ ...data, changeOwed: 20000 })
+  assert.equal(hash(original), 'f32eaec8e4626209a4103d80eaf16c2f4acef5f8ede2ca7cd65a8e4712783848')
+  assert.equal(owed.filter(command => command[1] === note + '\n').length, 1)
+  assert.equal(hash(owed.filter(command => command[1] !== note + '\n')), hash(original))
+})
+test('SAM4S and WOOSIM IPC receive change owed; unified receipt mapping adds no fields when absent', async () => {
+  for (const [property, backend] of [['property4', 'sam4s'], ['property3', 'woosim']]) {
+    const received = []
+    const p = printer({ getReceiptPrinterStatus: async () => ({ backend, connected: true }),
+      [backend === 'sam4s' ? 'printToSam4s' : 'printToWoosim']: async data => { received.push(data); return { success: true } },
+    }, property)
+    const mapped = [], unified = load('lib/printer-utils-unified.ts', {}, {
+      './property-utils': { getKioskPropertyId: () => property, propertyUsesPrinter: () => true },
+      '@/lib/printer-utils': { printReceipt: async data => { mapped.push(data); return p.printReceipt(data) } },
+    }, new Set(), { process: { env: {} } }).api
+    for (const changeOwed of [undefined, 20000]) {
+      assert.equal(await unified.printReceipt({ roomNumber: 'B212', password: '1234', ...(changeOwed ? { changeOwed } : {}) }), true)
+      assert.equal(Object.hasOwn(mapped.at(-1), 'changeOwed'), changeOwed !== undefined)
+      assert.equal(Object.hasOwn(received.at(-1), 'changeOwed'), changeOwed !== undefined)
+      assert.equal(received.at(-1).changeOwed, changeOwed)
+    }
+  }
+})
+
+test('QA preview preserves after-payout mode and models ONEPLUS start then status, including empty-after-2', {
+  skip: !fs.existsSync(path.join(root, '.local/payment-flow-preview.cjs')),
+}, async () => {
+  const source = fs.readFileSync(path.join(root, '.local/payment-flow-preview.cjs'), 'utf8')
+  const install = source.slice(source.indexOf('function installMock('), source.indexOf('const runtime ='))
+  for (const mode of ['', 'after-payout', 'empty-after-2']) {
+    const session = new Map([['qa-dispenser', mode]]), replies = []
+    const context = { window: { location: { href: 'http://127.0.0.1:3219', origin: 'http://127.0.0.1:3219' }, fetch: async () => {} },
+      localStorage: { getItem: () => null }, sessionStorage: { getItem: key => session.get(key), setItem: (key, value) => session.set(key, value) },
+      URL, Date, setTimeout: callback => { queueMicrotask(callback); return 1 }, Promise }
+    vm.runInNewContext(install + '\ninstallMock("synthetic")', context)
+    const api = context.window.electronAPI
+    api.onBillDispenserData(value => replies.push(Array.from(value.data)))
+    await api.sendToBillDispenser(packet(0x53, 0, 0))
+    assert.deepEqual(replies.at(-1), mode === 'after-payout' ? packet(0x73, 2, 0x6f) : packet(0x73, 0x74, 0x62))
+    await api.sendToBillDispenser(packet(0x44, 4, 0x53)); assert.deepEqual(replies.at(-1), packet(0x64, 4, 0x61))
+    await api.sendToBillDispenser(packet(0x53, 0, 0))
+    assert.deepEqual(replies.at(-1), mode === 'empty-after-2' ? packet(0x73, 2, 0x6e) : packet(0x73, 4, 0x6f))
+  }
+})
 
 test("C room receipts omit every password instruction while D and A keep their existing receipt", async () => {
   for (const [property, roomNumber, hidden] of [['property1', 'C103', true], ['property1', ' c-105 ', true], ['property1', 'D212', false], ['property3', 'A101', false]]) {

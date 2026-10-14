@@ -17,6 +17,8 @@ export interface TossFrontPaymentProof {
 
 export interface CompletedPayment {
   method: "CASH" | "CARD"
+  changeOwed?: number
+  changeUncertain?: boolean
   provider?: "TOSS_PAY" | "TOSS_FRONT"
   payToken?: string
   orderNo?: string

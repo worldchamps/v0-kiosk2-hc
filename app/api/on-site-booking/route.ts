@@ -66,9 +66,15 @@ export async function POST(request: NextRequest) {
       return reject("결제 요청 식별자가 없습니다. 관리자에게 문의해 주세요.")
     }
     const key = bookingHash((payment.method === "CARD" ? provider : "cash") + ":" + sourceId)
+    if (payment.changeOwed !== undefined && (payment.method !== "CASH" ||
+        !Number.isSafeInteger(payment.changeOwed) || payment.changeOwed < 0 || payment.changeOwed > 100000000 ||
+        (payment.changeUncertain !== undefined && typeof payment.changeUncertain !== "boolean"))) {
+      return reject("미지급 거스름돈 정보를 확인해 주세요.")
+    }
     const fingerprint = bookingHash(JSON.stringify([property, roomCode, stayType, body.price, guestName, phoneNumber,
       roomType, body.checkInDate, body.checkOutDate, payment.method, payment.provider || "", payment.payToken || "",
-      payment.orderNo || "", payment.front || null]))
+      payment.orderNo || "", payment.front || null,
+      ...(payment.changeOwed !== undefined ? [payment.changeOwed, payment.changeUncertain === true] : [])]))
     const existing = await readOnSiteBooking(key)
     if (existing && existing.fingerprint !== fingerprint) return reject("같은 결제 요청을 다른 예약에 사용할 수 없습니다.", 409)
     if (body.queryOnly === true) return existing ? resultOf(existing) : NextResponse.json({ success: false, pending: false, found: false }, { status: 404 })
@@ -127,6 +133,9 @@ export async function POST(request: NextRequest) {
     const reservationId = "ONSITE-" + randomUUID()
     const data: Record<string, unknown> = { reservationId, guestName, roomNumber: roomCode, roomCode, roomType, price,
       ...dates, stayType, stayTypeLabel: stayType === "overnight" ? "숙박" : "대실", password: "", paymentReceipt: null }
+    if (payment.changeOwed !== undefined) data.payment = {
+      method: "CASH", changeOwed: payment.changeOwed, changeUncertain: payment.changeUncertain === true,
+    }
     if (provider === "toss_front" && payment.method === "CARD") {
       const front = payment.front
       data.paymentReceipt = { provider: "TOSS_FRONT", amount: front.amount, tax: front.tax, supplyValue: front.supplyValue,

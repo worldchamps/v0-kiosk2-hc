@@ -110,6 +110,11 @@ ipcMain.handle("payment-recovery:authorize", (event, password) => paymentRecover
 ipcMain.handle("payment-recovery:archive", (event, input) => paymentRecovery.archive(event, input))
 ipcMain.handle('payment-recovery:archive-remote', (event, input) => paymentRecovery.archive(event, input, 'remote'))
 const deliverCashIncidents = createCashIncidentDelivery({ app, safeStorage: require("electron").safeStorage })
+ipcMain.handle('payment-recovery:report-change-owed', (event, input) => {
+  const result = paymentRecovery.reportChangeOwed(event, input)
+  if (result.success) void deliverCashIncidents()
+  return result
+})
 ipcMain.handle("payment-recovery:report-cash", async (event, input) => {
   const result = await paymentRecovery.archive(event, input, true)
   if (result.success) {
@@ -145,8 +150,12 @@ ipcMain.on('cash-diagnostics:trace', (event, input) => {
   } catch { /* Diagnostics must not interrupt a payment. */ }
 })
 app.whenReady().then(() => {
+  paymentRecovery.retryChangeOwed()
   void deliverCashIncidents()
-  setInterval(() => void deliverCashIncidents(), 30000).unref()
+  setInterval(() => {
+    paymentRecovery.retryChangeOwed()
+    void deliverCashIncidents()
+  }, 30000).unref()
 })
 
 tossFrontBridge.on("status", (status) => {

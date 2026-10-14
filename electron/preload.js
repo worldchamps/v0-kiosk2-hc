@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     authorize: password => ipcRenderer.invoke("payment-recovery:authorize", password),
     archive: input => ipcRenderer.invoke("payment-recovery:archive", input),
     reportCash: input => ipcRenderer.invoke("payment-recovery:report-cash", input),
+    reportChangeOwed: input => ipcRenderer.invoke('payment-recovery:report-change-owed', input),
   },
   cardKey: {
     checkInRequired: () => ipcRenderer.invoke('card-key:checkin-required'),

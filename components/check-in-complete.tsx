@@ -54,6 +54,7 @@ export default function CheckInComplete({
 
   const roomNumber = revealedInfo?.roomNumber || reservation?.roomNumber || ""
   const cardDelivery = reservation?.cardDelivery
+  const changeOwed = reservation?.payment?.changeOwed
   const buildingZoomImagePath = getBuildingZoomImagePath(roomNumber)
 
   const getBuildingType = (): string => {
@@ -77,6 +78,7 @@ export default function CheckInComplete({
         password: revealedInfo?.password || reservation.password || "",
         floor: revealedInfo?.floor || reservation.floor || "",
         paymentReceipt: reservation.paymentReceipt || null,
+        ...(changeOwed ? { changeOwed } : {}),
         timestamp: new Date().toLocaleString("en-US"),
       }
     : {
@@ -308,6 +310,10 @@ export default function CheckInComplete({
         <p>결제와 체크인이 완료되었습니다</p>
         <h1>객실 정보를 확인해주세요</h1>
       </header>
+
+      {changeOwed > 0 && <p role="alert" className="rounded-xl border p-6 text-center text-2xl">
+        {`미지급 거스름돈 ${changeOwed.toLocaleString("ko-KR")}원 · 문의 010-5126-4644`}
+      </p>}
 
       {cardDelivery && <section role="status" className="rounded-xl border p-6 text-center text-2xl">
         <h2 className="text-3xl font-bold">{cardDelivery.success ? "객실 카드키를 수령했습니다" : "카드키 발급 확인이 필요합니다"}</h2>

@@ -69,6 +69,7 @@ export async function printReceipt(receiptData: any): Promise<boolean> {
       checkOutDate: receiptData.checkOutDate || "",
       reservationId: receiptData.reservationId || "",
       paymentReceipt: receiptData.paymentReceipt || null,
+      ...(receiptData.changeOwed ? { changeOwed: receiptData.changeOwed } : {}),
       business: {
         name:
           process.env.NEXT_PUBLIC_RECEIPT_BUSINESS_NAME ||

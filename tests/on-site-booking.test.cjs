@@ -124,6 +124,28 @@ function harness(options = {}) {
 }
 const card = id => ({ method: 'CARD', provider: 'TOSS_PAY', payToken: id, orderNo: 'QA-' + id });
 
+test('change owed is stored with the CASH reservation, not in the PMS check-in queue, and survives idempotent lookup', async () => {
+  for (const changeUncertain of [false, true]) {
+    const h = harness({ roomCode: 'C901', env: { KIOSK_PROPERTY_ID: 'property1', KIOSK_BUILDING: '' } })
+    h.price(60000)
+    const payment = { method: 'CASH', changeOwed: changeUncertain ? 40000 : 20000, changeUncertain }
+    const result = await h.post({ price: 60000, payment })
+    assert.equal(result.status, 200); assert.deepEqual(result.body.data.payment, payment)
+    const stored = Object.values(h.get('kiosk_bookings'))[0]
+    assert.deepEqual(stored.data.payment, payment)
+    assert.equal('payment' in Object.values(h.get('pms_queue/property1'))[0], false)
+    const lookup = await h.post({ price: 60000, payment, queryOnly: true })
+    assert.deepEqual(lookup.body.data.payment, payment); assert.deepEqual(h.counts(), { append: 1, queue: 1 })
+    assert.equal((await h.post({ price: 60000, payment: { ...payment, changeOwed: payment.changeOwed + 10000 } })).status, 409)
+  }
+})
+test('booking rejects malformed change owed metadata before creating any reservation', async () => {
+  for (const extra of [{ changeOwed: -1 }, { changeOwed: 1.5 }, { changeOwed: 100000001 }, { changeOwed: 10000, changeUncertain: 'true' }]) {
+    const h = harness(), result = await h.post({ payment: { method: 'CASH', ...extra } })
+    assert.equal(result.status, 400); assert.deepEqual(h.counts(), { append: 0, queue: 0 })
+  }
+})
+
 test('queryOnly checks the same booking result without creating a reservation or repeating a payment', async () => {
   const h = harness();
   const missing = await h.post({ queryOnly: true });

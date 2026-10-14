@@ -92,12 +92,14 @@ function processReceivedPacket(packet: Uint8Array): void {
 
   const responseKey = `${cmd1.toString(16).padStart(2, "0")}-${cmd2.toString(16).padStart(2, "0")}`
   // Status replies put the state or note count in cmd2, so wait on cmd1 only.
-  const responseKeys = (cmd1 === 0x73 || cmd1 === 0x53) ? [responseKey, "73"] : [responseKey]
+  const responseKeys = [responseKey, cmd1.toString(16).padStart(2, "0"), ...(cmd1 === 0x53 ? ["73"] : [])]
   for (const key of responseKeys) {
     const pendingCommand = pendingCommands.get(key)
     if (pendingCommand) {
       clearTimeout(pendingCommand.timeout)
-      pendingCommands.delete(key)
+      for (const [pendingKey, entry] of pendingCommands) {
+        if (entry === pendingCommand) pendingCommands.delete(pendingKey)
+      }
       pendingCommand.resolve(packet)
     }
   }
@@ -118,28 +120,31 @@ function processReceivedPacket(packet: Uint8Array): void {
   }
 }
 
-async function sendCommand(packet: Uint8Array, expectedCmd1: number, expectedCmd2?: number, timeoutMs = 1000): Promise<Uint8Array | null> {
+async function sendCommand(packet: Uint8Array, expectedCmd1: number | number[], expectedCmd2?: number, timeoutMs = 1000): Promise<Uint8Array | null> {
   const api = typeof window !== "undefined" ? window.electronAPI : undefined
   if (!api) return null
-  const responseKey = expectedCmd1.toString(16).padStart(2, "0") +
-    (expectedCmd2 === undefined ? "" : `-${expectedCmd2.toString(16).padStart(2, "0")}`)
-  if (pendingCommands.has(responseKey)) return null
+  const responseKeys = (Array.isArray(expectedCmd1) ? expectedCmd1 : [expectedCmd1]).map(cmd =>
+    cmd.toString(16).padStart(2, "0") + (expectedCmd2 === undefined ? "" : `-${expectedCmd2.toString(16).padStart(2, "0")}`))
+  const responseKey = responseKeys[0]
+  if (responseKeys.some(key => pendingCommands.has(key))) return null
+  const clearPending = () => { for (const key of responseKeys) pendingCommands.delete(key) }
   const entry: (typeof commandLog)[number] = { command: responseKey, bytes: Array.from(packet), timestamp: new Date().toISOString() }
   commandLog.push(entry)
   if (commandLog.length > 100) commandLog.shift()
   const responsePromise = new Promise<Uint8Array | null>((resolve) => {
     const timeout = setTimeout(() => {
-      pendingCommands.delete(responseKey)
+      clearPending()
       resolve(null)
     }, timeoutMs)
-    pendingCommands.set(responseKey, { resolve, timeout })
+    const pending = { resolve, timeout }
+    for (const key of responseKeys) pendingCommands.set(key, pending)
   })
 
   const pending = pendingCommands.get(responseKey)
   const fail = () => {
     if (pending && pendingCommands.get(responseKey) === pending) {
       entry.error = "명령 전송 실패"
-      clearTimeout(pending.timeout); pending.resolve(null); pendingCommands.delete(responseKey)
+      clearTimeout(pending.timeout); pending.resolve(null); clearPending()
     }
   }
   try {
@@ -203,6 +208,36 @@ export async function dispenseBills(count: number): Promise<boolean> {
   const success = !!res && res[1] === 0x64 && res[2] === count
   if (success) { dispensedCount = count; currentStatus = 3 }
   return success
+}
+
+export async function dispenseBillsVerified(count: number, cashBackend: "oneplus" | "bac2400" = "oneplus"):
+  Promise<{ dispensed: number | null; complete: boolean }> {
+  const unknown = { dispensed: null, complete: false }
+  if (!Number.isInteger(count) || count < 1 || count > 250) return unknown
+  if (cashBackend === "bac2400") {
+    return await dispenseBills(count) ? { dispensed: count, complete: true } : unknown
+  }
+  const deadline = Date.now() + Math.min(count * 1500 + 5000, 40000)
+  // ONEPLUS acknowledges the start, not delivery. Never repeat this command.
+  const accepted = await sendCommand(createPacket(0x44, count, 0x53), [0x64, 0x6e])
+  if (accepted?.[1] === 0x6e && accepted[2] === 0x73 && accepted[3] === 0x21) {
+    return { dispensed: 0, complete: false }
+  }
+  if (!accepted || accepted[1] !== 0x64 || accepted[2] !== count || accepted[3] !== 0x61) return unknown
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, Math.min(300, deadline - Date.now())))
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) break
+    const status = await sendCommand(createPacket(0x53, 0, 0), 0x73, undefined, Math.min(1000, remaining))
+    if (!status || Date.now() >= deadline) return unknown
+    if (status[2] === 0x6f && status[3] === 0x6e) continue
+    if (status[2] <= count && (status[3] === 0x6f || status[3] === 0x6e)) {
+      // Spec V9.6: "s <n> n" also covers a normal payout followed by SENS_EMPTY, so all notes out is complete.
+      return { dispensed: status[2], complete: status[2] === count }
+    }
+    return unknown
+  }
+  return unknown
 }
 
 export async function getDispenserStatus(): Promise<number> {

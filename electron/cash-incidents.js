@@ -12,7 +12,7 @@ function verifyIncident(body, signature, key, scope) {
       (scope.building && body.building !== scope.building) || body.status !== 'needs_review' ||
       body.bookingCreated !== false || body.refundConfirmed !== false ||
       !Number.isFinite(body.occurredAt) || typeof body.reason !== 'string' || body.reason.length > 500 ||
-      body.kind !== undefined && !['cash', 'card_approval', 'unknown_result', 'booking_pending', 'corrupt'].includes(body.kind)) return false
+      body.kind !== undefined && !['cash', 'card_approval', 'unknown_result', 'booking_pending', 'corrupt', 'change_owed'].includes(body.kind)) return false
   for (const field of ['receivedAmount', 'confirmedReturnedAmount', 'cashRecordedAmount', 'requiredAmount', 'expectedChange']) {
     if (!Number.isSafeInteger(body[field]) || body[field] < 0 || body[field] > 100000000) return false
   }
@@ -22,17 +22,23 @@ function incidentFromArchive(record) {
   let session
   try { session = JSON.parse(record.memorySnapshot) } catch { session = {} }
   const amount = value => Number.isSafeInteger(value) && value >= 0 ? Math.min(value, 100000000) : 0
+  const changeOwed = record.incidentKind === 'change_owed'
   return {
     id: record.archiveId, property: record.property, building: record.building || '',
     roomNumber: String(session.reservationData?.roomNumber || session.reservationData?.roomCode || '').slice(0, 40),
     occurredAt: Number.isSafeInteger(session.sessionStartTime) && session.sessionStartTime > 0
       ? session.sessionStartTime : Date.parse(record.reviewedAt), recordedAt: record.reviewedAt, version: record.version,
-    reason: String(session.recoveryRequired || 'payment_record_unavailable').slice(0, 500),
+    reason: changeOwed
+      ? session.changeUncertain
+        ? `거스름돈 지급 미확인(최대 ${amount(session.changeOwed).toLocaleString('ko-KR')}원) · 객실 배정 진행`
+        : `거스름돈 미지급 ${amount(session.changeOwed).toLocaleString('ko-KR')}원 · 객실 배정 진행`
+      : String(session.recoveryRequired || 'payment_record_unavailable').slice(0, 500),
     kind: record.incidentKind || 'cash',
-    receivedAmount: Array.isArray(session.acceptedBills) ? Math.min(100000000, session.acceptedBills.reduce((total, bill) => total + amount(bill), 0)) : 0,
+    receivedAmount: changeOwed ? amount(session.receivedAmount)
+      : Array.isArray(session.acceptedBills) ? Math.min(100000000, session.acceptedBills.reduce((total, bill) => total + amount(bill), 0)) : 0,
     confirmedReturnedAmount: amount(session.returnedAmount),
     cashRecordedAmount: amount(session.acceptedAmount), requiredAmount: amount(session.requiredAmount),
-    expectedChange: Math.max(0, amount(session.acceptedAmount) - amount(session.requiredAmount)),
+    expectedChange: changeOwed ? amount(session.changeOwed) : Math.max(0, amount(session.acceptedAmount) - amount(session.requiredAmount)),
     status: 'needs_review', bookingCreated: false, refundConfirmed: false,
   }
 }

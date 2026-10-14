@@ -112,6 +112,9 @@ export interface ElectronAPI {
     onOperationsRequest?: (callback: (request: { kind: string; command?: unknown }) => Promise<unknown>) => () => void
     archiveRemote?: (input: { command: unknown; expectedRaw: string | null; memorySnapshot: string }) => Promise<{ success: boolean; archiveId?: string; error?: string }>
     reportCash: (input: { expectedRaw: string | null; memorySnapshot: string; storageError?: string }) => Promise<{ success: boolean; archiveId?: string; error?: string; cashStopped?: boolean }>
+    reportChangeOwed?: (input: { sessionStartTime: number; requiredAmount: number; receivedAmount: number;
+      returnedAmount: number; changeOwed: number; changeUncertain: boolean; roomNumber: string }) =>
+      Promise<{ success: boolean; archiveId?: string; error?: string }>
     authorize: (password: string) => Promise<{ success: boolean; error?: string }>
     archive: (input: { password: string; expectedRaw: string | null; memorySnapshot: string; confirmed: boolean; resolution: "zero_cash" | "operator_resolved"; note: string }) =>
       Promise<{ success: boolean; archiveId?: string; error?: string }>
