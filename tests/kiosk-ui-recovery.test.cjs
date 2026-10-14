@@ -690,8 +690,8 @@ for (const action of ['completion', 'cancellation']) {
 }
 
 async function onsite(stay = 'shortStay', scenario = {}) {
-  let idle, responseMode = 'success', release, roomLookupFails = false, roomPayload; const posts = [], intervals = [], timers = [];
-  const session = { isActive: false, acceptedAmount: 0 };
+  let idle, responseMode = scenario.responseMode || 'success', release, roomLookupFails = false, roomPayload; const posts = [], intervals = [], timers = [];
+  const session = { isActive: false, acceptedAmount: 0, ...scenario.session };
   const observed = { cancelledApprovals: 0, completed: 0 };
   const payment = { paymentSession: session, ready: true, storageError: '',
     startPayment: (_amount, reservationData) => { session.isActive = true; session.reservationData = reservationData; return true; },
@@ -735,6 +735,41 @@ async function onsite(stay = 'shortStay', scenario = {}) {
     async roomLookupFailure(value = true) { roomLookupFails = value; intervals[0](); await settle(); },
     async malformedRooms(value) { roomPayload = value; intervals[0](); await settle(); } };
 }
+
+test('new CASH booking submission shows only progress while preserving the accepted 60000 won', async () => {
+  const h = await onsite('overnight'); await h.pay(); h.mode('waiting');
+  h.session.acceptedAmount = 60000;
+  const pending = h.component('PaymentScreen').props.onPaymentComplete({ method: 'CASH', paidAmount: 60000 });
+  await h.settle(); const tree = h.render();
+  assert.equal(tree.props.role, 'status');
+  assert(h.visible('예약을 처리하고 있습니다'));
+  assert(h.visible('잠시만 기다려 주세요. 화면을 끄거나 다시 결제하지 마세요.'));
+  assert(!h.visible('결제 처리 확인이 필요합니다')); assert(!h.visible('보관 중인 현금'));
+  assert(!h.visible('확인 번호')); assert(!h.visible(h.session.pendingBooking.requestId));
+  assert(!h.visible('60,000')); assert.equal(h.component('PaymentRecoveryPanel'), undefined);
+  assert.equal(h.component('button'), undefined); assert.equal(h.posts.length, 1);
+  assert.equal(h.session.acceptedAmount, 60000); assert.equal(h.observed.completed, 0);
+  h.release(); await pending; await h.settle();
+  assert(h.component('CheckInComplete')); assert.equal(h.observed.completed, 1);
+});
+
+test('restored pending CASH booking keeps the recovery screen during automatic query-only confirmation', async () => {
+  const booking = { requestId: 'restored-booking', body: JSON.stringify({ requestId: 'restored-booking', payment: { method: 'CASH' } }) };
+  const h = await onsite('overnight', { responseMode: 'waiting',
+    session: { isActive: true, acceptedAmount: 60000, pendingBooking: booking } });
+  assert.equal(h.posts.length, 1); assert.equal(JSON.parse(h.posts[0]).queryOnly, true);
+  assert.equal(h.render().props.role, 'alert'); assert(h.visible('결제 처리 확인이 필요합니다'));
+  assert(h.visible('보관 중인 현금:')); assert(h.visible('60,000'));
+  assert(h.visible('확인 번호:')); assert(h.visible('restored-booking'));
+  assert(!h.visible('잠시만 기다려 주세요. 화면을 끄거나 다시 결제하지 마세요.'));
+  assert.equal(h.button('처리 결과 확인 중...').disabled, true);
+  assert.equal(h.component('PaymentRecoveryPanel').props.disabled, true);
+  assert.equal(h.session.pendingBooking, booking); assert.equal(h.observed.completed, 0);
+  h.mode('pending'); h.release(); await h.settle();
+  assert(h.visible('결제 처리 확인이 필요합니다')); await h.recoverHome();
+  assert.equal(h.session.pendingBooking, booking); assert.equal(h.session.acceptedAmount, 60000);
+  assert.equal(h.button('숙박 오늘 입실 · 내일 퇴실').disabled, true);
+});
 
 test('CASH change owed payment remains in the booking request and completion reservation after card issuance', async () => {
   const outcome = { success: true, settled: true }, issued = []
@@ -842,14 +877,19 @@ for (const mode of ['lost', 'pending']) {
     const h = await onsite(); await h.pay(); h.mode(mode);
     await h.component('PaymentScreen').props.onPaymentComplete({ method: 'CARD', provider: 'TOSS_FRONT', front: { test: true } }); await h.settle();
     assert(h.visible('결제 처리 확인이 필요합니다')); assert(h.session.isActive); assert.equal(h.observed.cancelledApprovals, 0); assert.equal(h.observed.completed, 0);
-    await h.idle(); assert(h.visible('결제 처리 확인이 필요합니다')); h.mode('success'); await h.click('기존 결제 처리 결과 다시 확인');
+    await h.idle(); assert(h.visible('결제 처리 확인이 필요합니다')); h.mode('waiting');
+    const retry = h.button('기존 결제 처리 결과 다시 확인').onClick(); await h.settle();
+    assert.equal(h.render().props.role, 'alert'); assert(h.visible('결제 처리 확인이 필요합니다'));
+    assert.equal(h.component('PaymentRecoveryPanel').props.disabled, true);
+    h.release(); await retry; await h.settle();
     assert.equal(h.posts.length, 2); assert.deepEqual(JSON.parse(h.posts[1]), { ...JSON.parse(h.posts[0]), queryOnly: true }); assert(h.component('CheckInComplete')); assert.equal(h.observed.completed, 1);
   });
 }
 test('booking in flight ignores double completion and idle, and only successful response completes', async () => {
   const h = await onsite(); await h.pay(); h.mode('waiting'); const complete = h.component('PaymentScreen').props.onPaymentComplete;
   const pending = complete({ method: 'CARD' }); await h.settle(); await complete({ method: 'CARD' }); await h.idle();
-  assert.equal(h.posts.length, 1); assert(h.session.isActive); assert(h.visible('결제 처리 확인이 필요합니다'));
+  assert.equal(h.posts.length, 1); assert(h.session.isActive); assert(h.visible('예약을 처리하고 있습니다'));
+  assert(!h.visible('결제 처리 확인이 필요합니다'));
   h.release(); await pending; await h.settle(); assert(h.component('CheckInComplete'));
 });
 test('definitive booking rejection does not automatically cancel a card approval or erase cash evidence', async () => {

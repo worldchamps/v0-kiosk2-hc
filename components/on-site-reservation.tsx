@@ -167,6 +167,7 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
   const { paymentSession, startPayment, completePayment, cancelPayment, ready, storageError, requireRecovery, savePendingBooking } = usePayment()
   const submittingRef = useRef(false)
   const requestIdRef = useRef("")
+  const freshBookingIdRef = useRef("")
   const [bookingError, setBookingError] = useState("")
   const [paymentNotice, setPaymentNotice] = useState("")
   const [recoveryAtHome, setRecoveryAtHome] = useState(false)
@@ -459,7 +460,9 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
       checkInDate, checkOutDate, stayType: selectedStay?.type,
       stayTypeLabel: selectedStay?.label, payment }) }
     if (!savePendingBooking(booking)) return
-    await submitPendingBooking(booking)
+    freshBookingIdRef.current = requestId
+    try { await submitPendingBooking(booking) }
+    finally { freshBookingIdRef.current = "" }
   }
 
   const handlePaymentCancel = async () => {
@@ -469,6 +472,13 @@ export default function OnSiteReservation({ onNavigate, location, onUpdateSafeCh
 
   if (deliveringCard) return <CheckInCardProgress />
   if (ready === false) return <div role="status" className="p-12 text-2xl">이전 결제 기록을 확인하고 있습니다.</div>
+  if (paymentSession.pendingBooking && paymentSession.pendingBooking.requestId === freshBookingIdRef.current &&
+      (submitting || deliveringCard) && !paymentSession.recoveryRequired && !storageError && !bookingError) {
+    return <div className="kiosk-content-container space-y-8 p-8" role="status">
+      <h1 className="text-4xl font-bold">예약을 처리하고 있습니다</h1>
+      <p className="text-2xl">잠시만 기다려 주세요. 화면을 끄거나 다시 결제하지 마세요.</p>
+    </div>
+  }
   if (hasPaymentProblem && !recoveryAtHome) {
     return <div className="kiosk-content-container space-y-8 p-8" role="alert">
       <h1 className="text-4xl font-bold">결제 처리 확인이 필요합니다</h1>
