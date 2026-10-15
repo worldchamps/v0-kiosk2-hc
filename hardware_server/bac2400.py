@@ -305,7 +305,7 @@ class Bac2400(SerialDevice):
         messages = self.expire_operations()
         self.payout_in_progress  # Expire before a late reply can send/complete a payout.
         validator = tlvs.get(0x1B)
-        valid_validator = validator is not None and len(validator) == 3 and not validator[0] & ~0x0F
+        valid_validator = validator is not None and len(validator) == 3
         counts = tlvs.get(0x18)
         valid_counts = counts is not None and len(counts) == 4
         control = self.pending_acceptor_control
@@ -313,7 +313,7 @@ class Bac2400(SerialDevice):
         if cleared:
             self.last_bill_counts = [0] * 4
             self.unsupported_bill_detected = False
-        if valid_counts and valid_validator:
+        if valid_counts:
             current_counts = list(counts)
             if self.last_bill_counts is None:
                 self.last_bill_counts = current_counts
@@ -330,6 +330,7 @@ class Bac2400(SerialDevice):
                 if unsupported or decreased:
                     logger.critical("BV1 unsupported denomination/counter discontinuity: %s", unsupported)
                     self.unsupported_bill_detected = True
+                    self.acceptor_enabled = False
                     self.acceptor_status = 0x0C
                     self.control_acceptor(False)
                     messages.append({"type": "acceptor_event", "event": 0x0C})
@@ -347,17 +348,16 @@ class Bac2400(SerialDevice):
                 self.acceptor_status = 0x0C
             else:
                 self.acceptor_enabled = bool(flags & 0x01)
+                # Accepted money is reported before a BV1 error so the renderer still collects it.
                 if self.bill_codes:
                     self.acceptor_status = 0x0B
                 elif flags & 0x04:
                     self.acceptor_status = 0x0C
-                elif flags & 0x0A:
-                    self.acceptor_status = 0x04  # Processing; never advertise legacy START_WAIT readiness.
                 else:
                     self.acceptor_status = 0x01
 
-        if control and valid_validator:
-            matches = validator[0] == int(control["enabled"]) and (not control["clear"] or cleared)
+        if control and valid_validator and not validator[0] & 0x04:
+            matches = (validator[0] & 0x01) == int(control["enabled"]) and (not control["clear"] or cleared)
             if matches:
                 messages.append(self._legacy_message("acceptor", 0x4F, 0x4B, 0))
                 self.pending_acceptor_control = None
@@ -366,12 +366,12 @@ class Bac2400(SerialDevice):
             self.pending_acceptor_control = None
 
         payout_counts = tlvs.get(0x15)
-        if payout_counts is not None and len(payout_counts) == 4:
+        if payout_counts is not None and len(payout_counts) in (4, 5):
             self.last_payout_counts = list(payout_counts)
         else:
             payout_counts = None
         statuses = tlvs.get(0x16)
-        if statuses is not None and len(statuses) == 4 and not statuses[self.BD1] & ~0x07:
+        if statuses is not None and len(statuses) in (4, 5):
             self.dispenser_statuses = list(statuses)
         else:
             statuses = None
@@ -385,7 +385,7 @@ class Bac2400(SerialDevice):
 
         operation = self.pending_recovery
         if operation:
-            acceptor_idle = valid_validator and valid_counts and validator[0] in (0, 1) and \
+            acceptor_idle = valid_validator and valid_counts and not validator[0] & 0x04 and \
                 not self.bill_codes and not self.unsupported_bill_detected
             relevant = 0x1B in tlvs if operation["target"] == "acceptor" else any(key in tlvs for key in (0x15, 0x16, 0x17))
             idle = acceptor_idle if operation["target"] == "acceptor" else dispenser_idle
@@ -402,14 +402,14 @@ class Bac2400(SerialDevice):
                     messages.append(self._recovery_result(operation, False))
                     self.pending_recovery = None
             elif idle and operation["phase"] == "verifying":
-                verified = validator[0] == 0 if operation["target"] == "acceptor" else payout_counts[self.BD1] == 0
+                verified = (validator[0] & 0x01) == 0 if operation["target"] == "acceptor" else payout_counts[self.BD1] == 0
                 messages.append(self._recovery_result(operation, verified))
                 self.pending_recovery = None
 
         if self.pending_payout and complete_dispenser:
             count = self.pending_payout["count"]
             bd1_status = self.dispenser_statuses[self.BD1]
-            if bd1_status & 0x07:
+            if bd1_status & 0xF7:
                 logger.error("BD1 cannot dispense (status 0x%02X)", bd1_status)
                 self.payout_uncertain |= self.pending_payout["phase"] == "dispensing"
                 self.pending_payout = None
@@ -444,7 +444,7 @@ class Bac2400(SerialDevice):
             self.pending_dispenser_connection = False
         if self.pending_dispenser_status and complete_dispenser:
             bd1_status = self.dispenser_statuses[self.BD1]
-            state = 0x65 if bd1_status & 0x07 or self.payout_uncertain else 0x6F if self.dispenser_running or self.pending_payout else 0x62
+            state = 0x65 if bd1_status & 0xF7 or self.payout_uncertain else 0x6F if self.dispenser_running or self.pending_payout else 0x62
             messages.append(self._legacy_message("dispenser", 0x73, 0x74, state))
             self.pending_dispenser_status = False
 
