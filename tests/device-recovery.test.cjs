@@ -124,8 +124,9 @@ test('all configured devices reset in order after idle without a money, approval
 })
 
 for (const profile of [{ property: 'property3', building: 'B' }, { property: 'property4', building: '' },
+  { property: 'property3', building: 'B', env: { KIOSK_HARDWARE: 'camp' } },
   { property: 'property3', building: 'A', env: { KIOSK_HARDWARE: 'beach-b' } }]) {
-  test(`${profile.property}/${profile.building}: PMS integrated board reset never sends ONEPLUS, payout or return`, async () => {
+  test(`${profile.property}/${profile.building}/${profile.env?.KIOSK_HARDWARE || 'inferred'}: PMS integrated board reset never sends ONEPLUS, payout or return`, async () => {
     const h = fixture(['acceptor', 'dispenser'], profile)
     h.setIdle(false); await assert.rejects(h.recovery.reset('all'), /busy/); assert.equal(h.calls.length, 0)
     h.setIdle(true); await h.recovery.reset('all')

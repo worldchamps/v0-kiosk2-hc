@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { hardwareProfile, cashBackend, cashPayoutUnit, usesIntegratedCash } = require('../electron/cash-device-profile')
-const { enabled, scopedRoom } = require('../electron/card-key-service')
+const { enabled, scopedRoom, supportsCardKey } = require('../electron/card-key-service')
 
 test('unset hardware retains the three legacy profiles, including Camp and Kariv', () => {
   for (const [property, building, profile, backend] of [
@@ -24,15 +24,37 @@ test('a beach-b machine keeps MULTI3400, integrated cash and 5000-won payout aft
   assert.equal(enabled({ ...env, KIOSK_PROPERTY_ID: 'property3', KIOSK_BUILDING: 'A', CARD_DISPENSER_ENABLED: 'true' }), false)
 })
 
-test('invalid hardware and Camp outside property4 disable devices instead of inferring a replacement', () => {
-  for (const value of ['bad', 'ONEPLUS', ' beach-b ', 'camp']) {
+test('property3 A/B explicitly use Camp hardware with 10000-won BAC-2400 and no card key', () => {
+  const env = { KIOSK_HARDWARE: 'camp', MULTI3400_BD1_VALUE: '5000', CARD_DISPENSER_ENABLED: 'true' }
+  for (const building of ['A', 'B']) {
+    assert.equal(hardwareProfile('property3', building, env), 'camp')
+    assert.equal(cashBackend('property3', building, env), 'bac2400')
+    assert.equal(usesIntegratedCash('property3', building, env), true)
+    assert.equal(cashPayoutUnit('property3', building, env), 10000)
+    assert.equal(supportsCardKey('property3', building, env), false)
+    assert.equal(enabled({ ...env, KIOSK_PROPERTY_ID: 'property3', KIOSK_BUILDING: building }), false)
+  }
+})
+
+test('Camp outside property3/property4 disables devices instead of inferring a replacement', () => {
+  const env = { KIOSK_HARDWARE: 'camp' }
+  for (const property of ['property1', 'property2']) {
+    assert.equal(hardwareProfile(property, 'B', env), null)
+    assert.equal(cashBackend(property, 'B', env), null)
+    assert.equal(usesIntegratedCash(property, 'B', env), false)
+    assert.equal(supportsCardKey(property, 'B', env), false)
+  }
+  assert.equal(hardwareProfile('property4', '', env), 'camp')
+})
+
+test('invalid hardware disables devices instead of inferring a replacement', () => {
+  for (const value of ['bad', 'ONEPLUS', ' beach-b ']) {
     const env = { KIOSK_HARDWARE: value }
     assert.equal(hardwareProfile('property3', 'B', env), null)
     assert.equal(cashBackend('property3', 'B', env), null)
     assert.equal(usesIntegratedCash('property3', 'B', env), false)
     assert.equal(enabled({ ...env, KIOSK_PROPERTY_ID: 'property1', CARD_DISPENSER_ENABLED: 'true' }), false)
   }
-  assert.equal(hardwareProfile('property4', '', { KIOSK_HARDWARE: 'camp' }), 'camp')
 })
 
 test('ONEPLUS card support follows the machine while room access follows its sales building', () => {

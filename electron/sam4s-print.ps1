@@ -149,7 +149,7 @@ $document = [System.Drawing.Printing.PrintDocument]::new()
 try {
   $document.PrinterSettings.PrinterName = $PrinterName
   if (-not $document.PrinterSettings.IsValid) { throw "Printer is not valid: $PrinterName" }
-  $document.DocumentName = "Property4 SAM4S Receipt"
+  $document.DocumentName = "Kiosk SAM4S Receipt"
   $document.PrintController = [System.Drawing.Printing.StandardPrintController]::new()
   $document.DefaultPageSettings.Margins = [System.Drawing.Printing.Margins]::new(0, 0, 0, 0)
   $document.OriginAtMargins = $false

@@ -475,8 +475,8 @@ test('receipt without change owed remains byte-identical to 1.3.43; unpaid chang
   assert.equal(owed.filter(command => command[1] === note + '\n').length, 1)
   assert.equal(hash(owed.filter(command => command[1] !== note + '\n')), hash(original))
 })
-test('SAM4S and WOOSIM IPC receive change owed; unified receipt mapping adds no fields when absent', async () => {
-  for (const [property, backend] of [['property4', 'sam4s'], ['property3', 'woosim']]) {
+test('SAM4S and WOOSIM IPC receive change owed and property-specific hotel data', async () => {
+  for (const [property, backend] of [['property4', 'sam4s'], ['property3', 'woosim'], ['property3', 'sam4s']]) {
     const received = []
     const p = printer({ getReceiptPrinterStatus: async () => ({ backend, connected: true }),
       [backend === 'sam4s' ? 'printToSam4s' : 'printToWoosim']: async data => { received.push(data); return { success: true } },
@@ -490,6 +490,8 @@ test('SAM4S and WOOSIM IPC receive change owed; unified receipt mapping adds no 
       assert.equal(Object.hasOwn(mapped.at(-1), 'changeOwed'), changeOwed !== undefined)
       assert.equal(Object.hasOwn(received.at(-1), 'changeOwed'), changeOwed !== undefined)
       assert.equal(received.at(-1).changeOwed, changeOwed)
+      assert.equal(received.at(-1).hotelName, property === 'property4' ? 'THE CAMP STAY' : 'THE BEACH STAY')
+      assert.equal(received.at(-1).business.name, property === 'property4' ? '더캠프스테이' : '더 비치스테이')
     }
   }
 })
@@ -599,6 +601,76 @@ test("Woosim IPC rejects another building before reaching the Windows printer", 
   assert.match(result.error, /B동/)
 })
 
+test('SAM4S automatically selects GIANT and GCUBE models; an explicit name requires an exact match', () => {
+  const { findSam4sPrinter } = require('../electron/sam4s-receipt')
+  const other = [{ name: 'WOOSIM WSP-CP383' }, { name: 'GIANT-100' }, { name: 'SAM4S ELLIX' }]
+  assert.equal(findSam4sPrinter(other), null)
+  for (const name of ['SAM4S GIANT-100', 'SAM4S Giant 100', 'SAM4S GCUBE-100', 'SAM4S G-CUBE', 'SAM4S G CUBE']) {
+    const printer = { name }
+    assert.equal(findSam4sPrinter([...other, printer]), printer)
+  }
+  const giant = { name: 'SAM4S GIANT-100' }, gcube = { name: 'SAM4S GCUBE-100' }
+  const renamed = { name: 'Receipt queue', displayName: 'SAM4S Giant 100' }
+  assert.equal(findSam4sPrinter([...other, renamed]), renamed)
+  assert.equal(findSam4sPrinter([giant, gcube], ' sam4s gcube-100 '), gcube)
+  assert.equal(findSam4sPrinter([giant, renamed], 'Receipt queue'), renamed)
+  assert.equal(findSam4sPrinter([giant, renamed], 'SAM4S Giant 100'), renamed)
+  assert.equal(findSam4sPrinter([giant, gcube], 'SAM4S GIANT'), null)
+  assert.equal(findSam4sPrinter([giant, gcube], 'missing printer'), null)
+})
+
+test('SAM4S IPC selects GIANT for property3 Camp hardware and rejects Woosim and foreign properties', async () => {
+  const source = fs.readFileSync(path.join(root, 'electron/main.js'), 'utf8')
+  const block = source.slice(source.indexOf('const usesWoosim ='), source.indexOf('ipcMain.handle("reconnect-printer"'))
+  for (const [property, building, hardware, backend] of [
+    ['property3', 'A', 'camp', 'sam4s'], ['property3', 'B', 'camp', 'sam4s'],
+    ['property4', '', undefined, 'sam4s'], ['property3', 'B', undefined, 'woosim'],
+    ['property1', 'C', 'camp', 'disabled'], ['property2', '', 'camp', 'disabled'],
+    ['property1', 'D', undefined, 'bixolon'],
+  ]) {
+    const handlers = new Map(), prints = []; let probes = 0
+    const driver = property === 'property4' ? 'SAM4S GCUBE-100' : 'SAM4S GIANT-100'
+    vm.runInNewContext(block, { ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+      KIOSK_PROPERTY_ID: property, process: { env: { KIOSK_BUILDING: building, KIOSK_HARDWARE: hardware } },
+      ...require('../electron/cash-device-profile'), ...require('../electron/sam4s-receipt'),
+      Buffer, Date, console: { log() {}, error() {} }, lastPrinterResult: null, deviceRecovery: { fault() {} },
+      printSam4sWithWindows: async (name, lines, route = 'sam4s') => { prints.push({ name, lines, route }); return 'OK' },
+    })
+    const event = { sender: { getPrintersAsync: async () => { probes++; return [{ name: 'WOOSIM WSP-CP383' }, { name: driver }] } } }
+    const status = await handlers.get('receipt-printer-status')(event)
+    assert.equal(status.backend, backend)
+    const receipt = { roomNumber: property === 'property4' ? 'Camp101' : `${building}101`,
+      hotelName: property === 'property4' ? 'THE CAMP STAY' : 'THE BEACH STAY' }
+    assert.equal((await handlers.get('print-to-sam4s')(event, receipt)).success, backend === 'sam4s')
+    assert.equal(prints.length, backend === 'sam4s' ? 1 : 0)
+    if (backend === 'sam4s') {
+      assert.equal(status.connected, true)
+      assert.equal(prints[0].name, driver)
+      assert.equal(prints[0].route, 'sam4s')
+      assert(prints[0].lines.some(line => line.text === receipt.hotelName))
+      assert.equal((await handlers.get('print-to-woosim')(event, receipt)).success, false)
+    }
+    assert.equal(probes, backend === 'sam4s' ? 2 : backend === 'woosim' ? 1 : 0)
+  }
+})
+
+test('printer model and status follow the resolved backend for both Camp and Beach', () => {
+  for (const property of ['property3', 'property4']) {
+    for (const [backend, model, label] of [
+      ['sam4s', 'SAM4S_WINDOWS', 'SAM4S GCUBE·GIANT (Windows)'],
+      ['woosim', 'WOOSIM_WINDOWS', 'WOOSIM WSP-CP383 (Windows)'],
+      [null, 'HW_SERVER', 'Bixolon (HW Server)'],
+    ]) {
+      const { api } = load('lib/printer-utils-unified.ts', {}, {
+        './property-utils': { getKioskPropertyId: () => property, propertyUsesPrinter: () => true },
+        '@/lib/printer-utils': { getWindowsPrinterBackend: () => backend, isPrinterConnected: () => true },
+      })
+      assert.equal(api.getPrinterModel(), label)
+      assert.equal(api.getPrinterStatus().model, model)
+    }
+  }
+})
+
 test('Woosim on the moved A machine prints only its A rooms; invalid hardware never probes a Windows printer', async () => {
   const source = fs.readFileSync(path.join(root, 'electron/main.js'), 'utf8')
   const block = source.slice(source.indexOf('const usesWoosim ='), source.indexOf('ipcMain.handle("print-to-sam4s"'))
@@ -624,6 +696,7 @@ test('Windows printer test pages follow sales building on moved hardware while C
     ['property3', 'A', 'woosim', 'A101'], ['property3', 'B', 'woosim', 'B101'],
     ['property1', 'C', 'woosim', 'C101'], ['property1', 'D', 'woosim', 'D101'],
     ['property1', null, 'woosim', 'C101'], ['property4', null, 'sam4s', 'Camp101'],
+    ['property3', 'A', 'sam4s', 'A101'], ['property3', 'B', 'sam4s', 'B101'],
     ['property3', 'A', 'disabled', null],
   ]) {
     const printed = []; let queries = 0
@@ -633,23 +706,24 @@ test('Windows printer test pages follow sales building on moved hardware while C
     }, new Set(), { fetch: async url => { assert.equal(url, '/api/kiosk-config'); queries++; return { ok: true, json: async () => ({ property, building }) } } })
     assert.equal(await api.printTestPage(), expected !== null)
     assert.deepEqual(printed, expected ? [expected] : [])
-    assert.equal(queries, backend === 'woosim' ? 1 : 0)
+    assert.equal(queries, ['woosim', 'sam4s'].includes(backend) && property !== 'property4' ? 1 : 0)
   }
 })
 
 test('Windows printer faults expose short PMS codes instead of printer names or process errors', async () => {
   const source = fs.readFileSync(path.join(root, 'electron/main.js'), 'utf8')
-  for (const [property, backend, roomNumber] of [['property3', 'woosim', 'B101'], ['property4', 'sam4s', 'Camp101']]) {
+  for (const [property, backend, roomNumber, hardware] of [['property3', 'woosim', 'B101'], ['property4', 'sam4s', 'Camp101'],
+    ['property3', 'sam4s', 'B101', 'camp']]) {
     const handlers = new Map(), faults = []
     let installed = false, statusBroken = false, printBroken = false
-    const driver = backend === 'woosim' ? 'WOOSIM WSP-CP383' : 'SAM4S GCUBE'
+    const driver = backend === 'woosim' ? 'WOOSIM WSP-CP383' : property === 'property3' ? 'SAM4S GIANT-100' : 'SAM4S GCUBE'
     const frame = { url: 'http://localhost:3000' }
     const event = { senderFrame: frame, sender: { mainFrame: frame, getPrintersAsync: async () => {
       if (statusBroken) throw Error('C:\\Windows\\internal printer path')
       return [{ name: installed ? driver : 'Microsoft XPS Document Writer' }]
     } } }
     const context = { ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
-      KIOSK_PROPERTY_ID: property, process: { env: { KIOSK_BUILDING: 'B' } }, Buffer, Date, URL,
+      KIOSK_PROPERTY_ID: property, process: { env: { KIOSK_BUILDING: 'B', KIOSK_HARDWARE: hardware } }, Buffer, Date, URL,
       console: { log() {}, error() {} }, lastPrinterResult: null,
       deviceRecovery: { fault: (key, reason) => faults.push([key, reason]) },
       ...require('../electron/sam4s-receipt'),

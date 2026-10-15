@@ -56,6 +56,31 @@ class FakeClient:
 
 
 class HardwareContracts(unittest.IsolatedAsyncioTestCase):
+    def test_property3_camp_uses_BAC2400_9600_8E1_without_multi3400_woosim_or_oneplus(self):
+        for building in ("A", "B"):
+            with self.subTest(building=building):
+                isolated = importlib.util.module_from_spec(spec)
+                local_env = (f"KIOSK_PROPERTY_ID=property3\nKIOSK_BUILDING={building}\nKIOSK_HARDWARE=camp\n"
+                             "BAC2400_PORT=COM9\nMULTI3400_BD1_VALUE=5000\nCARD_DISPENSER_ENABLED=true\n"
+                             "CARD_DISPENSER_PORT=COM8\n")
+                with patch("builtins.open", mock_open(read_data=local_env)), patch.dict("os.environ", {"CARD_BRIDGE_TOKEN": "a" * 64}, clear=True):
+                    spec.loader.exec_module(isolated)
+                self.assertEqual(isolated.HARDWARE_PROFILE, "camp")
+                self.assertTrue(isolated.USE_BAC2400)
+                self.assertFalse(isolated.USE_MULTI3400)
+                self.assertFalse(isolated.USE_WOOSIM)
+                self.assertIsInstance(isolated.bac2400, Bac2400)
+                self.assertEqual(isolated.bac2400.port, "COM9")
+                with patch.object(serial, "Serial", return_value=Mock(is_open=True)) as fake_serial:
+                    self.assertTrue(isolated.bac2400.connect())
+                    self.assertEqual(fake_serial.call_args.args, ("COM9", 9600))
+                    self.assertEqual(fake_serial.call_args.kwargs["parity"], "E")
+                    self.assertEqual(fake_serial.call_args.kwargs.get("stopbits", 1), 1)
+                    self.assertEqual(fake_serial.call_args.kwargs.get("bytesize", 8), 8)
+                for device in (isolated.multi3400, isolated.acceptor, isolated.dispenser, isolated.printer, isolated.card_dispenser):
+                    self.assertIsNone(device)
+        serial.Serial.assert_not_called()
+
     def test_moved_beach_b_hardware_loads_from_local_env_and_uses_8N1_without_oneplus(self):
         isolated = importlib.util.module_from_spec(spec)
         local_env = "KIOSK_PROPERTY_ID=property3\nKIOSK_BUILDING=A\nKIOSK_HARDWARE=beach-b\nCARD_DISPENSER_ENABLED=true\n"
@@ -79,9 +104,10 @@ class HardwareContracts(unittest.IsolatedAsyncioTestCase):
         serial.Serial.assert_not_called()
 
     async def test_invalid_hardware_and_foreign_camp_disable_all_devices_and_reject_commands(self):
-        for profile in ("unknown", "ONEPLUS", " beach-b ", "camp"):
+        for property_id, profile in [("property3", value) for value in ("unknown", "ONEPLUS", " beach-b ")] + [
+                ("property1", "camp"), ("property2", "camp")]:
             isolated = importlib.util.module_from_spec(spec)
-            env = {"KIOSK_PROPERTY_ID": "property3", "KIOSK_BUILDING": "A", "KIOSK_HARDWARE": profile,
+            env = {"KIOSK_PROPERTY_ID": property_id, "KIOSK_BUILDING": "A", "KIOSK_HARDWARE": profile,
                    "CARD_DISPENSER_ENABLED": "true", "CARD_BRIDGE_TOKEN": "a" * 64}
             with patch("builtins.open", side_effect=FileNotFoundError), patch.dict("os.environ", env, clear=True):
                 spec.loader.exec_module(isolated)
@@ -169,7 +195,8 @@ class HardwareContracts(unittest.IsolatedAsyncioTestCase):
         serial.Serial.assert_not_called()
 
     async def test_B_and_Camp_route_recovery_through_the_real_adapter_with_zero_payout_or_return(self):
-        for env in [{"KIOSK_PROPERTY_ID": "property3", "KIOSK_BUILDING": "B"}, {"KIOSK_PROPERTY_ID": "property4"}]:
+        for env in [{"KIOSK_PROPERTY_ID": "property3", "KIOSK_BUILDING": "B"}, {"KIOSK_PROPERTY_ID": "property4"},
+                    {"KIOSK_PROPERTY_ID": "property3", "KIOSK_BUILDING": "B", "KIOSK_HARDWARE": "camp"}]:
             isolated = importlib.util.module_from_spec(spec)
             with patch("builtins.open", side_effect=FileNotFoundError), patch.dict("os.environ", env, clear=True):
                 spec.loader.exec_module(isolated)

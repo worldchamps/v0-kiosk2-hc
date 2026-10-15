@@ -106,9 +106,9 @@ export async function printTestPage(): Promise<boolean> {
   const property = getKioskPropertyId()
   const windowsStatus = typeof window !== "undefined" ? await window.electronAPI?.getReceiptPrinterStatus?.() : null
   if (windowsStatus?.backend === "disabled") return false
-  if (property === "property4" || windowsStatus?.backend === "woosim") {
+  if (windowsStatus?.backend === "sam4s" || windowsStatus?.backend === "woosim") {
     let roomNumber = "Camp101"
-    if (windowsStatus?.backend === "woosim") {
+    if (property !== "property4") {
       const response = await fetch("/api/kiosk-config", { cache: "no-store" })
       const scope = await response.json()
       if (!response.ok || scope.property !== property || !["A", "B", "C", "D", null].includes(scope.building)) return false
@@ -135,13 +135,13 @@ export function setSimplePrintMode(simple: boolean): void {
 }
 export function getSimplePrintMode(): boolean { return false }
 export function getPrinterModel(): string {
-  return getKioskPropertyId() === "property4" ? "SAM4S GCUBE (Windows)"
+  return HardwarePrinter.getWindowsPrinterBackend() === "sam4s" ? "SAM4S GCUBE·GIANT (Windows)"
     : HardwarePrinter.getWindowsPrinterBackend() === "woosim" ? "WOOSIM WSP-CP383 (Windows)" : "Bixolon (HW Server)"
 }
 export function getPrinterStatus(): any {
   return {
     connected: isPrinterConnected(),
-    model: getKioskPropertyId() === "property4" ? "SAM4S_GCUBE_WINDOWS"
+    model: HardwarePrinter.getWindowsPrinterBackend() === "sam4s" ? "SAM4S_WINDOWS"
       : HardwarePrinter.getWindowsPrinterBackend() === "woosim" ? "WOOSIM_WINDOWS" : "HW_SERVER",
     simpleMode: false,
   }

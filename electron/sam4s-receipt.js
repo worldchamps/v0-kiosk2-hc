@@ -220,7 +220,7 @@ function findSam4sPrinter(printers, configuredName = "") {
 
   return printers.find((printer) => {
     const name = `${printer.name || ""} ${printer.displayName || ""}`
-    return /sam4s/i.test(name) && /g[- ]?cube|gcube/i.test(name)
+    return /sam4s/i.test(name) && /g[- ]?cube|gcube|giant/i.test(name)
   }) || null
 }
 

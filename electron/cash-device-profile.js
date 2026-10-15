@@ -1,7 +1,7 @@
 function hardwareProfile(property, building, env = {}) {
   const profile = env.KIOSK_HARDWARE || (property === 'property4' ? 'camp'
     : property === 'property3' && building === 'B' ? 'beach-b' : 'oneplus')
-  if (!['oneplus', 'camp', 'beach-b'].includes(profile) || profile === 'camp' && property !== 'property4') return null
+  if (!['oneplus', 'camp', 'beach-b'].includes(profile) || profile === 'camp' && !['property3', 'property4'].includes(property)) return null
   return profile
 }
 

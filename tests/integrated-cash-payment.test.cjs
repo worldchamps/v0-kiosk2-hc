@@ -56,19 +56,23 @@ test('B books every received bill; Camp rejects small notes; unknown codes requi
   }
 })
 
-test('cash backend comes from the native property and building identity', async () => {
+test('cash backend and small-bill policy come from the native hardware configuration', async () => {
   const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8')
   const block = source.slice(source.indexOf('ipcMain.handle("get-hardware-status"'), source.indexOf('ipcMain.handle("disconnect-printer"'))
-  for (const [property, building, expected] of [['property3', 'B', 'multi3400'], ['property4', '', 'bac2400'],
-    ['property3', 'A', 'oneplus'], ['property1', 'C', 'oneplus'], ['property1', 'D', 'oneplus'], ['property2', '', 'oneplus']]) {
+  for (const [property, building, expected, hardware] of [['property3', 'B', 'multi3400'], ['property4', '', 'bac2400'],
+    ['property3', 'A', 'oneplus'], ['property1', 'C', 'oneplus'], ['property1', 'D', 'oneplus'], ['property2', '', 'oneplus'],
+    ['property3', 'B', 'bac2400', 'camp'], ['property3', 'A', 'bac2400', 'camp']]) {
     let handler
     vm.runInNewContext(block, { ipcMain: { handle: (_name, fn) => { handler = fn } },
-      hardwareBridge: { isConnected: true }, KIOSK_PROPERTY_ID: property, process: { env: { KIOSK_BUILDING: building } },
+      hardwareBridge: { isConnected: true }, KIOSK_PROPERTY_ID: property, process: { env: { KIOSK_BUILDING: building, KIOSK_HARDWARE: hardware } },
       cashBoardInfo: null, ...require('../electron/cash-device-profile'),
     })
     const status = await handler()
     assert.equal(status.cashBackend, expected)
     assert.equal(status.cashPayoutUnit, expected === 'multi3400' ? 5000 : 10000)
+    const fields = await screenProfile(status.cashBackend, status.cashPayoutUnit)
+    assert.equal(fields.largeBillsOnly, expected === 'bac2400')
+    assert.equal(fields.integratedCash, expected !== 'oneplus')
   }
 })
 
@@ -197,7 +201,7 @@ test('moved hardware is reported natively and invalid hardware fails the cash pr
   const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8')
   const block = source.slice(source.indexOf('ipcMain.handle("get-hardware-status"'), source.indexOf('ipcMain.handle("disconnect-printer"')) +
     source.slice(source.indexOf("ipcMain.handle('cash:available'"), source.indexOf('const cashDiagnostics ='))
-  for (const [configured, expected, available] of [['beach-b', 'multi3400', true], ['bad', null, false], ['camp', null, false]]) {
+  for (const [configured, expected, available] of [['beach-b', 'multi3400', true], ['bad', null, false], ['camp', 'bac2400', true]]) {
     const handlers = new Map()
     vm.runInNewContext(block, { ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
       global: {}, KIOSK_PROPERTY_ID: 'property3', process: { env: { KIOSK_BUILDING: 'A', KIOSK_HARDWARE: configured } },
@@ -205,7 +209,7 @@ test('moved hardware is reported natively and invalid hardware fails the cash pr
     const status = await handlers.get('get-hardware-status')()
     assert.equal(status.cashBackend, expected)
     assert.equal(status.connected, available)
-    if (available) assert.equal(status.cashPayoutUnit, 5000)
+    if (available) assert.equal(status.cashPayoutUnit, expected === 'multi3400' ? 5000 : 10000)
     assert.equal(handlers.get('cash:available')(), available)
   }
 })

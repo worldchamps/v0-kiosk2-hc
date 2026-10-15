@@ -109,7 +109,7 @@ export default function DeviceSettings() {
         <label className="block space-y-1">Windows에 설치된 {current.hardwareProfile === "camp" ? "SAM4S" : "WOOSIM WSP-CP383"} 프린터 이름
           <Input list="kiosk-device-printers" value={current.hardwareProfile === "camp" ? values.sam4sPrinterName : values.woosimPrinterName}
             onChange={event => set(current.hardwareProfile === "camp" ? "sam4sPrinterName" : "woosimPrinterName", event.target.value)}
-            placeholder={current.hardwareProfile === "camp" ? "비우면 SAM4S GCUBE 자동 검색" : "비우면 WSP-CP383 자동 검색"} autoComplete="off" />
+            placeholder={current.hardwareProfile === "camp" ? "비우면 SAM4S GCUBE·GIANT 자동 검색" : "비우면 WSP-CP383 자동 검색"} autoComplete="off" />
           <span className="block text-sm text-gray-600">프린터의 COM 포트는 Windows 프린터 속성에서 설정합니다.</span>
         </label>
         <datalist id="kiosk-device-printers">

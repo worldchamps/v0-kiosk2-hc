@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const vm = require('node:vm')
 const ts = require('typescript')
-const { view } = require('../electron/device-settings')
+const { view, updatedConfig } = require('../electron/device-settings')
 
 function screen(config) {
   const states = [], saved = []
@@ -60,5 +60,39 @@ test('administrator sees only same-property building choices and changing B to A
     assert.equal(h.saved[0].password, 'synthetic-admin')
     assert.equal('property' in h.saved[0].values, false)
     assert.match(JSON.stringify(h.render()), /키오스크가 다시 시작됩니다/)
+  }
+})
+
+test('property3 Camp hardware displays and saves only the integrated board and SAM4S printer fields', async () => {
+  for (const building of ['A', 'B']) {
+    const config = { registered: true, property: 'property3', env: {
+      KIOSK_PROPERTY_ID: 'property3', KIOSK_BUILDING: building, KIOSK_HARDWARE: 'camp',
+      BAC2400_PORT: 'COM5', SAM4S_PRINTER_NAME: 'SAM4S GIANT-100',
+    } }
+    const h = screen(config)
+    await h.find(h.render(), node => node.type === 'Button')[0].props.onClick()
+    const rendered = h.render()
+    assert.match(JSON.stringify(rendered), /현금 통합 보드/)
+    assert.doesNotMatch(JSON.stringify(rendered), /WOOSIM|SNR-K750L|Bixolon 프린터/)
+    const board = h.find(rendered, node => node.type === 'label' && JSON.stringify(node).includes('BAC-2400 / 3400 통합 보드'))[0]
+    h.find(board, node => node.type === 'Input')[0].props.onChange({ target: { value: 'com9' } })
+    const printer = h.find(rendered, node => node.type === 'Input' && node.props.list === 'kiosk-device-printers')[0]
+    assert.equal(printer.props.value, 'SAM4S GIANT-100')
+    assert.equal(printer.props.placeholder, '비우면 SAM4S GCUBE·GIANT 자동 검색')
+    printer.props.onChange({ target: { value: 'SAM4S Giant 100' } })
+    await h.find(h.render(), node => node.type === 'Button' && node.props.children === '장비 설정 저장')[0].props.onClick()
+    const saved = updatedConfig(config, h.saved[0].values)
+    assert.equal(saved.env.BAC2400_PORT, 'COM9')
+    assert.equal(saved.env.SAM4S_PRINTER_NAME, 'SAM4S Giant 100')
+    assert.equal(saved.env.KIOSK_HARDWARE, 'camp')
+    assert.equal(saved.env.KIOSK_BUILDING, building)
+    for (const key of ['WOOSIM_PRINTER_NAME', 'PRINTER_PORT', 'ACCEPTOR_PORT', 'DISPENSER_PORT', 'CARD_DISPENSER_PORT']) {
+      assert.equal(saved.env[key], undefined)
+    }
+    assert.equal(view(saved).hardwareProfile, 'camp')
+    assert.equal(view(saved).cardKeySupported, false)
+    assert.equal(view(saved).values.bac2400Port, 'COM9')
+    assert.equal(view(saved).values.sam4sPrinterName, 'SAM4S Giant 100')
+    assert.throws(() => updatedConfig(config, { ...h.saved[0].values, cardDispenserEnabled: 'true' }), /카드키/)
   }
 })

@@ -993,7 +993,7 @@ ipcMain.handle("print-to-woosim", async (event, receipt) => {
 
 ipcMain.handle("print-to-sam4s", async (event, receipt) => {
   if (!usesSam4s()) {
-    return { success: false, error: "SAM4S 인쇄는 property4에서만 사용할 수 있습니다." }
+    return { success: false, error: "SAM4S 인쇄는 camp 장비 구성에서만 사용할 수 있습니다." }
   }
 
   if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
