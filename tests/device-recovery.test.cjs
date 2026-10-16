@@ -96,6 +96,54 @@ test('creation, idle time and observed faults never probe or reset devices', t =
   assert.equal(h.restarts, 0)
 })
 
+test('bridge reconnection clears only bridge-disconnected faults without device commands', () => {
+  const keys = ['acceptor', 'dispenser', 'printer', 'cardDispenser']
+  const h = fixture(keys)
+  for (const key of keys) h.recovery.fault(key, 'bridge_disconnected')
+  h.recovery.reconnected(keys)
+  for (const key of keys) assert.deepEqual(h.recovery.hardware[key], {
+    state: 'ok', reason: null, lastResetAt: h.now(), lastResetResult: 'ok',
+  })
+  assert.deepEqual(h.calls, [])
+  assert.deepEqual(h.busyChanges, [])
+  assert.equal(h.restarts, 0)
+})
+
+test('bridge reconnection preserves needs_attention for every other reason', () => {
+  const h = fixture(['acceptor'])
+  for (const reason of ['device_error', 'acceptor_stop_unconfirmed', 'card_present',
+    'bridge_disconnected_extra', 'BRIDGE_DISCONNECTED']) {
+    h.recovery.fault('acceptor', reason)
+    const before = { ...h.recovery.hardware.acceptor }
+    h.recovery.reconnected(['acceptor'])
+    assert.deepEqual(h.recovery.hardware.acceptor, before)
+  }
+  assert.deepEqual(h.calls, [])
+})
+
+test('bridge reconnection preserves recovering and already-ok states', () => {
+  const h = fixture(['printer'])
+  for (const state of ['recovering', 'ok']) for (const reason of [null, 'bridge_disconnected']) {
+    h.recovery.hardware.printer = { ...h.recovery.hardware.printer, state, reason }
+    const before = { ...h.recovery.hardware.printer }
+    h.recovery.reconnected(['printer'])
+    assert.deepEqual(h.recovery.hardware.printer, before)
+  }
+  assert.deepEqual(h.calls, [])
+})
+
+test('bridge reconnection ignores unconfigured keys and devices outside the supplied list', () => {
+  const h = fixture(['acceptor', 'cardTerminal'])
+  h.recovery.fault('acceptor', 'bridge_disconnected')
+  h.recovery.fault('cardTerminal', 'bridge_disconnected')
+  const terminalBefore = { ...h.recovery.hardware.cardTerminal }
+  h.recovery.reconnected(['printer', 'missing', 'toString', '__proto__', 'acceptor'])
+  assert.deepEqual(Object.keys(h.recovery.hardware), ['acceptor', 'cardTerminal'])
+  assert.equal(h.recovery.hardware.acceptor.state, 'ok')
+  assert.deepEqual(h.recovery.hardware.cardTerminal, terminalBefore)
+  assert.deepEqual(h.calls, [])
+})
+
 test('main has no recovery tick call or recovery interval', () => {
   const fs = require('node:fs'), path = require('node:path')
   const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8')

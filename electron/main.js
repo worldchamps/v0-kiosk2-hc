@@ -499,7 +499,12 @@ function createWindow() {
 
       // Hardware Server Bridge initialization
       hardwareBridge.onStatus((status) => {
-        if (!status.connected) for (const key of bridgeDevices) deviceRecovery?.fault(key, 'bridge_disconnected')
+        if (status.connected) {
+          deviceRecovery?.reconnected(bridgeDevices)
+          const cardStatus = cardKey.status()
+          if (deviceRecovery?.hardware.cardDispenser?.state === 'ok' && cardStatus.state === 'needs_attention')
+            deviceRecovery.fault('cardDispenser', cardStatus.reason)
+        } else for (const key of bridgeDevices) deviceRecovery?.fault(key, 'bridge_disconnected')
         cashTrace.write('bridge', { event: status.connected ? 'connected' : 'disconnected' })
         if (mainWindow && mainWindow.webContents) {
           mainWindow.webContents.send("bill-acceptor-status", { connected: status.connected })

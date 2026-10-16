@@ -8,6 +8,55 @@ const ts = require("typescript")
 const root = path.join(__dirname, "..")
 const packet = (a, b, c) => [0x24, a, b, c, (a + b + c) & 0xff]
 
+for (const cardState of ['ok', 'needs_attention']) {
+  test(`main bridge status reconnects devices and preserves card service ${cardState}`, () => {
+    const source = fs.readFileSync(path.join(root, 'electron/main.js'), 'utf8')
+    const block = source.slice(source.indexOf('hardwareBridge.onStatus((status) => {'),
+      source.indexOf('hardwareBridge.onMessage((msg) => {'))
+    const bridgeDevices = ['acceptor', 'dispenser', 'printer', 'cardDispenser']
+    const recovery = require('../electron/device-recovery').createDeviceRecovery({
+      configured: [...bridgeDevices, 'cardTerminal'], now: () => 1000,
+    })
+    let onStatus
+    const messages = [], reconnected = []
+    vm.runInNewContext(block, {
+      hardwareBridge: { onStatus: callback => { onStatus = callback } },
+      bridgeDevices,
+      deviceRecovery: { ...recovery, reconnected(keys) { reconnected.push(keys); recovery.reconnected(keys) } },
+      cardKey: { status: () => ({ state: cardState, reason: cardState === 'needs_attention' ? 'card_present' : null }) },
+      cashTrace: { write() {} },
+      mainWindow: { webContents: { send: (name, status) => messages.push([name, status.connected]) } },
+    })
+    onStatus({ connected: false })
+    assert.deepEqual(reconnected, [])
+    for (const key of bridgeDevices) {
+      assert.equal(recovery.hardware[key].state, 'needs_attention')
+      assert.equal(recovery.hardware[key].reason, 'bridge_disconnected')
+    }
+    recovery.fault('acceptor', 'acceptor_stop_unconfirmed')
+    onStatus({ connected: true })
+    assert.deepEqual(reconnected, [bridgeDevices])
+    assert.equal(recovery.hardware.acceptor.reason, 'acceptor_stop_unconfirmed')
+    for (const key of ['dispenser', 'printer']) {
+      assert.equal(recovery.hardware[key].state, 'ok')
+      assert.equal(recovery.hardware[key].reason, null)
+    }
+    assert.equal(recovery.hardware.cardDispenser.state, cardState)
+    assert.equal(recovery.hardware.cardDispenser.reason, cardState === 'needs_attention' ? 'card_present' : null)
+    assert.equal(recovery.hardware.cardTerminal.lastResetAt, null)
+    assert.deepEqual(messages, [
+      ['bill-acceptor-status', false], ['bill-dispenser-status', false],
+      ['bill-acceptor-status', true], ['bill-dispenser-status', true],
+    ])
+    for (const [state, reason] of [['needs_attention', 'device_error'], ['recovering', 'bridge_disconnected']]) {
+      recovery.hardware.cardDispenser = { ...recovery.hardware.cardDispenser, state, reason }
+      const before = { ...recovery.hardware.cardDispenser }
+      onStatus({ connected: true })
+      assert.deepEqual(recovery.hardware.cardDispenser, before)
+    }
+  })
+}
+
 // Real renderer utilities, fake IPC only. No Electron app, network, COM or printer is opened.
 function load(relative, electronAPI, dependencies = {}, timers = new Set(), runtime = {}) {
   const source = fs.readFileSync(path.join(root, relative), "utf8")

@@ -137,6 +137,12 @@ function createDeviceRecovery({ configured, property, building, env = {}, bridge
   }
   return { hardware, reset, isBusy: () => busy,
     ready(key) { if (hardware[key]) update(key, 'ok', null, 'ok') },
+    reconnected(keys) {
+      for (const key of keys) {
+        if (Object.hasOwn(hardware, key) && hardware[key].state === 'needs_attention' &&
+          hardware[key].reason === clean('bridge_disconnected')) this.ready(key)
+      }
+    },
     fault(key, reason = 'device_error') {
       if (hardware[key]) hardware[key] = { ...hardware[key], state: 'needs_attention', reason: clean(reason) }
     },
