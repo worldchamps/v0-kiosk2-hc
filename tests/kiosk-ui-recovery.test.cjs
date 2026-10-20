@@ -34,7 +34,9 @@ function load(file, extra = {}, globals = {}) {
   const compiled = ts.transpileModule(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
-  vm.runInNewContext(compiled, { exports, require(name) { assert(name in deps, `Unexpected dependency ${name}`); return deps[name]; },
+  vm.runInNewContext(compiled, { exports, require(name) {
+    if (name === '@/lib/reservation-collection' && !(name in deps)) return load('lib/reservation-collection.ts', {}, globals).exports;
+    assert(name in deps, `Unexpected dependency ${name}`); return deps[name]; },
     console: { log() {}, warn() {}, error() {} }, Date, URL, URLSearchParams, AbortSignal, ...globals });
   let tree;
   return { exports, effects, renderEffects, callbacks,
@@ -690,7 +692,7 @@ for (const action of ['completion', 'cancellation']) {
 }
 
 async function onsite(stay = 'shortStay', scenario = {}) {
-  let idle, responseMode = scenario.responseMode || 'success', release, roomLookupFails = false, roomPayload; const posts = [], intervals = [], timers = [];
+  let idle, responseMode = scenario.responseMode || 'success', release, roomLookupFails = false, roomPayload; const posts = [], collectionPosts = [], intervals = [], timers = [];
   const session = { isActive: false, acceptedAmount: 0, ...scenario.session };
   const observed = { cancelledApprovals: 0, completed: 0 };
   const payment = { paymentSession: session, ready: true, storageError: '',
@@ -711,6 +713,10 @@ async function onsite(stay = 'shortStay', scenario = {}) {
   }, { setTimeout: (fn, delay) => { timers.push({ fn, delay }); return timers.length }, clearTimeout() {}, window: { crypto: { randomUUID }, setInterval: fn => { intervals.push(fn); return intervals.length; }, clearInterval() {},
       electronAPI: { tossFront: { cancelPayment: async () => { observed.cancelledApprovals++; return { success: true }; } } } }, alert() {},
     fetch: async (_url, options) => {
+      if (_url === '/api/reservation-collection') {
+        collectionPosts.push(options.body)
+        return scenario.collection ? scenario.collection(options) : Response.json({ status: 'error' }, { status: 503 })
+      }
       if (!options?.method) return { ok: !roomLookupFails, status: roomLookupFails ? 503 : 200, json: async () => roomPayload === undefined ? ({ roomsByType: rooms.length ? { Standard: rooms } : {} }) : roomPayload };
       posts.push(options.body);
       if (responseMode === 'lost') throw new Error('Response lost after commit');
@@ -726,7 +732,7 @@ async function onsite(stay = 'shortStay', scenario = {}) {
   const settle = async () => { await new Promise(resolve => setImmediate(resolve)); render(); };
   render(); for (const effect of h.effects) effect(); await settle();
   const click = async label => { await h.button(label).onClick(); await settle(); };
-  return { ...h, render, settle, click, posts, session, observed, mode: x => responseMode = x, release: () => release(),
+  return { ...h, render, settle, click, posts, collectionPosts, session, observed, mode: x => responseMode = x, release: () => release(),
     async recoverHome() { for (const effect of h.renderEffects) effect(); assert.equal(timers.at(-1).delay, 5000); timers.at(-1).fn(); await settle(); },
     async roomList() { await click(stay === 'shortStay' ? '대실 잠시 이용' : '숙박 오늘 입실 · 내일 퇴실'); await click('Standard 선택'); },
     async pay() { await this.roomList(); await click('B901호 선택'); await click('확인하고 결제하기'); },
@@ -963,7 +969,22 @@ test('amount mismatch preserves actual approval proof without booking, automatic
   assert.equal(requests, 1); assert.equal(cancels, 0); assert.equal(completions, 0);
 });
 async function kiosk(scenario = {}) {
-  let pending = true; const posts = [], keyHandlers = [], timers = [], commands = [];
+  let pending = true, idle; const posts = [], keyHandlers = [], timers = [], commands = [], collections = [], balances = [];
+  const session = { isActive: Boolean(scenario.paymentActive), acceptedAmount: 0, ...scenario.session };
+  const observed = { completed: 0, canceled: 0, started: 0 };
+  const payment = { paymentSession: session, ready: true, storageError: '',
+    startPayment: (_amount, data) => {
+      if (session.pendingBooking || session.recoveryRequired) return false;
+      session.isActive = true; session.reservationData = data; observed.started++; return true;
+    },
+    cancelPayment: async () => {
+      if (session.acceptedAmount || session.cardInFlight || session.pendingBooking || session.recoveryRequired) return false;
+      observed.canceled++; session.isActive = false; return true;
+    },
+    completePayment: () => { observed.completed++; session.isActive = false; delete session.pendingBooking; return true; },
+    savePendingBooking: booking => { session.pendingBooking = booking; return true; },
+    requireRecovery: () => assert.fail('Collection recording must not report a device fault'),
+  };
   const components = ['standby-screen', 'idle-screen', 'reservation-confirm', 'current-location', 'on-site-reservation',
     'reservation-details', 'check-in-complete', 'reservation-not-found', 'reservation-list', 'admin-keypad', 'property-mismatch-dialog', 'property-redirect-dialog'];
   const deps = Object.fromEntries([...components, 'kiosk-ai-assistant'].map(name => ['@/components/' + name, { default: name }]));
@@ -972,24 +993,192 @@ async function kiosk(scenario = {}) {
     'next/navigation': { useRouter: () => ({}) }, '@/lib/location-utils': { getKioskLocation: () => 'B' },
     '@/lib/audio-utils': { stopAllAudio() {}, pauseBGM() {}, resumeBGM() {} }, '@/components/print-queue-listener': { PrintQueueListener: 'PrintQueue' },
     '@/lib/property-utils': { getKioskPropertyId: () => 'property3', getPropertyDisplayName: x => x, propertyUsesElectron: () => true },
-    '@/contexts/payment-context': { usePayment: () => ({ paymentSession: { isActive: Boolean(scenario.paymentActive) }, ready: true, storageError: '' }) },
+    '@/contexts/payment-context': { usePayment: () => payment },
+    '@/components/payment-screen': { default: 'PaymentScreen' },
+    '@/hooks/use-idle-timer': { useIdleTimer: options => { idle = options } },
+    '@/lib/hardware-timeout': { hardwareCallWithin: async call => { try { return await call() } catch { return null } } },
     '@/contexts/admin-context': { useAdmin: () => ({ authenticating: false, authenticate: scenario.authenticate || (async () => false), lock() {} }) },
     '@/lib/reservation-qr': load('lib/reservation-qr.ts').exports, '@/components/kiosk-progress': { KioskProgressScreen: 'Progress', RESERVATION_PROGRESS_STEPS: [] },
     '@/lib/kiosk-scope': { buildingRestrictionMessage: () => 'B only' },
     '@/lib/kiosk-operator-shortcuts': load('lib/kiosk-operator-shortcuts.ts').exports,
   });
-  const h = load('components/kiosk-layout.tsx', deps, { alert() {}, setTimeout(fn, ms) { timers.push({ fn, ms }); return timers.length }, clearTimeout() {}, window: { location: { search: '' }, addEventListener(type, fn) { if (type === 'keydown') keyHandlers.push(fn); }, removeEventListener() {}, electronAPI: { send: command => commands.push(command), tossFront: { scanReservationQr: scenario.scan || (async () => ({success: true, value: 'AGAIN:RESERVATION:QA-ONLY'})) } } }, document: { body: { classList: { add() {}, remove() {} } } },
+  const h = load('components/kiosk-layout.tsx', deps, { Date: scenario.clock || Date, AbortSignal: scenario.abortSignal || AbortSignal,
+    alert() {}, setTimeout(fn, ms) { if (ms === 2000) { scenario.tick?.(ms); fn(); return 0 } timers.push({ fn, ms }); return timers.length }, clearTimeout() {}, window: { crypto: { randomUUID }, location: { search: '' }, addEventListener(type, fn) { if (type === 'keydown') keyHandlers.push(fn); }, removeEventListener() {}, electronAPI: { getHardwareStatus: scenario.hardware || (async () => ({ cashBackend: 'oneplus' })), send: command => commands.push(command), tossFront: { scanReservationQr: scenario.scan || (async () => ({success: true, value: 'AGAIN:RESERVATION:QA-ONLY'})) } } }, document: { body: { classList: { add() {}, remove() {} } } },
     fetch: async (url, options) => {
       if (url === '/api/kiosk-config') return { ok: true, json: async () => ({ property: 'property3', building: 'B' }) };
       if (url.startsWith('/api/reservations')) return scenario.lookup ? scenario.lookup(url, options) : { ok: true, json: async () => ({ reservations: [{ reservationId: 'QA-ONLY', roomNumber: 'B901', guestName: 'QA', roomType: 'Test', price: '30000', checkInDate: '2026-09-10', checkOutDate: '2026-09-11', password: '' }] }) };
+      if (url.startsWith('/api/reservation-balance')) { balances.push(url); return scenario.balance ? scenario.balance(url, options) : Response.json({ configured: false }); }
+      if (url === '/api/reservation-collection') {
+        collections.push(options.body);
+        return scenario.collection ? scenario.collection(options) : Response.json({ status: 'error' }, { status: 503 });
+      }
       posts.push(options.body); return { ok: true, status: pending ? 202 : 200, json: async () => ({ success: !pending, pending, cardIssue: pending ? undefined : scenario.cardIssue, data: { roomNumber: 'B901', password: 'TEST' } }) };
     } });
   const render = () => h.render({ onChangeMode: scenario.onChangeMode || (() => {}) }); const settle = async () => { await new Promise(resolve => setImmediate(resolve)); render(); };
   render(); for (const effect of h.effects) effect(); await settle();
   const navigate = h.component('on-site-reservation').props.onNavigate;
   await navigate('reservationConfirm'); await settle();
-  return { ...h, settle, render, navigate, posts, keyHandlers, timers, commands, confirmCheckIn: () => pending = false };
+  return { ...h, settle, render, navigate, posts, keyHandlers, timers, commands, session, payment, observed, collections, balances,
+    idle: () => idle, confirmCheckIn: () => pending = false };
 }
+const payableBalance = () => Response.json({ configured: true, payable: true, price: 40000, remaining: 30000, collected: 10000 })
+async function collectionKiosk(scenario = {}) {
+  const h = await kiosk({ balance: payableBalance, ...scenario })
+  await h.component('reservation-confirm').props.onCheckReservation('QA')
+  await h.settle()
+  await h.component('reservation-details').props.onCheckIn()
+  await h.settle()
+  return h
+}
+function returnHomeOnError(h) {
+  const effect = h.renderEffects.find(effect => effect.toString().includes('const paymentFailed'))
+  assert(effect); effect()
+  assert.equal(h.timers.at(-1).ms, 5000)
+  h.timers.at(-1).fn(); h.render()
+  assert(h.component('on-site-reservation'))
+}
+test('6. three failed collections preserve the same evidence and still check in without another card preflight or device fault', async () => {
+  for (const method of ['CASH', 'CARD']) {
+    let checks = 0
+    const h = await collectionKiosk({ cardHelpers: {
+      checkCardBeforePayment: async () => { checks++ }, issueCheckInCard: async () => undefined,
+    } })
+    assert.equal(h.component('PaymentScreen').props.cardAmount, 30000)
+    assert.equal(h.component('PaymentScreen').props.cashAmount, 30000)
+    assert.equal(h.posts.length, 0)
+    h.confirmCheckIn()
+    const payment = method === 'CASH' ? { method } :
+      { method, provider: 'TOSS_FRONT', front: { paymentKey: 'approved-test-key', timestamp: 1792458000000 } }
+    await h.component('PaymentScreen').props.onPaymentComplete(payment); await h.settle()
+    assert.equal(h.collections.length, 3); assert.equal(new Set(h.collections).size, 1)
+    assert.equal(h.posts.length, 1); assert.equal(checks, 1); assert.equal(h.balances.length, 1)
+    assert(h.component('check-in-complete'))
+    assert.equal(h.observed.completed, 0)
+    const pending = h.session.pendingBooking, payload = JSON.parse(pending.body)
+    assert.equal(pending.kind, 'collection'); assert.equal(pending.lastStatus, 'error')
+    assert.equal(payload.reservationId, 'QA-ONLY'); assert.equal(payload.expectedCollected, 10000); assert.equal(payload.amount, 30000)
+    if (method === 'CASH') assert.match(payload.requestId, /^cash-[0-9a-f-]{36}$/)
+    else { assert.equal(payload.requestId, payment.front.paymentKey); assert.equal(payload.paidAt, new Date(payment.front.timestamp).toISOString()) }
+    await h.component('check-in-complete').props.onNavigate('idle'); await h.settle()
+    assert(h.component('on-site-reservation')); assert.equal(h.session.pendingBooking, pending)
+  }
+})
+test('collection recorded or duplicate clears the lock before check-in; amount_mismatch is not retried', async () => {
+  for (const status of ['recorded', 'duplicate', 'amount_mismatch']) {
+    const h = await collectionKiosk({ collection: async () => Response.json({ status, reservationId: 'QA-ONLY' },
+      { status: status === 'amount_mismatch' ? 400 : 200 }) })
+    h.confirmCheckIn()
+    await h.component('PaymentScreen').props.onPaymentComplete({ method: 'CASH' }); await h.settle()
+    assert.equal(h.collections.length, 1); assert.equal(h.posts.length, 1)
+    assert.equal(h.observed.completed, status === 'amount_mismatch' ? 0 : 1)
+    assert.equal(Boolean(h.session.pendingBooking), status === 'amount_mismatch')
+  }
+})
+test('collection retries including delays stop at 30 seconds and bound the final call to six seconds', async () => {
+  let now = 0, lastTimeout = 0; const deadlines = []
+  class Clock extends Date { static now() { return now } }
+  const h = await collectionKiosk({ clock: Clock, tick: ms => { now += ms },
+    abortSignal: { timeout: ms => { lastTimeout = ms; return AbortSignal.timeout(ms) } },
+    collection: async () => { deadlines.push(lastTimeout); now += lastTimeout; throw new Error('Timed out') },
+  })
+  await h.component('PaymentScreen').props.onPaymentComplete({ method: 'CASH' }); await h.settle()
+  assert.deepEqual(deadlines, [10000, 10000, 6000]); assert.equal(now, 30000)
+  assert.equal(h.posts.length, 1); assert.equal(h.session.pendingBooking.kind, 'collection')
+})
+test('7. restored collection never creates a booking or issues a card; duplicate clears it and failure permits auto archive', async () => {
+  for (const status of ['duplicate', 'error', 'amount_mismatch']) {
+    const requestId = 'cash-10000000-0000-4000-a000-000000000001'
+    const booking = { kind: 'collection', requestId, lastStatus: status === 'amount_mismatch' ? status : undefined,
+      body: JSON.stringify({ requestId, reservationId: 'QA-ONLY', amount: 30000, payment: { method: 'CASH' } }) }
+    const h = await onsite('overnight', { session: { isActive: true, pendingBooking: booking },
+      collection: async () => Response.json({ status, reservationId: 'QA-ONLY' }, { status: status === 'error' ? 503 : 200 }),
+      cardHelpers: { issueCheckInCard: async () => assert.fail('Restored collection must not dispense a card') },
+    })
+    assert.equal(h.posts.length, 0)
+    assert.equal(h.collectionPosts.length, status === 'amount_mismatch' ? 0 : 1)
+    assert.equal(h.component('CheckInComplete'), undefined)
+    assert.equal(h.observed.completed, status === 'duplicate' ? 1 : 0)
+    if (status !== 'duplicate') {
+      assert.equal(h.session.pendingBooking.lastStatus, status)
+      assert.equal(h.component('PaymentRecoveryPanel').props.allowPending, true)
+      assert(h.visible('결제는 완료되었으나 수금 기록을 확인하지 못했습니다.'))
+    }
+  }
+})
+test('10. empty idle payment cancels at 60s; accepted cash or card in flight never auto-refunds', async () => {
+  for (const patch of [{}, { acceptedAmount: 10000 }, { cardInFlight: true }]) {
+    const h = await collectionKiosk()
+    Object.assign(h.session, patch); h.render()
+    assert.equal(h.idle().enabled, true); assert.equal(h.idle().idleTime, 60000)
+    await h.idle().onIdle(); await h.settle()
+    const canCancel = !patch.acceptedAmount && !patch.cardInFlight
+    assert.equal(Boolean(h.component('on-site-reservation')), canCancel)
+    assert.equal(h.observed.canceled, canCancel ? 1 : 0)
+    assert.equal(h.collections.length, 0); assert.equal(h.posts.length, 0)
+  }
+})
+test('10. recovery, storage failure and unavailable payment each return home after five seconds', async () => {
+  for (const reason of ['recovery', 'storage', 'unavailable']) {
+    const h = await collectionKiosk()
+    if (reason === 'recovery') h.session.recoveryRequired = 'Synthetic uncertain payment'
+    if (reason === 'storage') h.payment.storageError = 'Synthetic storage failure'
+    if (reason === 'unavailable') h.component('PaymentScreen').props.onUnavailable('Synthetic unavailable terminal')
+    h.render(); returnHomeOnError(h)
+    assert.equal(h.observed.completed, 0); assert.equal(h.collections.length, 0); assert.equal(h.posts.length, 0)
+  }
+})
+test('collection back navigation requires successful cancellation, and failed evidence storage never submits', async () => {
+  const h = await collectionKiosk()
+  h.session.acceptedAmount = 10000
+  await h.component('PaymentScreen').props.onCancel(); await h.settle()
+  assert(h.component('PaymentScreen')); assert.equal(h.observed.canceled, 0)
+  h.payment.savePendingBooking = () => { h.payment.storageError = 'disk full'; return false }
+  h.render()
+  await h.component('PaymentScreen').props.onPaymentComplete({ method: 'CASH' }); await h.settle()
+  assert.equal(h.collections.length, 0); assert.equal(h.posts.length, 0); assert.equal(h.observed.completed, 0)
+  returnHomeOnError(h)
+})
+test('10. failed direct balance and unresolved payment block collection and check-in then return home', async () => {
+  for (const failure of ['offline', 'unresolved']) {
+    const h = await collectionKiosk({
+      lookup: async () => Response.json({ reservations: [{ reservationId: 'QA-ONLY', roomNumber: 'B901', guestName: 'QA', bookingPlatform: '전화예약' }] }),
+      balance: async () => {
+        if (failure === 'offline') throw new Error('offline')
+        return Response.json({ configured: true, payable: false, remaining: 30000, collected: 0, price: 30000, reason: 'kiosk_payment_unresolved' })
+      },
+    })
+    assert.equal(h.component('PaymentScreen'), undefined)
+    assert.equal(h.posts.length, 0); assert.equal(h.observed.started, 0)
+    returnHomeOnError(h)
+  }
+})
+test('disabled settings and failed platform balance retain legacy check-in; unavailable hardware permits only card', async () => {
+  for (const balance of [async () => Response.json({ configured: false }), async () => { throw new Error('offline') }]) {
+    const h = await collectionKiosk({ balance })
+    assert.equal(h.posts.length, 1); assert.equal(h.component('PaymentScreen'), undefined)
+  }
+  const h = await collectionKiosk({ hardware: async () => { throw new Error('hardware offline') } })
+  assert.equal(h.component('PaymentScreen').props.cashAmount, 0)
+  await h.component('PaymentScreen').props.onCancel(); await h.settle()
+  assert(h.component('on-site-reservation'), 'onCancel must bypass the stale active payment closure')
+})
+test('11. pending collection survives reload and blocks every new payment session; malformed metadata stays locked', async () => {
+  const requestId = 'cash-10000000-0000-4000-a000-000000000001'
+  const booking = { kind: 'collection', lastStatus: 'in_progress', requestId, body: JSON.stringify({ requestId, reservationId: 'QA-ONLY' }) }
+  const h = await paymentContext()
+  assert(h.value.startPayment(30000))
+  assert(h.value.savePendingBooking(booking))
+  assert.equal(h.value.startPayment(30000, { reservationId: 'OTHER' }), false)
+  const saved = h.localStorage.getItem('kiosk-payment-recovery-v1')
+  const restored = await paymentContext(saved)
+  assert.equal(restored.value.paymentSession.pendingBooking.kind, 'collection')
+  assert.equal(restored.value.startPayment(30000, { reservationId: 'OTHER' }), false)
+  for (const changes of [{ kind: 'unknown' }, { lastStatus: 'x'.repeat(41) }, { lastStatus: 42 }]) {
+    const invalid = JSON.parse(saved); Object.assign(invalid.pendingBooking, changes)
+    const corrupt = await paymentContext(JSON.stringify(invalid))
+    assert(corrupt.value.storageError); assert.equal(corrupt.value.startPayment(30000), false)
+  }
+})
 test('unconfirmed check-in returns to the customer home after five seconds without exposing a key', async () => {
   const h = await kiosk();
   await h.component('reservation-confirm').props.onCheckReservation('QA-ONLY'); await h.settle();

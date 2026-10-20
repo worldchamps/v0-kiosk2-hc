@@ -43,6 +43,18 @@ GOOGLE_SHEETS_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KE
 GOOGLE_SHEETS_SPREADSHEET_ID=your-spreadsheet-id
 \`\`\`
 
+#### 기존 예약 미수금 결제 (장비별 선택 설정)
+
+```env
+PMS_BASE_URL=
+PMS_KIOSK_KEY=
+```
+
+`PMS_BASE_URL`은 PMS 서버 주소이며, `PMS_KIOSK_KEY`는 32자 이상의 장비별 키입니다.
+기존 `KIOSK_DEVICE_ID`와 PMS에 등록한 키의 장비 ID가 일치해야 합니다.
+두 변수 중 하나가 없거나 키·장비 ID 설정이 유효하지 않으면 기존 체크인 방식으로 동작합니다.
+키는 `NEXT_PUBLIC_` 변수나 Git에 넣지 않습니다.
+
 #### API Keys
 
 \`\`\`env

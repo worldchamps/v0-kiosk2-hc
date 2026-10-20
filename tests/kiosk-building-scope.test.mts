@@ -359,6 +359,10 @@ test("kiosk UI waits for PC config, overrides a conflicting URL/location, and bl
     const dependencies: Record<string, any> = {
       "@/components/check-in-card-progress": { default: "CardProgress" },
       "@/lib/check-in-card": { checkCardBeforePayment: async () => {}, issueCheckInCard: async () => undefined },
+      "@/components/payment-screen": { default: "PaymentScreen" },
+      "@/lib/reservation-collection": {},
+      "@/lib/hardware-timeout": {},
+      "@/hooks/use-idle-timer": { useIdleTimer() {} },
       react: {
         useState: (initial: any) => {
           const index = cursor++

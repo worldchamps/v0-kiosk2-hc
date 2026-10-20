@@ -8,6 +8,8 @@ export interface PendingBooking {
   requestId: string
   body: string
   cancellationStarted?: boolean
+  kind?: "collection"
+  lastStatus?: string
 }
 
 export interface PaymentSession {
@@ -67,7 +69,10 @@ export function PaymentProvider({ children }: { children: React.ReactNode }) {
             !Number.isFinite(value.requiredAmount) || value.requiredAmount < 0 || !Array.isArray(value.acceptedBills) ||
             value.acceptedBills.some(amount => !Number.isFinite(amount) || amount <= 0) ||
             (!value.isActive && (value.acceptedAmount > 0 || value.cardInFlight || value.pendingBooking || value.recoveryRequired || value.recoveryEvidence)) ||
-            (value.pendingBooking && (typeof value.pendingBooking.requestId !== "string" || typeof value.pendingBooking.body !== "string"))) {
+            (value.pendingBooking && (typeof value.pendingBooking.requestId !== "string" || typeof value.pendingBooking.body !== "string" ||
+              value.pendingBooking.kind !== undefined && value.pendingBooking.kind !== "collection" ||
+              value.pendingBooking.lastStatus !== undefined &&
+                (typeof value.pendingBooking.lastStatus !== "string" || value.pendingBooking.lastStatus.length > 40)))) {
           throw new Error("Invalid saved payment")
         }
         if (value.pendingBooking && JSON.parse(value.pendingBooking.body)?.requestId !== value.pendingBooking.requestId) throw new Error("Invalid pending request")

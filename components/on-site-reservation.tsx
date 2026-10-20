@@ -37,6 +37,7 @@ import { checkCardBeforePayment, issueCheckInCard } from "@/lib/check-in-card"
 import { checkOnSiteBeforePayment } from '@/lib/on-site-preflight'
 import { KioskProgressScreen, ON_SITE_PROGRESS_STEPS } from "@/components/kiosk-progress"
 import type { PmsPaymentRates, PmsRoomRates } from "@/lib/pms-rates"
+import { isCollectionRecorded, submitCollection } from "@/lib/reservation-collection"
 
 // Keep the waiting screen at the portrait-preview's 941 × 1672 layout size.
 const KIOSK_HOME_WIDTH = 941
@@ -406,6 +407,15 @@ export default function OnSiteReservation({ onNavigate, location, building, onUp
     try {
       setSubmitting(true)
       setBookingError("")
+      if (booking.kind === "collection") {
+        const status = booking.lastStatus === "amount_mismatch" ? booking.lastStatus : await submitCollection(booking.body)
+        if (isCollectionRecorded(status)) completePayment()
+        else {
+          savePendingBooking({ ...booking, lastStatus: status })
+          setBookingError("결제는 완료되었으나 수금 기록을 확인하지 못했습니다. 010-5126-4644")
+        }
+        return
+      }
       const response = await fetch("/api/on-site-booking", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -436,7 +446,7 @@ export default function OnSiteReservation({ onNavigate, location, building, onUp
       console.error("Error submitting booking:", error)
       setBookingError("예약 처리 결과를 확인하지 못했습니다. 결제 기록은 보관 중입니다. 다시 결제하지 마세요.")
     } finally {
-      if (queryOnly) setBookingChecked(true)
+      if (queryOnly || booking.kind === "collection") setBookingChecked(true)
       submittingRef.current = false
       setSubmitting(false)
       setDeliveringCard(false)

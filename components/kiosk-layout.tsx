@@ -26,7 +26,7 @@ import {
 } from "@/lib/property-utils"
 import PropertyMismatchDialog from "@/components/property-mismatch-dialog"
 import PropertyRedirectDialog from "@/components/property-redirect-dialog"
-import { usePayment } from "@/contexts/payment-context"
+import { usePayment, type PendingBooking } from "@/contexts/payment-context"
 import { parseReservationQrValue } from "@/lib/reservation-qr"
 import { KioskProgressScreen, RESERVATION_PROGRESS_STEPS } from "@/components/kiosk-progress"
 import { type KioskScope, buildingRestrictionMessage } from "@/lib/kiosk-scope"
@@ -34,6 +34,11 @@ import type { Reservation } from "@/lib/types"
 import { kioskOperatorShortcut } from "@/lib/kiosk-operator-shortcuts"
 import CheckInCardProgress from "@/components/check-in-card-progress"
 import { checkCardBeforePayment, issueCheckInCard } from "@/lib/check-in-card"
+import PaymentScreen from "@/components/payment-screen"
+import type { CompletedPayment } from "@/lib/payment-types"
+import { cashCollectionAmount, isCollectionRecorded, requiresPmsBalance, submitCollection } from "@/lib/reservation-collection"
+import { hardwareCallWithin } from "@/lib/hardware-timeout"
+import { useIdleTimer } from "@/hooks/use-idle-timer"
 
 interface KioskLayoutProps {
   onChangeMode: (mode?: "web") => void
@@ -62,6 +67,11 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   const [checkInPending, setCheckInPending] = useState(false)
   const [remoteKeyBusy, setRemoteKeyBusy] = useState(false)
   const [deliveringCard, setDeliveringCard] = useState(false)
+  const [collection, setCollection] = useState<{
+    reservationId: string; remaining: number; collected: number; cashAmount: number; requestId: string
+  } | null>(null)
+  const collectionSubmitting = useRef(false)
+  const [returnHomeAfterError, setReturnHomeAfterError] = useState(false)
   const checkInSubmitting = useRef(false)
   const lookupSubmitting = useRef(false)
   const [revealedInfo, setRevealedInfo] = useState({
@@ -93,7 +103,42 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null)
   const INACTIVITY_TIMEOUT = 30000 // 30 seconds
 
-  const { paymentSession, storageError, ready } = usePayment()
+  const { paymentSession, storageError, ready, startPayment, cancelPayment, savePendingBooking, completePayment } = usePayment()
+
+  function goHome() {
+    stopAllAudio(false)
+    setHomeSessionKey(key => key + 1)
+    setCurrentScreen("onSiteReservation")
+    setReservationData(null)
+    setReservationsList([])
+    setCollection(null)
+    setGuestName("")
+    setRevealedInfo({ roomNumber: "", password: "", floor: "" })
+    setError("")
+    setLookupError(false)
+    setCheckInPending(false)
+    setAdminOverride(false)
+    setShowPropertyMismatch(false)
+    setReturnHomeAfterError(false)
+  }
+
+  useIdleTimer({
+    idleTime: 60000,
+    enabled: currentScreen === "reservationPayment",
+    onIdle: async () => {
+      if (paymentSession.acceptedAmount === 0 && !paymentSession.cardInFlight &&
+          !paymentSession.pendingBooking && !paymentSession.recoveryRequired &&
+          await cancelPayment()) goHome()
+    },
+  })
+
+  useEffect(() => {
+    const paymentFailed = (currentScreen === "reservationPayment" || currentScreen === "collectionRecording") &&
+      (paymentSession.recoveryRequired || storageError)
+    if (!returnHomeAfterError && !paymentFailed) return
+    const timer = setTimeout(goHome, 5000)
+    return () => clearTimeout(timer)
+  }, [currentScreen, returnHomeAfterError, paymentSession.recoveryRequired, storageError])
 
   // Returning to the customer screen ends the operator session.
   useEffect(() => { lock() }, [lock])
@@ -234,6 +279,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       setRevealedInfo({ roomNumber: "", password: "", floor: "" })
       setGuestName("")
       setError("")
+      setCollection(null)
       if (isPopupMode) window.electronAPI?.send?.('close-popup')
       else setCurrentScreen('onSiteReservation')
     }, 5000)
@@ -267,6 +313,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     }
 
     if (targetScreen === "onSiteReservation" || targetScreen === "standby" || targetScreen === "idle") {
+      setCollection(null)
       setReservationData(null)
       setReservationsList([])
       setRevealedInfo({
@@ -444,7 +491,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     }
   }
 
-  const handleCheckIn = async (override = adminOverride) => {
+  const handleCheckIn = async (override = adminOverride, { paid = false } = {}) => {
     if (!reservationData?.reservationId || checkInSubmitting.current) return false
     checkInSubmitting.current = true
 
@@ -454,9 +501,46 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     let cardPreflightFailed = false
 
     try {
-      if (!checkInPending) {
+      if (!checkInPending && !paid) {
         try { await checkCardBeforePayment(reservationData.roomNumber, reservationData.reservationId) }
         catch (error) { definitiveFailure = cardPreflightFailed = true; throw error }
+        let balance
+        try {
+          const response = await fetch(`/api/reservation-balance?reservationId=${encodeURIComponent(reservationData.reservationId)}`, {
+            signal: AbortSignal.timeout(10000),
+          })
+          if (!response.ok) throw new Error("Balance unavailable")
+          balance = await response.json()
+          if (balance?.configured !== false && (balance?.configured !== true ||
+              typeof balance.payable !== "boolean" ||
+              [balance.remaining, balance.collected, balance.price].some(value => !Number.isSafeInteger(value) || value < 0))) {
+            throw new Error("Invalid balance")
+          }
+        } catch {
+          balance = undefined
+          if (requiresPmsBalance(reservationData.bookingPlatform || "")) {
+            definitiveFailure = cardPreflightFailed = true
+            throw new Error("결제 금액을 확인하지 못했습니다. 010-5126-4644로 연락 주세요.")
+          }
+        }
+        if (balance?.configured && balance.reason === "kiosk_payment_unresolved") {
+          definitiveFailure = cardPreflightFailed = true
+          throw new Error("이전 결제를 확인 중입니다. 010-5126-4644로 연락 주세요.")
+        }
+        if (balance?.configured && balance.payable && balance.remaining > 0) {
+          const requestId = "cash-" + window.crypto.randomUUID()
+          const hardware = await hardwareCallWithin(async () => window.electronAPI?.getHardwareStatus?.())
+          const cashAmount = hardware ? cashCollectionAmount(balance.remaining, hardware.cashBackend) : 0
+          if (!startPayment(balance.remaining, { reservationId: reservationData.reservationId,
+            roomNumber: reservationData.roomNumber, guestName: reservationData.guestName, purpose: "collection" })) {
+            definitiveFailure = cardPreflightFailed = true
+            throw new Error("이전 결제를 확인 중입니다. 010-5126-4644로 연락 주세요.")
+          }
+          setCollection({ reservationId: reservationData.reservationId, remaining: balance.remaining,
+            collected: balance.collected, cashAmount, requestId })
+          setCurrentScreen("reservationPayment")
+          return false
+        }
       }
       const response = await fetch("/api/check-in", {
         method: "POST",
@@ -490,6 +574,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
           },
         })
         setShowPropertyMismatch(true)
+        if (paid) setReturnHomeAfterError(true)
         setLoading(false)
         return false
       }
@@ -533,16 +618,45 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       if (!definitiveFailure) setCheckInPending(true)
       setError(message)
 
-      if (cardPreflightFailed) setTimeout(() => {
-        if (isPopupMode) window.electronAPI?.send?.('close-popup')
-        else void handleNavigate('onSiteReservation')
-      }, 5000)
+      if (cardPreflightFailed && isPopupMode) setTimeout(() => window.electronAPI?.send?.('close-popup'), 5000)
+      else if (cardPreflightFailed || paid && definitiveFailure) setReturnHomeAfterError(true)
 
       return false
     } finally {
       setDeliveringCard(false)
       checkInSubmitting.current = false
       setLoading(false)
+    }
+  }
+
+  const handleCollectionComplete = async (payment: CompletedPayment) => {
+    if (!collection || collectionSubmitting.current || paymentSession.pendingBooking) return
+    collectionSubmitting.current = true
+    try {
+      const requestId = payment.method === "CARD" ? payment.front!.paymentKey : collection.requestId
+      const paidAt = payment.method === "CARD" ? new Date(payment.front!.timestamp).toISOString() : new Date().toISOString()
+      const booking: PendingBooking = { kind: "collection", requestId,
+        body: JSON.stringify({ requestId, reservationId: collection.reservationId, expectedCollected: collection.collected,
+          amount: collection.remaining, paidAt, payment }) }
+      if (!savePendingBooking(booking)) return
+      setCurrentScreen("collectionRecording")
+      const deadline = Date.now() + 30000
+      for (let attempt = 0; attempt < 3 && Date.now() < deadline; attempt++) {
+        const status = await submitCollection(booking.body, Math.min(10000, deadline - Date.now()))
+        if (!savePendingBooking({ ...booking, lastStatus: status })) return
+        if (isCollectionRecorded(status)) {
+          if (!completePayment()) return
+          break
+        }
+        if (status === "amount_mismatch") break
+        if (attempt < 2 && Date.now() + 2000 < deadline) await new Promise(resolve => setTimeout(resolve, 2000))
+      }
+      await handleCheckIn(adminOverride, { paid: true })
+    } catch {
+      setError("결제 처리 확인이 필요합니다. 다시 결제하지 마시고 010-5126-4644로 연락 주세요.")
+      setReturnHomeAfterError(true)
+    } finally {
+      collectionSubmitting.current = false
     }
   }
 
@@ -614,6 +728,19 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
 
         {currentScreen === "onSiteReservation" && (
           <OnSiteReservation key={homeSessionKey} onNavigate={handleNavigate} location={kioskLocation} building={kioskScope.building} onUpdateSafeChange={setOnSiteUpdateSafe} onCardIdleChange={setOnSiteCardIdle} />
+        )}
+
+        {currentScreen === "reservationPayment" && collection && (
+          <PaymentScreen cardAmount={collection.remaining} cashAmount={collection.cashAmount}
+            title="남은 금액 결제" description="예약 체크인을 위해 남은 금액을 결제해주세요"
+            onPaymentComplete={handleCollectionComplete}
+            onCancel={async () => { if (await cancelPayment()) goHome() }}
+            onUnavailable={message => { setError(message); setReturnHomeAfterError(true) }} />
+        )}
+        {currentScreen === "collectionRecording" && (
+          <div role="status" className="p-12 text-center text-3xl">
+            결제를 기록하고 있습니다. 화면을 끄거나 다시 결제하지 마세요.
+          </div>
         )}
 
         {deliveringCard && <CheckInCardProgress />}

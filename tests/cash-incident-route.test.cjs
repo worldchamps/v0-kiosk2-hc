@@ -4,6 +4,50 @@ const fs = require('node:fs')
 const vm = require('node:vm')
 const ts = require('typescript')
 const { incidentSignature, verifyIncident, incidentFromArchive } = require('../electron/cash-incidents')
+const { automaticKind } = require('../electron/payment-recovery')
+
+test('8. automatic archive distinguishes collection from existing booking recovery', () => {
+  assert.equal(automaticKind({ pendingBooking: { kind: 'collection' } }), 'collection_unrecorded')
+  assert.equal(automaticKind({ pendingBooking: {} }), 'booking_pending')
+  assert.equal(automaticKind({ pendingBooking: { kind: 'collection' } }, '{invalid'), 'corrupt')
+})
+
+test('9. collection incident carries only validated financial identity and rejects missing or extra fields', () => {
+  const key = 'synthetic-incident-key', scope = { property: 'property3', building: 'A' }
+  const body = { requestId: 'qa-payment-key', reservationId: 'qa-reservation', amount: 30000, payment: { method: 'CASH' },
+    phoneNumber: 'private-phone', password: 'private-password' }
+  const record = { archiveId: 'b'.repeat(64), ...scope, reviewedAt: '2026-10-20T00:00:00.000Z',
+    incidentKind: 'collection_unrecorded', memorySnapshot: JSON.stringify({ sessionStartTime: 123456,
+      acceptedAmount: 40000, acceptedBills: [10000, 10000, 10000, 10000], returnedAmount: 10000, requiredAmount: 40000,
+      reservationData: { roomNumber: 'A901', phoneNumber: 'private-phone', password: 'private-password' },
+      pendingBooking: { kind: 'collection', body: JSON.stringify(body), lastStatus: 'stale' } }) }
+  const incident = incidentFromArchive(record)
+  const valid = value => verifyIncident(value, incidentSignature(value, key), key, scope)
+  assert.equal(valid(incident), true)
+  assert.deepEqual(incident.collection, { reservationId: body.reservationId, amount: 30000, method: '현금',
+    paymentKey: body.requestId, pmsStatus: 'stale' })
+  assert.equal(incident.requiredAmount, 30000); assert.equal(incident.receivedAmount, 40000)
+  assert.equal(incident.confirmedReturnedAmount, 10000)
+  assert.equal(incident.reason, '결제 완료·PMS 수금 기록 미확인 (stale)')
+  assert.doesNotMatch(JSON.stringify(incident), /phone|password/)
+  const missing = { ...incident }; delete missing.collection
+  assert.equal(valid(missing), false)
+  assert.equal(valid({ ...incident, kind: 'cash' }), false)
+  assert.equal(valid({ ...incident, collection: { ...incident.collection, phoneNumber: 'private' } }), false)
+  for (const [field, values] of Object.entries({ reservationId: ['', 'a'.repeat(201)], amount: [-1, 1.5, '30000', Number.MAX_SAFE_INTEGER + 1],
+    method: ['CARD'], paymentKey: ['', 'a'.repeat(301)], pmsStatus: ['a'.repeat(41), null] })) {
+    for (const value of values) assert.equal(valid({ ...incident, collection: { ...incident.collection, [field]: value } }), false)
+  }
+  for (const serialized of ['invalid-json', '{}', JSON.stringify({ ...body, amount: -1 })]) {
+    const corrupt = incidentFromArchive({ ...record, memorySnapshot: JSON.stringify({ pendingBooking: { body: serialized } }) })
+    assert.equal(corrupt.kind, 'corrupt'); assert.equal(Object.hasOwn(corrupt, 'collection'), false)
+    assert.equal(valid(corrupt), true)
+  }
+  const card = incidentFromArchive({ ...record, memorySnapshot: JSON.stringify({ pendingBooking: {
+    body: JSON.stringify({ ...body, payment: { method: 'CARD' } }), lastStatus: 'error',
+  } }) })
+  assert.equal(card.collection.method, '카드'); assert.equal(card.receivedAmount, 0)
+})
 
 test('incident keeps the original payment timestamp', () => {
   const started = 1789147000000

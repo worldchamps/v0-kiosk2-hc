@@ -28,7 +28,7 @@ function isAutomaticCash(session) {
 }
 function automaticKind(session, raw, storageError) {
   if (storageError || raw && (() => { try { JSON.parse(raw); return false } catch { return true } })()) return 'corrupt'
-  if (session?.pendingBooking) return 'booking_pending'
+  if (session?.pendingBooking) return session.pendingBooking.kind === 'collection' ? 'collection_unrecorded' : 'booking_pending'
   if (session?.recoveryEvidence) return 'card_approval'
   if (session?.method === 'card' || session?.cardInFlight) return 'unknown_result'
   return 'cash'
