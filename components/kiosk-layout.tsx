@@ -36,7 +36,7 @@ import CheckInCardProgress from "@/components/check-in-card-progress"
 import { checkCardBeforePayment, issueCheckInCard } from "@/lib/check-in-card"
 import PaymentScreen from "@/components/payment-screen"
 import type { CompletedPayment } from "@/lib/payment-types"
-import { cashCollectionAmount, isCollectionRecorded, requiresPmsBalance, submitCollection } from "@/lib/reservation-collection"
+import { cashCollectionAmount, collectionPaidAt, isCollectionRecorded, requiresPmsBalance, submitCollection } from "@/lib/reservation-collection"
 import { hardwareCallWithin } from "@/lib/hardware-timeout"
 import { useIdleTimer } from "@/hooks/use-idle-timer"
 
@@ -634,7 +634,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     collectionSubmitting.current = true
     try {
       const requestId = payment.method === "CARD" ? payment.front!.paymentKey : collection.requestId
-      const paidAt = payment.method === "CARD" ? new Date(payment.front!.timestamp).toISOString() : new Date().toISOString()
+      const paidAt = payment.method === "CARD" ? collectionPaidAt(payment.front!.timestamp) : new Date().toISOString()
       const booking: PendingBooking = { kind: "collection", requestId,
         body: JSON.stringify({ requestId, reservationId: collection.reservationId, expectedCollected: collection.collected,
           amount: collection.remaining, paidAt, payment }) }

@@ -37,13 +37,17 @@ const request = (body: unknown) => new Request("http://kiosk.invalid/api/reserva
 function server(fetcher: (...args: any[]) => any, settings: Record<string, string> = env) {
   return load("lib/pms-kiosk.ts", { "server-only": {} }, { process: { env: settings }, fetch: fetcher })
 }
+function balanceRoute(pms: any, getDB: () => any = () => ({ ref: (_path: string) => ({ once: async () => ({ val: () => null }) }) })) {
+  return load("app/api/reservation-balance/route.ts", { "next/server": next, "@/lib/pms-kiosk": pms,
+    "@/lib/firebase-admin": { getDB } })
+}
 
 test("1. balance disabled settings preserve legacy behavior; configured fetch is authenticated, bounded and private", async () => {
   const good = { status: "ok", reservationId: cash.reservationId, price: 40000, collected: 10000, remaining: 30000,
     payable: true, guestName: "Do not expose", phoneNumber: "private", reason: "payable" }
   for (const settings of [{}, { ...env, KIOSK_DEVICE_ID: "" }, { ...env, PMS_KIOSK_KEY: "short" }]) {
     const pms = server(() => assert.fail("Disabled configuration called PMS"), settings)
-    const route = load("app/api/reservation-balance/route.ts", { "next/server": next, "@/lib/pms-kiosk": pms })
+    const route = balanceRoute(pms, () => assert.fail("Disabled configuration read Firebase"))
     const response = await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))
     assert.equal(response.status, 200)
     assert.deepEqual(await response.json(), { configured: false })
@@ -61,7 +65,7 @@ test("1. balance disabled settings preserve legacy behavior; configured fetch is
       return Response.json(good)
     },
   })
-  const route = load("app/api/reservation-balance/route.ts", { "next/server": next, "@/lib/pms-kiosk": pms })
+  const route = balanceRoute(pms)
   assert.deepEqual(await (await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))).json(),
     { configured: true, price: 40000, collected: 10000, remaining: 30000, payable: true, reason: "payable" })
   assert.deepEqual(timeouts, [8000])
@@ -77,8 +81,78 @@ test("1. balance disabled settings preserve legacy behavior; configured fetch is
       if (bad === "json") return new Response("not-json")
       return Response.json(bad)
     })
-    const route = load("app/api/reservation-balance/route.ts", { "next/server": next, "@/lib/pms-kiosk": pms })
+    const route = balanceRoute(pms, () => assert.fail("Invalid PMS balance read Firebase"))
     assert.equal((await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))).status, 503)
+  }
+})
+
+test("kiosk ID follows PMS ASCII/length boundaries and invalid settings warn only once", () => {
+  for (const id of ["A", "aZ09_-", "x".repeat(200)]) {
+    const pms = server(() => assert.fail("Configuration should not fetch"), { ...env, KIOSK_DEVICE_ID: id })
+    assert.equal(pms.pmsKioskConfig()?.kioskId, id)
+  }
+  for (const id of ["", "x".repeat(201), "invalid.device", "invalid:device", "invalid/device", "invalid device",
+    " device", "device ", "\tdevice", "device\n", "장비", "a\nb"]) {
+    let warnings = 0
+    const pms = load("lib/pms-kiosk.ts", { "server-only": {} }, {
+      process: { env: { ...env, KIOSK_DEVICE_ID: id } }, console: { warn() { warnings++ } },
+    })
+    assert.equal(pms.pmsKioskConfig(), null, id)
+    assert.equal(pms.pmsKioskConfig(), null, id)
+    assert.equal(warnings, 1, id)
+  }
+})
+
+test("a local indexed collection claim blocks payment even while PMS still says payable", async () => {
+  const key = "a".repeat(64), indexPath = `payment_claims_by_reservation/toss_front/${cash.reservationId}`
+  const claimPath = `payment_claims/toss_front/${key}`
+  for (const purpose of ["collection", "booking", undefined]) {
+    const reads: string[] = []
+    const pms = server(async () => Response.json({ reservationId: cash.reservationId, payable: true,
+      remaining: 30000, collected: 10000, price: 40000, reason: "payable" }))
+    const route = balanceRoute(pms, () => ({ ref: (path: string) => ({ once: async () => {
+      reads.push(path)
+      assert.ok([indexPath, claimPath].includes(path), "Only the indexed reservation claim may be read")
+      return { val: () => path === indexPath ? purpose ? key : null : { purpose, status: "claimed" } }
+    } }) }))
+    const response = await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))
+    assert.equal(response.status, 200)
+    const data = await response.json()
+    assert.equal(data.payable, purpose !== "collection")
+    assert.equal(data.reason, purpose === "collection" ? "kiosk_payment_unresolved" : "payable")
+    assert.equal(data.remaining, 30000); assert.equal(data.collected, 10000)
+    assert.deepEqual(reads, purpose ? [indexPath, claimPath] : [indexPath])
+  }
+})
+
+test("local index or claim read failure fails closed; PMS nonpayable responses do not need Firebase", async () => {
+  for (const failure of ["index", "claim", "invalid-index"]) {
+    const pms = server(async () => Response.json({ reservationId: cash.reservationId, payable: true,
+      remaining: 30000, collected: 10000, price: 40000 }))
+    const route = balanceRoute(pms, () => ({ ref: (path: string) => ({ once: async () => {
+      const isIndex = path.startsWith("payment_claims_by_reservation/")
+      if (failure === "index" && isIndex || failure === "claim" && !isIndex) throw new Error("Synthetic Firebase read failure")
+      return { val: () => failure === "invalid-index" ? "../invalid" : "b".repeat(64) }
+    } }) }))
+    assert.equal((await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))).status, 503)
+  }
+  const pms = server(async () => Response.json({ reservationId: cash.reservationId, payable: false,
+    remaining: 0, collected: 40000, price: 40000 }))
+  const route = balanceRoute(pms, () => assert.fail("Already nonpayable balance should not read Firebase"))
+  const response = await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))
+  assert.equal(response.status, 200)
+  assert.equal((await response.json()).payable, false)
+})
+
+test("card collection time normalizes seconds/milliseconds and clamps invalid approval dates", () => {
+  const now = Date.parse(cash.paidAt), earliest = Date.UTC(2020, 0, 1), tomorrow = now + 86400000
+  for (const milliseconds of [earliest, now, tomorrow]) {
+    assert.equal(helpers.collectionPaidAt(milliseconds, now), new Date(milliseconds).toISOString())
+    assert.equal(helpers.collectionPaidAt(milliseconds / 1000, now), new Date(milliseconds).toISOString())
+  }
+  for (const timestamp of [earliest - 1, (earliest - 1000) / 1000, tomorrow + 1, (tomorrow + 1000) / 1000,
+    1e12 - 1, 1e12, 0, -1, NaN, Infinity]) {
+    assert.equal(helpers.collectionPaidAt(timestamp, now), cash.paidAt, String(timestamp))
   }
 })
 
@@ -123,6 +197,30 @@ function collectionHarness() {
     } })
   return { claims, posts, settings, mode: (value: string) => { mode = value }, run: (body: unknown) => route.POST(request(body)) }
 }
+test("paymentKey boundaries are enforced before any local claim or PMS call", async () => {
+  const h = collectionHarness()
+  for (const paymentKey of ["", "x".repeat(301), "key with spaces", "key/path", "key#hash", "key$var", "key?query",
+    "결제키", "key\nline", "key\n"]) {
+    assert.equal((await h.run(card({ paymentKey }))).status, 400, paymentKey)
+  }
+  assert.equal(h.claims.size, 0); assert.equal(h.posts.length, 0)
+  for (const paymentKey of ["X", "aZ09_.:-", "x".repeat(300)]) {
+    assert.equal((await h.run(card({ paymentKey }))).status, 200, paymentKey)
+    assert.equal(h.posts.at(-1).paymentKey, paymentKey)
+  }
+})
+
+test("signed second/millisecond and clamped approval times reach PMS and keep the original retry body", async () => {
+  const now = Date.now()
+  for (const timestamp of [now, Math.floor(now / 1000), Date.UTC(2019, 0, 1), now + 2 * 86400000]) {
+    const h = collectionHarness(), body = { ...card({ timestamp }), paidAt: helpers.collectionPaidAt(timestamp, now) }
+    assert.equal((await h.run(body)).status, 200, String(timestamp))
+    assert.equal(h.posts[0].paidAt, body.paidAt)
+    h.mode("duplicate")
+    assert.equal((await h.run(body)).status, 200)
+    assert.deepEqual(h.posts[0], h.posts[1])
+  }
+})
 test("4. signed card proof, immutable local claim and identical retry prevent reused approvals", async () => {
   const h = collectionHarness(), valid = card()
   const forged = structuredClone(valid); forged.payment.front.signature = "0".repeat(64)

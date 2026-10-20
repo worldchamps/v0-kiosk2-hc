@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { claimPayment, getPaymentClaim } from "@/lib/firebase-admin"
 import { verifyTossFrontPaymentProof } from "@/lib/toss-front"
 import { pmsFetch, pmsKioskConfig } from "@/lib/pms-kiosk"
-import { isCollectionRecorded } from "@/lib/reservation-collection"
+import { collectionPaidAt, isCollectionRecorded } from "@/lib/reservation-collection"
 
 export async function POST(request: Request) {
   let body
@@ -11,7 +11,7 @@ export async function POST(request: Request) {
   }
   const { requestId, reservationId, expectedCollected, amount, paidAt, payment } = body || {}
   if (typeof reservationId !== "string" || !reservationId.trim() || reservationId.length > 200 ||
-      typeof requestId !== "string" || !requestId.trim() || requestId.length > 300 ||
+      typeof requestId !== "string" || !/^[A-Za-z0-9_.:-]{1,300}$/.test(requestId) ||
       !Number.isSafeInteger(amount) || amount <= 0 ||
       !Number.isSafeInteger(expectedCollected) || expectedCollected < 0 ||
       typeof paidAt !== "string" || !Number.isFinite(Date.parse(paidAt)) ||
@@ -22,7 +22,10 @@ export async function POST(request: Request) {
     if (payment.method === "CARD") {
       if (payment.provider !== "TOSS_FRONT" || requestId !== payment.front?.paymentKey) throw new Error("Invalid card identity")
       verifyTossFrontPaymentProof(payment.front, amount)
-      if (new Date(payment.front.timestamp).toISOString() !== paidAt) throw new Error("Invalid approval time")
+      const submittedAt = Date.parse(paidAt)
+      // Use the original fallback time when verifying a retried, signed approval.
+      if (submittedAt < Date.UTC(2020, 0, 1) || submittedAt > Date.now() + 86400000 ||
+          collectionPaidAt(payment.front.timestamp, submittedAt) !== paidAt) throw new Error("Invalid approval time")
     } else if (!/^cash-[0-9a-f-]{36}$/.test(requestId)) throw new Error("Invalid cash identity")
   } catch {
     return NextResponse.json({ status: "error" }, { status: 400 })

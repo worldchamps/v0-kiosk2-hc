@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { pmsFetch, pmsKioskConfig } from "@/lib/pms-kiosk"
+import { getDB } from "@/lib/firebase-admin"
 
 export async function GET(request: Request) {
   const reservationId = new URL(request.url).searchParams.get("reservationId")
@@ -15,6 +16,18 @@ export async function GET(request: Request) {
         [data.price, data.collected, data.remaining].some(value => !Number.isSafeInteger(value) || value < 0) ||
         (data.reason !== undefined && (typeof data.reason !== "string" || data.reason.length > 200))) {
       throw new Error("Invalid balance")
+    }
+    if (data.payable) {
+      const database = getDB()
+      const claimKey = (await database.ref(`payment_claims_by_reservation/toss_front/${reservationId}`).once("value")).val()
+      if (claimKey !== null) {
+        if (typeof claimKey !== "string" || !/^[a-f0-9]{64}$/.test(claimKey)) throw new Error("Invalid payment claim index")
+        const claim = (await database.ref(`payment_claims/toss_front/${claimKey}`).once("value")).val()
+        if (claim?.purpose === "collection") {
+          data.payable = false
+          data.reason = "kiosk_payment_unresolved"
+        }
+      }
     }
     return NextResponse.json({
       configured: true, payable: data.payable, remaining: data.remaining,

@@ -5,8 +5,8 @@ let warned = false
 export function pmsKioskConfig() {
   const baseUrl = process.env.PMS_BASE_URL?.trim().replace(/\/+$/, "")
   const key = process.env.PMS_KIOSK_KEY?.trim()
-  const kioskId = process.env.KIOSK_DEVICE_ID?.trim()
-  if (!baseUrl || !key || key.length < 32 || !kioskId) {
+  const kioskId = process.env.KIOSK_DEVICE_ID
+  if (!baseUrl || !key || key.length < 32 || !kioskId || !/^[A-Za-z0-9_-]{1,200}$/.test(kioskId)) {
     if (!warned) {
       console.warn("[PMS] Reservation collection disabled: kiosk connection settings incomplete.")
       warned = true

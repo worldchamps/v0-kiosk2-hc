@@ -12,6 +12,13 @@ export function cashCollectionAmount(remaining: number, cashBackend?: string | n
   return remaining
 }
 
+export function collectionPaidAt(timestamp: number, now = Date.now()) {
+  const milliseconds = timestamp < 1e12 ? timestamp * 1000 : timestamp
+  const valid = Number.isFinite(milliseconds) && milliseconds >= Date.UTC(2020, 0, 1) &&
+    milliseconds <= now + 86400000
+  return new Date(valid ? milliseconds : now).toISOString()
+}
+
 export async function submitCollection(body: string, timeoutMs = 10000): Promise<string> {
   try {
     const response = await fetch("/api/reservation-collection", {

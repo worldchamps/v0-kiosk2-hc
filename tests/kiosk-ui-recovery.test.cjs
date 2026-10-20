@@ -1074,6 +1074,19 @@ test('collection recorded or duplicate clears the lock before check-in; amount_m
     assert.equal(Boolean(h.session.pendingBooking), status === 'amount_mismatch')
   }
 })
+test('card collection payload uses normalized seconds/ms and clamps old or far-future approval times', async () => {
+  const now = Date.parse('2026-10-20T01:00:00.000Z')
+  class Clock extends Date { static now() { return now } }
+  for (const timestamp of [now / 1000, now, Date.UTC(2019, 0, 1), now + 2 * 86400000]) {
+    const h = await collectionKiosk({ clock: Clock })
+    await h.component('PaymentScreen').props.onPaymentComplete({ method: 'CARD', provider: 'TOSS_FRONT',
+      front: { paymentKey: 'approved-test-key', timestamp } })
+    await h.settle()
+    assert.equal(JSON.parse(h.collections[0]).paidAt, new Date(now).toISOString())
+    assert.equal(new Set(h.collections).size, 1)
+    assert.equal(h.posts.length, 1)
+  }
+})
 test('collection retries including delays stop at 30 seconds and bound the final call to six seconds', async () => {
   let now = 0, lastTimeout = 0; const deadlines = []
   class Clock extends Date { static now() { return now } }
@@ -1139,11 +1152,12 @@ test('collection back navigation requires successful cancellation, and failed ev
   returnHomeOnError(h)
 })
 test('10. failed direct balance and unresolved payment block collection and check-in then return home', async () => {
-  for (const failure of ['offline', 'unresolved']) {
+  for (const failure of ['offline', 'local-claim-read-failed', 'unresolved']) {
     const h = await collectionKiosk({
       lookup: async () => Response.json({ reservations: [{ reservationId: 'QA-ONLY', roomNumber: 'B901', guestName: 'QA', bookingPlatform: '전화예약' }] }),
       balance: async () => {
         if (failure === 'offline') throw new Error('offline')
+        if (failure === 'local-claim-read-failed') return Response.json({ error: 'Synthetic claim lookup failed' }, { status: 503 })
         return Response.json({ configured: true, payable: false, remaining: 30000, collected: 0, price: 30000, reason: 'kiosk_payment_unresolved' })
       },
     })
