@@ -1012,7 +1012,7 @@ async function kiosk(scenario = {}) {
         collections.push(options.body);
         return scenario.collection ? scenario.collection(options) : Response.json({ status: 'error' }, { status: 503 });
       }
-      posts.push(options.body); return { ok: true, status: pending ? 202 : 200, json: async () => ({ success: !pending, pending, cardIssue: pending ? undefined : scenario.cardIssue, data: { roomNumber: 'B901', password: 'TEST' } }) };
+      posts.push(options.body); return { ok: true, status: pending ? 202 : 200, json: async () => ({ success: !pending, pending, cardIssue: pending ? undefined : scenario.cardIssue, data: { roomNumber: scenario.roomNumber || 'B901', password: 'TEST' } }) };
     } });
   const render = () => h.render({ onChangeMode: scenario.onChangeMode || (() => {}) }); const settle = async () => { await new Promise(resolve => setImmediate(resolve)); render(); };
   render(); for (const effect of h.effects) effect(); await settle();
@@ -1037,6 +1037,113 @@ function returnHomeOnError(h) {
   h.timers.at(-1).fn(); h.render()
   assert(h.component('on-site-reservation'))
 }
+test('collection recording shows the existing spinner and a short wait message', async () => {
+  let finish
+  const h = await collectionKiosk({ collection: () => new Promise(resolve => { finish = resolve }) })
+  const completing = h.component('PaymentScreen').props.onPaymentComplete({ method: 'CASH' })
+  await h.settle()
+  const status = nodes(h.render()).find(node => node.props?.role === 'status')
+  assert(status); assert.equal(text(status).trim(), '잠시만 기다려 주세요')
+  assert(nodes(status).some(node => node.props?.className?.includes('animate-spin')))
+  assert(!h.visible('다시 결제')); assert(!h.visible('결제를 기록'))
+  finish(Response.json({ status: 'recorded', reservationId: 'QA-ONLY' }))
+  await completing
+})
+
+const collectionCardPayment = {
+  method: 'CARD', provider: 'TOSS_FRONT',
+  front: { paymentKey: 'synthetic-collection-approval', paymentMethod: 'CARD', amount: 30000,
+    tax: 2727, supplyValue: 27273, approvalNumber: 'QA-123456', timestamp: 1792458000000,
+    installment: 0, issuerName: '테스트카드', maskedCardNumber: '1234-****-****-5678', tid: 'QA-TID',
+    signature: 'synthetic-proof-only' },
+}
+const collectionCardReceipt = {
+  provider: 'TOSS_FRONT', amount: 30000, tax: 2727, supplyValue: 27273,
+  approvalNumber: 'QA-123456', timestamp: 1792458000000, installment: 0,
+  issuerName: '테스트카드', maskedCardNumber: '1234-****-****-5678', tid: 'QA-TID',
+}
+
+async function collectionCompletion(scenario = {}) {
+  const printed = [], timers = [], exits = []
+  const h = await collectionKiosk({
+    collection: async () => Response.json({ status: 'recorded', reservationId: 'QA-ONLY' }),
+    ...scenario,
+  })
+  if (!scenario.pendingCheckIn) h.confirmCheckIn()
+  await h.component('PaymentScreen').props.onPaymentComplete(scenario.payment || collectionCardPayment)
+  await h.settle()
+  if (scenario.pendingCheckIn) {
+    assert.equal(h.component('check-in-complete'), undefined)
+    h.confirmCheckIn()
+    await h.button('이 예약의 체크인 처리 결과 다시 확인').onClick()
+    await h.settle()
+  }
+  const complete = h.component('check-in-complete')
+  assert(complete, 'paid check-in must reach completion')
+  const props = { ...complete.props, onNavigate: screen => exits.push(screen) }
+  const view = load('components/check-in-complete.tsx', {
+    'next/image': { default: 'img' }, '@/lib/location-utils': { getBuildingZoomImagePath: () => '/test.png' },
+    '@/lib/printer-utils-unified': { printReceipt: async data => {
+      printed.push(data)
+      if (scenario.printResult === 'throw') throw Error('synthetic printer failure')
+      return scenario.printResult !== false
+    } },
+    '@/lib/audio-utils': { stopAllAudio() {} }, '@/hooks/use-idle-timer': { useIdleTimer() {} },
+    '@/lib/property-utils': { getKioskPropertyId: () => 'property1', propertyUsesElectron: () => true },
+  }, { setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length }, clearTimeout() {},
+    setInterval: () => 1, clearInterval() {}, window: { electronAPI: { send: command => exits.push(command) } } })
+  view.render(props); view.effects[1]()
+  const printTimer = timers.find(timer => timer.ms === 1000)
+  assert(printTimer, 'normal-mode completion must schedule auto print')
+  printTimer.fn()
+  await new Promise(resolve => setImmediate(resolve)); view.render(props)
+  assert.equal(printed.length, 1)
+  return { h, view, props, printed, timers, exits }
+}
+
+for (const mode of ['normal', 'pending-check-in', 'collection-unrecorded']) {
+  test(`card collection ${mode} passes approval and amount through completion to printReceipt`, async () => {
+    const { h, props, printed } = await collectionCompletion({
+      roomNumber: 'C201',
+      pendingCheckIn: mode === 'pending-check-in',
+      ...(mode === 'collection-unrecorded' ? { collection: async () => Response.json({ status: 'error' }, { status: 503 }) } : {}),
+    })
+    assert.equal(Boolean(props.isPopupMode), false)
+    assert.deepEqual(JSON.parse(JSON.stringify(printed[0].paymentReceipt)), collectionCardReceipt)
+    assert.equal(printed[0].roomNumber, 'C201')
+    if (mode === 'collection-unrecorded') assert.equal(h.session.pendingBooking.kind, 'collection')
+  })
+}
+
+test('cash collection normal keeps change owed and prints no card receipt', async () => {
+  for (const changeOwed of [undefined, 2000]) {
+    const { view, props, printed } = await collectionCompletion({
+      payment: { method: 'CASH', ...(changeOwed === undefined ? {} : { changeOwed, changeUncertain: true }) },
+    })
+    assert.equal(props.reservation.paymentReceipt, null)
+    assert.equal(printed[0].paymentReceipt, null)
+    assert.equal(printed[0].changeOwed, changeOwed)
+    if (changeOwed) {
+      assert.equal(props.reservation.payment.changeUncertain, true)
+      assert(view.visible('미지급 거스름돈 2,000원'))
+    }
+  }
+})
+
+for (const printResult of [false, 'throw']) {
+  test(`collection normal print failure ${printResult} returns without another payment or card issue`, async () => {
+    let issues = 0
+    const { h, view, timers, exits } = await collectionCompletion({
+      printResult, cardIssue: { required: true, ticket: 'synthetic-card-ticket' },
+      cardHelpers: { checkCardBeforePayment: async () => {}, issueCheckInCard: async () => { issues++; return { success: true, settled: true } } },
+    })
+    assert(view.visible('화면의 객실 정보를 확인해 주세요'))
+    assert.equal(issues, 1); assert.equal(h.collections.length, 1); assert.equal(h.posts.length, 1)
+    timers.find(timer => timer.ms === 25000).fn()
+    assert.deepEqual(exits, ['standby'])
+  })
+}
+
 test('6. three failed collections preserve the same evidence and still check in without another card preflight or device fault', async () => {
   for (const method of ['CASH', 'CARD']) {
     let checks = 0

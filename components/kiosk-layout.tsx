@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import { Loader2 } from "lucide-react"
 import StandbyScreen from "@/components/standby-screen"
 import IdleScreen from "@/components/idle-screen"
 import ReservationConfirm from "@/components/reservation-confirm"
@@ -639,6 +640,18 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         body: JSON.stringify({ requestId, reservationId: collection.reservationId, expectedCollected: collection.collected,
           amount: collection.remaining, paidAt, payment }) }
       if (!savePendingBooking(booking)) return
+      const front = payment.front!
+      setReservationData(previous => previous ? {
+        ...previous,
+        paymentReceipt: payment.method === "CARD" ? {
+          provider: "TOSS_FRONT", amount: front.amount, tax: front.tax, supplyValue: front.supplyValue,
+          approvalNumber: front.approvalNumber, timestamp: front.timestamp, installment: front.installment,
+          issuerName: front.issuerName || "", maskedCardNumber: front.maskedCardNumber || "", tid: front.tid || "",
+        } : null,
+        ...(payment.method === "CASH" && payment.changeOwed !== undefined ? {
+          payment: { method: "CASH", changeOwed: payment.changeOwed, changeUncertain: payment.changeUncertain === true },
+        } : {}),
+      } : previous)
       setCurrentScreen("collectionRecording")
       const deadline = Date.now() + 30000
       for (let attempt = 0; attempt < 3 && Date.now() < deadline; attempt++) {
@@ -738,8 +751,9 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
             onUnavailable={message => { setError(message); setReturnHomeAfterError(true) }} />
         )}
         {currentScreen === "collectionRecording" && (
-          <div role="status" className="p-12 text-center text-3xl">
-            결제를 기록하고 있습니다. 화면을 끄거나 다시 결제하지 마세요.
+          <div role="status" className="flex items-center justify-center gap-4 p-12 text-center text-3xl">
+            <Loader2 className="h-8 w-8 animate-spin text-blue-500" aria-hidden="true" />
+            <p>잠시만 기다려 주세요</p>
           </div>
         )}
 

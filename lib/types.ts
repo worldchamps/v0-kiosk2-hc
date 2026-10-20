@@ -39,6 +39,8 @@ export interface RoomStatus {
 
 export interface Reservation {
   cardDelivery?: import("@/types/electron").CardKeyResult
+  paymentReceipt?: import("@/lib/printer-utils").CardPaymentReceiptData | null
+  payment?: Pick<import("@/lib/payment-types").CompletedPayment, "method" | "changeOwed" | "changeUncertain">
   place: string
   guestName: string
   reservationId: string

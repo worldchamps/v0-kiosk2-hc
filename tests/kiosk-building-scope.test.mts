@@ -372,6 +372,7 @@ test("kiosk UI waits for PC config, overrides a conflicting URL/location, and bl
         useEffect: (effect: any) => { effects.push(effect) }, useRef: (value: any) => ({ current: value }),
       },
       "react/jsx-runtime": { jsx: element, jsxs: element },
+      "lucide-react": { Loader2: "Spinner" },
       "next/navigation": { useRouter: () => ({}) },
       "@/lib/kiosk-scope": scope,
       "@/lib/kiosk-operator-shortcuts": { kioskOperatorShortcut: () => null },
