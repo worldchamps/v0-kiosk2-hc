@@ -10,8 +10,10 @@ export async function GET(request: Request) {
   if (!pmsKioskConfig()) return NextResponse.json({ configured: false })
   try {
     const response = await pmsFetch(`/api/kiosk/balance?reservationId=${encodeURIComponent(reservationId)}`, { method: "GET" }, 8000)
+    if (response.status === 404) return NextResponse.json({ configured: false })
     if (!response.ok) throw new Error("Balance unavailable")
     const data = await response.json()
+    if (data?.enabled === false) return NextResponse.json({ configured: false })
     if (!data || data.reservationId !== reservationId || typeof data.payable !== "boolean" ||
         [data.price, data.collected, data.remaining].some(value => !Number.isSafeInteger(value) || value < 0) ||
         (data.reason !== undefined && (typeof data.reason !== "string" || data.reason.length > 200))) {

@@ -5,8 +5,10 @@ import vm from "node:vm"
 import ts from "typescript"
 import * as crypto from "node:crypto"
 
-const env = { PMS_BASE_URL: "https://pms.invalid/", PMS_KIOSK_KEY: "synthetic-key-".repeat(3),
+const env = { PMS_BASE_URL: "https://pms.invalid/",
   KIOSK_DEVICE_ID: "qa-kiosk", TOSS_FRONT_PAIRING_KEY: "synthetic-proof-key" }
+const deviceToken = "synthetic-device-id-token"
+const deviceAuth = { kioskDeviceIdToken: async () => deviceToken }
 const next = { NextResponse: { json: Response.json } }
 function load(file: string, dependencies: Record<string, any> = {}, globals: Record<string, any> = {}) {
   const exports: Record<string, any> = {}
@@ -34,8 +36,8 @@ function card(extra: Record<string, any> = {}) {
 const request = (body: unknown) => new Request("http://kiosk.invalid/api/reservation-collection", {
   method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" },
 })
-function server(fetcher: (...args: any[]) => any, settings: Record<string, string> = env) {
-  return load("lib/pms-kiosk.ts", { "server-only": {} }, { process: { env: settings }, fetch: fetcher })
+function server(fetcher: (...args: any[]) => any, settings: Record<string, string> = env, globals: Record<string, any> = deviceAuth) {
+  return load("lib/pms-kiosk.ts", { "server-only": {} }, { process: { env: settings }, fetch: fetcher, ...globals })
 }
 function balanceRoute(pms: any, getDB: () => any = () => ({ ref: (_path: string) => ({ once: async () => ({ val: () => null }) }) })) {
   return load("app/api/reservation-balance/route.ts", { "next/server": next, "@/lib/pms-kiosk": pms,
@@ -45,7 +47,7 @@ function balanceRoute(pms: any, getDB: () => any = () => ({ ref: (_path: string)
 test("1. balance disabled settings preserve legacy behavior; configured fetch is authenticated, bounded and private", async () => {
   const good = { status: "ok", reservationId: cash.reservationId, price: 40000, collected: 10000, remaining: 30000,
     payable: true, guestName: "Do not expose", phoneNumber: "private", reason: "payable" }
-  for (const settings of [{}, { ...env, KIOSK_DEVICE_ID: "" }, { ...env, PMS_KIOSK_KEY: "short" }]) {
+  for (const settings of [{}, { ...env, KIOSK_DEVICE_ID: "" }]) {
     const pms = server(() => assert.fail("Disabled configuration called PMS"), settings)
     const route = balanceRoute(pms, () => assert.fail("Disabled configuration read Firebase"))
     const response = await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))
@@ -57,10 +59,12 @@ test("1. balance disabled settings preserve legacy behavior; configured fetch is
   disabled.pmsKioskConfig(); disabled.pmsKioskConfig(); assert.equal(warnings, 1)
   const timeouts: number[] = []
   const pms = load("lib/pms-kiosk.ts", { "server-only": {} }, {
+    ...deviceAuth,
     AbortSignal: { timeout: (ms: number) => { timeouts.push(ms); return AbortSignal.timeout(ms) } },
     fetch: async (url: string, init: RequestInit) => {
       assert.equal(url, `https://pms.invalid/api/kiosk/balance?reservationId=${cash.reservationId}`)
-      assert.equal(new Headers(init.headers).get("Authorization"), `Bearer ${env.PMS_KIOSK_KEY}`)
+      assert.equal(new Headers(init.headers).get("Authorization"), `Bearer ${deviceToken}`)
+      assert.equal(new Headers(init.headers).get("X-PMS-Kiosk-Device"), env.KIOSK_DEVICE_ID)
       assert.equal(init.redirect, "error"); assert.equal(init.cache, "no-store")
       return Response.json(good)
     },
@@ -72,17 +76,97 @@ test("1. balance disabled settings preserve legacy behavior; configured fetch is
   for (const id of ["", " ".repeat(2), "a".repeat(201)]) {
     assert.equal((await route.GET(new Request(`http://kiosk.invalid/?reservationId=${encodeURIComponent(id)}`))).status, 400)
   }
-  for (const bad of ["timeout", "500", "json", null, { ...good, reservationId: "other" },
+  for (const bad of ["timeout", "500", "401", "403", "json", null, { ...good, reservationId: "other" },
     { ...good, price: -1 }, { ...good, collected: "10000" }, { ...good, remaining: 1.5 },
     { ...good, remaining: Number.MAX_SAFE_INTEGER + 1 }, { ...good, payable: "true" }]) {
     const pms = server(async () => {
       if (bad === "timeout") throw new DOMException("Synthetic timeout", "TimeoutError")
       if (bad === "500") return Response.json(good, { status: 500 })
+      if (bad === "401" || bad === "403") return Response.json({ enabled: false }, { status: Number(bad) })
       if (bad === "json") return new Response("not-json")
       return Response.json(bad)
     })
     const route = balanceRoute(pms, () => assert.fail("Invalid PMS balance read Firebase"))
     assert.equal((await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))).status, 503)
+  }
+})
+
+test("unpackaged kiosks without a token function keep the legacy balance flow", async () => {
+  for (const kioskDeviceIdToken of [undefined, null, deviceToken]) {
+    const pms = server(() => assert.fail("No native token provider must not call PMS"), env, { kioskDeviceIdToken })
+    const route = balanceRoute(pms, () => assert.fail("Disabled balance must not read Firebase"))
+    const response = await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { configured: false })
+  }
+})
+
+test("PMS defaults to the deployed address and uses the latest native token on each call", async () => {
+  let tokens = 0
+  const pms = server(async (url: string, init: RequestInit) => {
+    assert.equal(url, "https://v0-pms-seven.vercel.app/api/kiosk/balance")
+    assert.equal(new Headers(init.headers).get("Authorization"), `Bearer token-${tokens}`)
+    assert.equal(new Headers(init.headers).get("X-PMS-Kiosk-Device"), env.KIOSK_DEVICE_ID)
+    assert.equal(new Headers(init.headers).get("Content-Type"), "application/json")
+    return Response.json({})
+  }, { KIOSK_DEVICE_ID: env.KIOSK_DEVICE_ID }, { kioskDeviceIdToken: async () => `token-${++tokens}` })
+  for (let i = 0; i < 2; i++) await pms.pmsFetch("/api/kiosk/balance", {
+    headers: { Authorization: "untrusted", "X-PMS-Kiosk-Device": "untrusted", "Content-Type": "application/json" },
+  }, 8000)
+  assert.equal(tokens, 2)
+})
+
+test("PMS 404 and enabled:false preserve legacy check-in without reading local payment claims", async () => {
+  for (const response of [
+    new Response("Route not deployed", { status: 404 }),
+    Response.json({ enabled: false }),
+    Response.json({ enabled: false, reservationId: cash.reservationId }),
+  ]) {
+    const route = balanceRoute(server(async () => response), () => assert.fail("Disabled balance must not read Firebase"))
+    const result = await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))
+    assert.equal(result.status, 200)
+    assert.deepEqual(await result.json(), { configured: false })
+  }
+})
+
+test("native token errors or invalid tokens fail closed without sending a PMS request", async () => {
+  for (const token of ["reject", undefined, "", "x".repeat(4097)]) {
+    const pms = server(() => assert.fail("Unavailable token must not call PMS"), env, {
+      kioskDeviceIdToken: async () => {
+        if (token === "reject") throw new Error("Synthetic token refresh failure")
+        return token
+      },
+    })
+    const route = balanceRoute(pms, () => assert.fail("Unavailable token must not read Firebase"))
+    const response = await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))
+    assert.equal(response.status, 503)
+    assert.deepEqual(await response.json(), { error: "결제 금액을 확인하지 못했습니다." })
+  }
+})
+
+test("token acquisition consumes the same deadline as fetch and late tokens cannot start a request", async () => {
+  for (const stage of ["token", "fetch"]) {
+    const controller = new AbortController()
+    let releaseToken!: (token: string) => void, fetched!: () => void, timers = 0, requests = 0
+    const fetchStarted = new Promise<void>(resolve => { fetched = resolve })
+    const pms = server(async (_url: string, init: RequestInit) => {
+      requests++
+      assert.equal(init.signal, controller.signal)
+      fetched()
+      return new Promise((_, reject) => init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true }))
+    }, env, {
+      kioskDeviceIdToken: () => new Promise<string>(resolve => { releaseToken = resolve }),
+      AbortSignal: { timeout: (ms: number) => { timers++; assert.equal(ms, 8000); return controller.signal } },
+    })
+    const route = balanceRoute(pms, () => assert.fail("Timed out request must not read Firebase"))
+    const pending = route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))
+    if (stage === "fetch") { releaseToken(deviceToken); await fetchStarted }
+    controller.abort(new DOMException("Synthetic deadline", "TimeoutError"))
+    const response = await pending
+    assert.equal(response.status, 503)
+    if (stage === "token") { releaseToken(deviceToken); await Promise.resolve() }
+    assert.equal(requests, stage === "fetch" ? 1 : 0)
+    assert.equal(timers, 1, "Token wait and fetch must share one timeout")
   }
 })
 
@@ -95,6 +179,7 @@ test("kiosk ID follows PMS ASCII/length boundaries and invalid settings warn onl
     " device", "device ", "\tdevice", "device\n", "장비", "a\nb"]) {
     let warnings = 0
     const pms = load("lib/pms-kiosk.ts", { "server-only": {} }, {
+      ...deviceAuth,
       process: { env: { ...env, KIOSK_DEVICE_ID: id } }, console: { warn() { warnings++ } },
     })
     assert.equal(pms.pmsKioskConfig(), null, id)
@@ -167,13 +252,15 @@ test("3. cash amounts respect the installed device denomination", () => {
   assert.equal(helpers.cashCollectionAmount(37000, "oneplus"), 37000)
 })
 
-function collectionHarness() {
+function collectionHarness(globals: Record<string, any> = deviceAuth) {
   const claims = new Map<string, any>(), posts: any[] = []
   let mode: string = "recorded", settings = { ...env }
   const pms = server(async (url: string, init: RequestInit) => {
     assert.equal(url, "https://pms.invalid/api/kiosk/collections")
     assert.equal(init.redirect, "error")
-    assert.equal(new Headers(init.headers).get("Authorization"), `Bearer ${env.PMS_KIOSK_KEY}`)
+    assert.equal(new Headers(init.headers).get("Authorization"), `Bearer ${deviceToken}`)
+    assert.equal(new Headers(init.headers).get("X-PMS-Kiosk-Device"), env.KIOSK_DEVICE_ID)
+    assert.equal(new Headers(init.headers).get("Content-Type"), "application/json")
     const body = JSON.parse(init.body as string)
     posts.push(body)
     if (mode === "timeout") throw new DOMException("Response lost after PMS commit", "TimeoutError")
@@ -182,9 +269,11 @@ function collectionHarness() {
     if (mode === "uncertain") return Response.json({ status: "uncertain", reservationId: body.reservationId }, { status: 503 })
     if (mode === "error-without-id") return Response.json({ status: "stale" }, { status: 409 })
     if (mode === "non-json") return new Response("response truncated", { status: 200 })
+    if (mode === "404") return new Response("Not found", { status: 404 })
+    if (mode === "disabled") return Response.json({ enabled: false })
     return Response.json({ status: mode, reservationId: body.reservationId, amount: body.amount, recordedAt: cash.paidAt },
       { status: ["conflict", "stale"].includes(mode) ? 409 : 200 })
-  }, settings)
+  }, settings, globals)
   const route = load("app/api/reservation-collection/route.ts", { "next/server": next, "@/lib/pms-kiosk": pms,
     "@/lib/toss-front": proofTools, "@/lib/reservation-collection": helpers,
     "@/lib/firebase-admin": {
@@ -269,14 +358,40 @@ test("5. cash validates identity and amount, preserves PMS refusal, and uses onl
   assert.equal(h.claims.size, 0)
   h.mode("error-without-id")
   assert.deepEqual(await (await h.run(cash)).json(), { status: "stale", reservationId: cash.reservationId })
-  for (const status of ["timeout", "500", "malformed", "unknown", "uncertain", "non-json"]) {
+  for (const status of ["timeout", "500", "malformed", "unknown", "uncertain", "non-json", "404", "disabled"]) {
     h.mode(status); const result = await h.run(cash)
     assert.equal(result.status, 503); assert.deepEqual(await result.json(), { status: "error" })
   }
-  h.settings.PMS_KIOSK_KEY = ""
+  h.settings.KIOSK_DEVICE_ID = ""
   const before = h.posts.length
   assert.equal((await h.run(cash)).status, 503)
   assert.equal(h.posts.length, before)
+})
+
+test("collection token failure preserves the card claim and a retry records the same payment", async () => {
+  let failToken = true
+  const h = collectionHarness({ kioskDeviceIdToken: async () => {
+    if (failToken) throw new Error("Synthetic token refresh failure")
+    return deviceToken
+  } })
+  const payment = card()
+  const response = await h.run(payment)
+  assert.equal(response.status, 503)
+  assert.deepEqual(await response.json(), { status: "error" })
+  assert.equal(h.posts.length, 0)
+  assert.equal(h.claims.size, 1)
+  failToken = false
+  assert.equal((await h.run(payment)).status, 200)
+  assert.equal(h.posts.length, 1)
+  assert.equal(h.posts[0].paymentKey, payment.requestId)
+  assert.equal(h.claims.size, 1)
+})
+
+test("collection without native authentication cannot claim or submit a payment", async () => {
+  const h = collectionHarness({})
+  assert.equal((await h.run(card())).status, 503)
+  assert.equal(h.claims.size, 0)
+  assert.equal(h.posts.length, 0)
 })
 test("collection client accepts success only with 2xx and matching reservation, and never throws offline", async () => {
   for (const [status, http, id, expected] of [

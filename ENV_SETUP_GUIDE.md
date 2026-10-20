@@ -43,17 +43,18 @@ GOOGLE_SHEETS_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KE
 GOOGLE_SHEETS_SPREADSHEET_ID=your-spreadsheet-id
 \`\`\`
 
-#### 기존 예약 미수금 결제 (장비별 선택 설정)
+#### 기존 예약 미수금 결제 (장비 인증 자동 사용)
 
-```env
-PMS_BASE_URL=
-PMS_KIOSK_KEY=
-```
+설치형 키오스크의 기존 `beachstay-kiosk-updates` 장비 인증을 자동으로 사용합니다.
+별도 키 설정이나 장비 재등록 없이 PMS의 시범 장비 목록(`KIOSK_COLLECTION_DEVICES`)에서 켭니다.
+요청에는 Firebase ID 토큰과 `KIOSK_DEVICE_ID`를 각각 `Authorization: Bearer`와
+`X-PMS-Kiosk-Device` 헤더로 전송하며, 토큰은 브라우저에 전달하지 않습니다.
 
-`PMS_BASE_URL`은 PMS 서버 주소이며, `PMS_KIOSK_KEY`는 32자 이상의 장비별 키입니다.
-기존 `KIOSK_DEVICE_ID`와 PMS에 등록한 키의 장비 ID가 일치해야 합니다.
-두 변수 중 하나가 없거나 키·장비 ID 설정이 유효하지 않으면 기존 체크인 방식으로 동작합니다.
-키는 `NEXT_PUBLIC_` 변수나 Git에 넣지 않습니다.
+PMS 주소의 기본값은 `https://v0-pms-seven.vercel.app`이며, 다른 서버를 사용할 때만
+서버 환경변수 `PMS_BASE_URL`을 지정합니다.
+장비 인증 함수가 없는 개발 모드, 잘못된 장비 ID, PMS 잔액 조회의 404 또는 `enabled:false` 응답은
+미수금 결제를 비활성화하고 기존 체크인 방식으로 동작합니다. 그 밖의 인증·조회 실패는
+503으로 처리하여 기존 직접 예약의 결제 확인을 건너뛰지 않습니다.
 
 #### API Keys
 

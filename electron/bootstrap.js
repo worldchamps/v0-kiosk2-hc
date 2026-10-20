@@ -23,6 +23,13 @@ if (!app.isPackaged) {
       NEXT_PUBLIC_KIOSK_PROPERTY_ID: config.property, OVERLAY_MODE: String(overlayMode),
     })
     app.setLoginItemSettings({ openAtLogin: true, path: app.getPath("exe") })
+    const persistConnection = updated => {
+      const saved = files.read()
+      // Token refresh must not restore device ports from the startup snapshot.
+      files.write({ ...saved, auth: updated.auth })
+    }
+    const connection = createDeviceConnection(config, persistConnection)
+    global.kioskDeviceIdToken = connection.idToken
     let heartbeat = { safe: false, at: 0, lastActivity: Date.now() }, locked = false, renderer = null, ack = null
     let activeOperations = 0, lastOperation = Date.now()
     global.kioskActiveOperations = () => activeOperations
@@ -99,14 +106,9 @@ if (!app.isPackaged) {
     }
     require("./main")
     const publicKey = fs.readFileSync(path.join(process.resourcesPath, "update-public.pem"), "utf8")
-    const persistConnection = updated => {
-      const saved = files.read()
-      // Token refresh must not restore device ports from the startup snapshot.
-      files.write({ ...saved, auth: updated.auth })
-    }
     const updater = createKioskUpdater({
       deviceId: config.deviceId, publicKey, version: app.getVersion(), stateFile: files.stateFile,
-      pollStatus: createDeviceConnection(config, persistConnection).pollStatus,
+      pollStatus: connection.pollStatus,
       createUpdater: (options) => new (require("electron-updater").NsisUpdater)({ provider: "custom", updateProvider: PrivateReleaseProvider, ...options }),
       prepare, resume,
       ready: () => heartbeat.at > 0 && Date.now() - heartbeat.at < 10000,

@@ -11,23 +11,26 @@ async function jsonRequest(url, options = {}, fetcher = fetch) {
 }
 function createDeviceConnection(config, persist, fetcher = fetch) {
   check(ID.test(config.deviceId), "잘못된 장비 ID")
-  let idToken = null, expiresAt = 0
+  let idToken = null, expiresAt = 0, authenticating = null
   const post = (url, body) => jsonRequest(url, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   }, fetcher)
-  async function authenticate() {
-    if (idToken && expiresAt > Date.now() + 60000) return idToken
-    const result = config.auth
-      ? await post("https://securetoken.googleapis.com/v1/token?key=" + cloud.apiKey, { grant_type: "refresh_token", refresh_token: config.auth.refreshToken })
-      : await post("https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=" + cloud.apiKey, { returnSecureToken: true })
-    const uid = result.user_id || result.localId
-    check(uid && (!config.auth || config.auth.uid === uid), "장비 인증이 일치하지 않습니다.")
-    config.auth = { uid, refreshToken: result.refresh_token || result.refreshToken }
-    check(config.auth.refreshToken, "장비 인증을 저장할 수 없습니다.")
-    persist(config) // save BEFORE claiming; retry remains the same physical device
-    idToken = result.id_token || result.idToken
-    expiresAt = Date.now() + Number(result.expires_in || result.expiresIn) * 1000
-    return idToken
+  function authenticate() {
+    if (idToken && expiresAt > Date.now() + 60000) return Promise.resolve(idToken)
+    if (!authenticating) authenticating = (async () => {
+      const result = config.auth
+        ? await post("https://securetoken.googleapis.com/v1/token?key=" + cloud.apiKey, { grant_type: "refresh_token", refresh_token: config.auth.refreshToken })
+        : await post("https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=" + cloud.apiKey, { returnSecureToken: true })
+      const uid = result.user_id || result.localId
+      check(uid && (!config.auth || config.auth.uid === uid), "장비 인증이 일치하지 않습니다.")
+      config.auth = { uid, refreshToken: result.refresh_token || result.refreshToken }
+      check(config.auth.refreshToken, "장비 인증을 저장할 수 없습니다.")
+      await persist(config) // save BEFORE claiming; retry remains the same physical device
+      idToken = result.id_token || result.idToken
+      expiresAt = Date.now() + Number(result.expires_in || result.expiresIn) * 1000
+      return idToken
+    })().finally(() => { authenticating = null })
+    return authenticating
   }
   async function access(key, method = "GET", body) {
     check(/^[a-zA-Z0-9_/-]+$/.test(key), "잘못된 장비 경로")
@@ -54,6 +57,6 @@ function createDeviceConnection(config, persist, fetcher = fetch) {
     await access("status/" + config.deviceId, "PUT", report)
     return (await access("requests/" + config.deviceId)) || { request: null }
   }
-  return { pair, pollStatus, access }
+  return { pair, pollStatus, access, idToken: authenticate }
 }
 module.exports = { createDeviceConnection, jsonRequest }

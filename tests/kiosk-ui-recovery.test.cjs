@@ -1171,6 +1171,15 @@ test('disabled settings and failed platform balance retain legacy check-in; unav
     const h = await collectionKiosk({ balance })
     assert.equal(h.posts.length, 1); assert.equal(h.component('PaymentScreen'), undefined)
   }
+  for (const bookingPlatform of ['직접예약', '전화예약', '현장예약']) {
+    const legacy = await collectionKiosk({
+      lookup: async () => Response.json({ reservations: [{ reservationId: 'QA-ONLY', roomNumber: 'B901', guestName: 'QA', bookingPlatform }] }),
+      balance: async () => Response.json({ configured: false }),
+    })
+    assert.equal(legacy.posts.length, 1)
+    assert.equal(legacy.component('PaymentScreen'), undefined)
+    assert.equal(legacy.observed.started, 0)
+  }
   const h = await collectionKiosk({ hardware: async () => { throw new Error('hardware offline') } })
   assert.equal(h.component('PaymentScreen').props.cashAmount, 0)
   await h.component('PaymentScreen').props.onCancel(); await h.settle()

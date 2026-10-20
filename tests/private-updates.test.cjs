@@ -97,6 +97,132 @@ test("failed refresh does not silently register a new device and errors do not e
     (e) => !e.message.includes("secret") && e.status === 403)
 })
 
+test("PMS token requests and update polling share one refresh and persistence", async () => {
+  const config = { deviceId: "qa-local-device", auth: { uid: "qa-uid", refreshToken: "qa-refresh" } }
+  let refreshes = 0, saved = 0, release
+  const pending = new Promise(resolve => { release = resolve })
+  const connection = createDeviceConnection(config, async () => {
+    saved++
+    await pending
+  }, async (url, options) => {
+    if (url.includes("securetoken")) {
+      refreshes++
+      assert.equal(JSON.parse(options.body).refresh_token, "qa-refresh")
+      return Response.json({ user_id: "qa-uid", refresh_token: "qa-new-refresh", id_token: "qa-token", expires_in: "3600" })
+    }
+    assert.equal(saved, 1)
+    assert.equal(new URL(url).searchParams.get("auth"), "qa-token")
+    return Response.json(null)
+  })
+  const tokens = [connection.idToken(), connection.idToken(), connection.idToken()]
+  const poll = connection.pollStatus({ version: "1.3.52", state: "online" })
+  assert.equal(refreshes, 1)
+  release()
+  assert.deepEqual(await Promise.all(tokens), ["qa-token", "qa-token", "qa-token"])
+  await poll
+  assert.equal(await connection.idToken(), "qa-token")
+  assert.equal(refreshes, 1)
+  assert.equal(saved, 1)
+  assert.equal(config.auth.refreshToken, "qa-new-refresh")
+})
+
+test("concurrent failed token refresh is shared and a later call can retry", async () => {
+  for (const failure of ["network", "persist"]) {
+    const config = { deviceId: "qa-local-device", auth: { uid: "qa-uid", refreshToken: "qa-refresh" } }
+    let attempts = 0, fail = true
+    const connection = createDeviceConnection(config, () => {
+      if (fail && failure === "persist") throw new Error("Synthetic persistence failure")
+    }, async () => {
+      attempts++
+      if (fail && failure === "network") throw new Error("Synthetic network failure")
+      return Response.json({ user_id: "qa-uid", refresh_token: "qa-refresh", id_token: "qa-token", expires_in: "3600" })
+    })
+    const results = await Promise.allSettled([connection.idToken(), connection.idToken(),
+      connection.pollStatus({ version: "1.3.52", state: "online" })])
+    assert.ok(results.every(result => result.status === "rejected"))
+    assert.equal(attempts, 1)
+    fail = false
+    assert.equal(await connection.idToken(), "qa-token")
+    assert.equal(attempts, 2)
+  }
+})
+
+test("concurrent token calls share initial signup and renew an expiring token only once", async () => {
+  const config = { deviceId: "qa-new-device" }
+  let signups = 0, refreshes = 0, saved = 0
+  const connection = createDeviceConnection(config, () => saved++, async url => {
+    if (url.includes("accounts:signUp")) {
+      signups++
+      return Response.json({ localId: "qa-uid", refreshToken: "qa-refresh", idToken: "qa-short-token", expiresIn: "30" })
+    }
+    refreshes++
+    return Response.json({ user_id: "qa-uid", refresh_token: "qa-new-refresh", id_token: "qa-token", expires_in: "3600" })
+  })
+  assert.deepEqual(await Promise.all([connection.idToken(), connection.idToken()]), ["qa-short-token", "qa-short-token"])
+  assert.equal(signups, 1)
+  assert.deepEqual(await Promise.all([connection.idToken(), connection.idToken()]), ["qa-token", "qa-token"])
+  assert.equal(refreshes, 1)
+  assert.equal(saved, 2)
+})
+
+test("packaged bootstrap shares one native connection before Next starts; development exposes no token", async () => {
+  const fs = require("node:fs"), path = require("node:path"), vm = require("node:vm")
+  const source = fs.readFileSync(path.join(__dirname, "../electron/bootstrap.js"), "utf8")
+  for (const isPackaged of [false, true]) {
+    let boot, connections = 0, mainStarted = false, updaterOptions, persist
+    const config = { deviceId: "qa-kiosk", property: "property1", env: { PRINTER_PORT: "old-port" } }
+    let saved = { ...config, env: { PRINTER_PORT: "current-port" } }
+    const connection = { idToken: async () => "qa-token", pollStatus: async () => ({ request: null }) }
+    const dependencies = {
+      electron: {
+        app: { isPackaged, requestSingleInstanceLock: () => true,
+          whenReady: () => ({ then: callback => { boot = callback(); return boot } }),
+          getPath: () => "synthetic.exe", getVersion: () => "1.3.52", setLoginItemSettings() {}, on() {},
+          quit: () => assert.fail("Bootstrap must not fail"),
+        },
+        ipcMain: { handle() {}, on() {} }, dialog: { showErrorBox: (_title, message) => assert.fail(message) },
+      },
+      "node:fs": { readFileSync: () => "synthetic-public-key" }, "node:path": path,
+      "./device-setup": {
+        deviceFiles: () => ({ read: () => saved, write: value => { saved = value }, stateFile: "synthetic-state" }),
+        ensureDevice: async () => config,
+      },
+      "./firebase-updates": { createDeviceConnection: (settings, save) => {
+        connections++
+        assert.equal(settings, config)
+        persist = save
+        return connection
+      } },
+      "./private-release-provider": {}, "./update-protocol": {},
+      "./kiosk-updater": { createKioskUpdater: options => { updaterOptions = options; return { tick() {} } } },
+    }
+    const context = { process: { env: {}, resourcesPath: "synthetic-resources" },
+      setInterval: () => 1, clearInterval() {},
+    }
+    context.global = context
+    context.require = name => {
+      if (name === "./main") {
+        mainStarted = true
+        assert.equal(context.kioskDeviceIdToken, isPackaged ? connection.idToken : undefined)
+        return {}
+      }
+      assert.ok(name in dependencies, "Unexpected dependency: " + name)
+      return dependencies[name]
+    }
+    vm.runInNewContext(source, context)
+    if (boot) await boot
+    assert.equal(mainStarted, true)
+    assert.equal(connections, isPackaged ? 1 : 0)
+    if (isPackaged) {
+      assert.equal(updaterOptions.pollStatus, connection.pollStatus)
+      assert.equal(await context.kioskDeviceIdToken(), "qa-token")
+      persist({ ...config, auth: { uid: "qa-uid", refreshToken: "qa-refresh" } })
+      assert.equal(saved.env.PRINTER_PORT, "current-port")
+      assert.equal(saved.auth.refreshToken, "qa-refresh")
+    }
+  }
+})
+
 test("device status hides asset URLs normalized into Windows paths", async () => {
   const config = { deviceId: "qa-redact-device", auth: { uid: "qa-uid", refreshToken: "synthetic-refresh" } }
   const reports = []
