@@ -14,8 +14,13 @@ export async function GET(request: Request) {
     if (!response.ok) throw new Error("Balance unavailable")
     const data = await response.json()
     if (data?.enabled === false) return NextResponse.json({ configured: false })
+    const charges = data?.charges
     if (!data || data.reservationId !== reservationId || typeof data.payable !== "boolean" ||
         [data.price, data.collected, data.remaining].some(value => !Number.isSafeInteger(value) || value < 0) ||
+        (data.due !== undefined && (!Number.isSafeInteger(data.due) || data.due < 0)) ||
+        (charges !== undefined && (!Array.isArray(charges) || charges.length > 20 ||
+          charges.some(charge => !charge || typeof charge.item !== "string" || charge.item.length < 1 ||
+            charge.item.length > 20 || !Number.isSafeInteger(charge.amount) || charge.amount <= 0))) ||
         (data.reason !== undefined && (typeof data.reason !== "string" || data.reason.length > 200))) {
       throw new Error("Invalid balance")
     }
@@ -34,6 +39,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       configured: true, payable: data.payable, remaining: data.remaining,
       collected: data.collected, price: data.price, reason: data.reason,
+      due: data.due, charges: charges ?? [],
     })
   } catch {
     return NextResponse.json({ error: "결제 금액을 확인하지 못했습니다." }, { status: 503 })

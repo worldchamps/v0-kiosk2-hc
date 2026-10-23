@@ -70,6 +70,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   const [deliveringCard, setDeliveringCard] = useState(false)
   const [collection, setCollection] = useState<{
     reservationId: string; remaining: number; collected: number; cashAmount: number; requestId: string
+    charges: { item: string; amount: number }[]
   } | null>(null)
   const collectionSubmitting = useRef(false)
   const [returnHomeAfterError, setReturnHomeAfterError] = useState(false)
@@ -538,7 +539,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
             throw new Error("이전 결제를 확인 중입니다. 010-5126-4644로 연락 주세요.")
           }
           setCollection({ reservationId: reservationData.reservationId, remaining: balance.remaining,
-            collected: balance.collected, cashAmount, requestId })
+            collected: balance.collected, cashAmount, requestId, charges: balance.charges ?? [] })
           setCurrentScreen("reservationPayment")
           return false
         }
@@ -744,11 +745,31 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         )}
 
         {currentScreen === "reservationPayment" && collection && (
-          <PaymentScreen cardAmount={collection.remaining} cashAmount={collection.cashAmount}
-            title="남은 금액 결제" description="예약 체크인을 위해 남은 금액을 결제해주세요"
-            onPaymentComplete={handleCollectionComplete}
-            onCancel={async () => { if (await cancelPayment()) goHome() }}
-            onUnavailable={message => { setError(message); setReturnHomeAfterError(true) }} />
+          <>
+            {collection.charges.length > 0 && (
+              <section aria-label="추가요금 내역" className="mx-8 mt-8 rounded-lg border bg-white p-6 text-2xl">
+                <h2 className="mb-4 font-semibold">추가요금 내역</h2>
+                <dl aria-label="추가요금 항목" tabIndex={0} className="max-h-48 space-y-3 overflow-y-auto">
+                  {collection.charges.map((charge, index) => (
+                    <div key={`${charge.item}-${index}`} className="flex justify-between gap-4">
+                      <dt className="break-words">{charge.item}</dt>
+                      <dd className="shrink-0">{charge.amount.toLocaleString()}원</dd>
+                    </div>
+                  ))}
+                </dl>
+                <div className="mt-4 flex justify-between gap-4 border-t pt-4 font-semibold">
+                  <span>결제할 금액</span>
+                  <span>{collection.remaining.toLocaleString()}원</span>
+                </div>
+              </section>
+            )}
+            <PaymentScreen cardAmount={collection.remaining} cashAmount={collection.cashAmount}
+              title={collection.charges.length > 0 ? "추가요금 결제" : "남은 금액 결제"}
+              description="예약 체크인을 위해 남은 금액을 결제해주세요"
+              onPaymentComplete={handleCollectionComplete}
+              onCancel={async () => { if (await cancelPayment()) goHome() }}
+              onUnavailable={message => { setError(message); setReturnHomeAfterError(true) }} />
+          </>
         )}
         {currentScreen === "collectionRecording" && (
           <div role="status" className="flex items-center justify-center gap-4 p-12 text-center text-3xl">

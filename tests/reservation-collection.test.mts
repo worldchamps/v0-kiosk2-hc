@@ -71,7 +71,7 @@ test("1. balance disabled settings preserve legacy behavior; configured fetch is
   })
   const route = balanceRoute(pms)
   assert.deepEqual(await (await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))).json(),
-    { configured: true, price: 40000, collected: 10000, remaining: 30000, payable: true, reason: "payable" })
+    { configured: true, price: 40000, collected: 10000, remaining: 30000, payable: true, reason: "payable", charges: [] })
   assert.deepEqual(timeouts, [8000])
   for (const id of ["", " ".repeat(2), "a".repeat(201)]) {
     assert.equal((await route.GET(new Request(`http://kiosk.invalid/?reservationId=${encodeURIComponent(id)}`))).status, 400)
@@ -88,6 +88,58 @@ test("1. balance disabled settings preserve legacy behavior; configured fetch is
     })
     const route = balanceRoute(pms, () => assert.fail("Invalid PMS balance read Firebase"))
     assert.equal((await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))).status, 503)
+  }
+})
+
+test("balance forwards extra charges and due without changing price or remaining", async () => {
+  for (const channel of ["직접예약", "네이버", "야놀자"]) {
+    const charges = [{ item: "바베큐", amount: 30000 }, { item: "인원추가", amount: 10000 }]
+    const price = 100000, due = channel === "직접예약" ? price + 40000 : 40000
+    const good = { reservationId: cash.reservationId, channel, price, due, charges,
+      collected: 10000, remaining: due - 10000, payable: true }
+    const route = balanceRoute(server(async () => Response.json(good)))
+    const response = await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { configured: true, payable: true,
+      price, due, charges, collected: 10000, remaining: due - 10000 })
+  }
+})
+
+test("balance accepts charge boundaries and optional fields independently", async () => {
+  const good = { reservationId: cash.reservationId, price: 40000, collected: 10000, remaining: 30000, payable: true }
+  for (const extra of [
+    { charges: [] },
+    { charges: Array.from({ length: 20 }, (_, index) => ({ item: "가".repeat(index + 1), amount: index + 1 })) },
+    { charges: [{ item: "기타", amount: Number.MAX_SAFE_INTEGER }], due: Number.MAX_SAFE_INTEGER },
+    { due: 0 },
+  ]) {
+    const route = balanceRoute(server(async () => Response.json({ ...good, ...extra })))
+    const response = await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { configured: true, price: good.price, collected: good.collected,
+      remaining: good.remaining, payable: true, charges: [], ...extra })
+  }
+})
+
+test("balance rejects malformed charges and due before reading payment claims", async () => {
+  const good = { reservationId: cash.reservationId, price: 40000, collected: 10000, remaining: 30000, payable: true }
+  const invalidCharges = [null, {}, "charges", 1, true,
+    Array.from({ length: 21 }, () => ({ item: "바베큐", amount: 30000 })),
+    ...[null, [], "바베큐", 30000, {}, { item: "바베큐" }, { amount: 30000 },
+      ...[null, 1, "", "가".repeat(21)].map(item => ({ item, amount: 30000 })),
+      ...[null, "30000", true, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1].map(amount => ({ item: "바베큐", amount })),
+    ].map(charge => [{ item: "인원추가", amount: 10000 }, charge]),
+  ]
+  for (const extra of [
+    ...invalidCharges.map(charges => ({ charges })),
+    ...[null, "30000", true, -1, 1.5, Number.MAX_SAFE_INTEGER + 1].map(due => ({ due })),
+  ]) {
+    let reads = 0
+    const route = balanceRoute(server(async () => Response.json({ ...good, ...extra })), () => { reads++; throw new Error("Unexpected claim read") })
+    const response = await route.GET(new Request(`http://kiosk.invalid/?reservationId=${cash.reservationId}`))
+    assert.equal(response.status, 503, JSON.stringify(extra))
+    assert.deepEqual(await response.json(), { error: "결제 금액을 확인하지 못했습니다." })
+    assert.equal(reads, 0)
   }
 })
 

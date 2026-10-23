@@ -1037,6 +1037,43 @@ function returnHomeOnError(h) {
   h.timers.at(-1).fn(); h.render()
   assert(h.component('on-site-reservation'))
 }
+test('extra charges are itemized and direct or platform reservations pay only the full remaining balance', async () => {
+  for (const bookingPlatform of ['직접예약', '네이버', '야놀자']) {
+    const charges = [{ item: '바베큐', amount: 30000 }, { item: '인원추가', amount: 10000 }]
+    const due = bookingPlatform === '직접예약' ? 140000 : 40000, remaining = due - 10000
+    const h = await collectionKiosk({
+      lookup: async () => Response.json({ reservations: [{ reservationId: 'QA-ONLY', roomNumber: 'B901', guestName: 'QA', bookingPlatform }] }),
+      balance: async () => Response.json({ configured: true, payable: true, price: 100000, due, charges, collected: 10000, remaining }),
+      collection: async () => Response.json({ status: 'recorded', reservationId: 'QA-ONLY' }),
+    })
+    const summary = nodes(h.render()).find(node => node.props?.['aria-label'] === '추가요금 내역')
+    assert(summary)
+    assert(text(summary).includes('바베큐 30,000 원'))
+    assert(text(summary).includes('인원추가 10,000 원'))
+    assert(text(summary).includes(`결제할 금액 ${remaining.toLocaleString()} 원`))
+    const payment = h.component('PaymentScreen').props
+    assert.equal(payment.title, '추가요금 결제')
+    assert.equal(payment.cardAmount, remaining); assert.equal(payment.cashAmount, remaining)
+    h.confirmCheckIn()
+    await payment.onPaymentComplete({ method: 'CASH' }); await h.settle()
+    assert.equal(h.collections.length, 1)
+    const body = JSON.parse(h.collections[0])
+    assert.equal(body.amount, remaining); assert.equal(body.expectedCollected, 10000)
+    assert.equal(h.posts.length, 1); assert.equal(h.observed.completed, 1)
+  }
+})
+
+test('legacy and empty charges keep the existing payment screen', async () => {
+  for (const extra of [{}, { charges: [] }]) {
+    const h = await collectionKiosk({ balance: async () => Response.json({
+      configured: true, payable: true, price: 40000, collected: 10000, remaining: 30000, ...extra,
+    }) })
+    assert(!h.visible('추가요금 내역'))
+    assert.equal(h.component('PaymentScreen').props.title, '남은 금액 결제')
+    assert.equal(h.component('PaymentScreen').props.cardAmount, 30000)
+  }
+})
+
 test('collection recording shows the existing spinner and a short wait message', async () => {
   let finish
   const h = await collectionKiosk({ collection: () => new Promise(resolve => { finish = resolve }) })
