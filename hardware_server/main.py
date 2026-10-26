@@ -68,7 +68,8 @@ USE_BAC2400 = HARDWARE_PROFILE == "camp"
 if HARDWARE_PROFILE is None:
     logger.error("Invalid KIOSK_HARDWARE for %s; cash, printer and card devices disabled", PROPERTY_ID)
 try:
-    MULTI3400_BD1_VALUE = int(os.environ.get("MULTI3400_BD1_VALUE", "5000"))
+    # Beach D's BD1 holds 10,000-won notes; Beach B's holds 5,000-won notes.
+    MULTI3400_BD1_VALUE = int(os.environ.get("MULTI3400_BD1_VALUE", "10000" if PROPERTY_ID == "property1" else "5000"))
 except ValueError:
     MULTI3400_BD1_VALUE = None  # Invalid local configuration must never issue a payout.
 

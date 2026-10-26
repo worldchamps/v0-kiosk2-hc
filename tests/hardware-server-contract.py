@@ -131,7 +131,8 @@ class HardwareContracts(unittest.IsolatedAsyncioTestCase):
             ({"KIOSK_PROPERTY_ID": "property3", "KIOSK_BUILDING": "A"}, False, None),
             ({"KIOSK_PROPERTY_ID": "property3"}, False, None),
             ({"KIOSK_PROPERTY_ID": "property1", "KIOSK_BUILDING": "C"}, False, None),
-            ({"KIOSK_PROPERTY_ID": "property1", "KIOSK_BUILDING": "D"}, False, None),
+            ({"KIOSK_PROPERTY_ID": "property1", "KIOSK_BUILDING": "D", "BAC2400_PORT": "COM3"}, True, "COM3"),
+            ({"KIOSK_PROPERTY_ID": "property1", "KIOSK_BUILDING": "D", "KIOSK_HARDWARE": "oneplus"}, False, None),
             ({"KIOSK_PROPERTY_ID": "property2", "KIOSK_BUILDING": "B"}, False, None),
         ]
         for env, integrated, port in cases:
@@ -139,7 +140,10 @@ class HardwareContracts(unittest.IsolatedAsyncioTestCase):
                 isolated = importlib.util.module_from_spec(spec)
                 with patch("builtins.open", side_effect=FileNotFoundError), patch.dict("os.environ", env, clear=True):
                     spec.loader.exec_module(isolated)
-                is_b = env.get("KIOSK_PROPERTY_ID") == "property3" and env.get("KIOSK_BUILDING") == "B"
+                is_b = (env.get("KIOSK_PROPERTY_ID"), env.get("KIOSK_BUILDING")) in (("property3", "B"), ("property1", "D")) \
+                    and "KIOSK_HARDWARE" not in env
+                if is_b:
+                    self.assertEqual(isolated.MULTI3400_BD1_VALUE, 10000 if env["KIOSK_PROPERTY_ID"] == "property1" else 5000)
                 self.assertEqual(isolated.USE_MULTI3400, is_b)
                 self.assertEqual(isolated.USE_BAC2400, env.get("KIOSK_PROPERTY_ID") == "property4")
                 board = isolated.multi3400 or isolated.bac2400
@@ -331,7 +335,7 @@ class HardwareContracts(unittest.IsolatedAsyncioTestCase):
             with self.subTest(building=building):
                 isolated = importlib.util.module_from_spec(spec)
                 with patch('builtins.open', side_effect=FileNotFoundError), patch.dict('os.environ',
-                        {'KIOSK_PROPERTY_ID': 'property1', 'KIOSK_BUILDING': building}, clear=True):
+                        {'KIOSK_PROPERTY_ID': 'property1', 'KIOSK_BUILDING': building, 'KIOSK_HARDWARE': 'oneplus'}, clear=True):
                     spec.loader.exec_module(isolated)
                 printer = isolated.printer
                 sdk = Mock()

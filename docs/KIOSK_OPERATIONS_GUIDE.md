@@ -217,8 +217,15 @@ DISPENSER_PORT=COM5
 
 ### 6.5 캠프·비치 B동 통합 현금 보드와 Windows 프린터
 
-통합 보드는 **property4 또는 property3 + `KIOSK_BUILDING=B`**에서만 선택합니다.
-비치 A동, C·D동, 카리브의 개별 장비 경로는 이 선택 조건에 포함되지 않습니다.
+통합 보드는 **property4, property3 + `KIOSK_BUILDING=B`, property1 + `KIOSK_BUILDING=D`**에서 선택합니다.
+비치 A동, C동, 카리브의 개별 장비 경로는 이 선택 조건에 포함되지 않습니다.
+기존 원플러스 개별 장비를 쓰는 D동 PC는 `KIOSK_HARDWARE=oneplus`로 고정되어 있어야 기존 경로를 유지합니다.
+
+비치 D동 1층(2026-10-26, `property1-kiosk-d1-32`, ia32)은 B동과 같은 MULTI3400 경로를 씁니다.
+보드 ONEPLUS MULTI 3400 Rev.A1 COM3(9600 8N1), BD1은 **1만원권**(`MULTI3400_BD1_VALUE` 기본 10000),
+프린터는 REXOD RX831-H(COM4, 115200 8N1 DTR)를 Windows 드라이버 `REXOD RMP-8300`으로 설치해 RAW 인쇄합니다.
+프린터 이름에 `REXOD` 또는 `RMP-8300`이 들어 있으면 자동 검색합니다. 보드는 권종을 거부할 수 없으므로
+1천·5천원 차단은 지폐 인식기 자체 설정으로 하며, 수납된 소액권은 B동과 같이 금액으로 인정합니다.
 포트 우선순위는 `BAC2400_PORT` → `BOARD3400_PORT` → 기본 COM5입니다.
 현장 포트는 환경변수나 **외부기기 등록 → BAC-2400 / 3400 통합 보드**에서 지정합니다.
 

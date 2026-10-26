@@ -7,7 +7,7 @@ test('unset hardware retains the three legacy profiles, including Camp and Kariv
   for (const [property, building, profile, backend] of [
     ['property4', '', 'camp', 'bac2400'], ['property3', 'B', 'beach-b', 'multi3400'],
     ['property3', 'A', 'oneplus', 'oneplus'], ['property1', '', 'oneplus', 'oneplus'],
-    ['property1', 'C', 'oneplus', 'oneplus'], ['property1', 'D', 'oneplus', 'oneplus'],
+    ['property1', 'C', 'oneplus', 'oneplus'], ['property1', 'D', 'beach-b', 'multi3400'],
     ['property2', '', 'oneplus', 'oneplus'],
   ]) {
     assert.equal(hardwareProfile(property, building, {}), profile)
@@ -22,6 +22,15 @@ test('a beach-b machine keeps MULTI3400, integrated cash and 5000-won payout aft
   assert.equal(usesIntegratedCash('property3', 'A', env), true)
   assert.equal(cashPayoutUnit('property3', 'A', env), 5000)
   assert.equal(enabled({ ...env, KIOSK_PROPERTY_ID: 'property3', KIOSK_BUILDING: 'A', CARD_DISPENSER_ENABLED: 'true' }), false)
+})
+
+test('Beach D uses MULTI3400 with 10000-won payout; a pinned ONEPLUS D machine stays ONEPLUS', () => {
+  assert.equal(cashPayoutUnit('property1', 'D', {}), 10000)
+  assert.equal(cashPayoutUnit('property3', 'B', {}), 5000)
+  assert.equal(supportsCardKey('property1', 'D', {}), false)
+  assert.equal(hardwareProfile('property1', 'D', { KIOSK_HARDWARE: 'oneplus' }), 'oneplus')
+  const { findWoosimPrinter } = require('../electron/sam4s-receipt')
+  assert.equal(findWoosimPrinter([{ name: 'Microsoft Print to PDF' }, { name: 'REXOD RMP-8300' }]).name, 'REXOD RMP-8300')
 })
 
 test('property3 A/B explicitly use Camp hardware with 10000-won BAC-2400 and no card key', () => {

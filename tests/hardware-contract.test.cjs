@@ -675,7 +675,7 @@ test('SAM4S IPC selects GIANT for property3 Camp hardware and rejects Woosim and
     ['property3', 'A', 'camp', 'sam4s'], ['property3', 'B', 'camp', 'sam4s'],
     ['property4', '', undefined, 'sam4s'], ['property3', 'B', undefined, 'woosim'],
     ['property1', 'C', 'camp', 'disabled'], ['property2', '', 'camp', 'disabled'],
-    ['property1', 'D', undefined, 'bixolon'],
+    ['property1', 'D', 'oneplus', 'bixolon'], ['property1', 'D', undefined, 'woosim'],
   ]) {
     const handlers = new Map(), prints = []; let probes = 0
     const driver = property === 'property4' ? 'SAM4S GCUBE-100' : 'SAM4S GIANT-100'

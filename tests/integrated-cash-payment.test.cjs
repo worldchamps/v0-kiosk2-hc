@@ -60,7 +60,7 @@ test('cash backend and small-bill policy come from the native hardware configura
   const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8')
   const block = source.slice(source.indexOf('ipcMain.handle("get-hardware-status"'), source.indexOf('ipcMain.handle("disconnect-printer"'))
   for (const [property, building, expected, hardware] of [['property3', 'B', 'multi3400'], ['property4', '', 'bac2400'],
-    ['property3', 'A', 'oneplus'], ['property1', 'C', 'oneplus'], ['property1', 'D', 'oneplus'], ['property2', '', 'oneplus'],
+    ['property3', 'A', 'oneplus'], ['property1', 'C', 'oneplus'], ['property1', 'D', 'multi3400'], ['property2', '', 'oneplus'],
     ['property3', 'B', 'bac2400', 'camp'], ['property3', 'A', 'bac2400', 'camp']]) {
     let handler
     vm.runInNewContext(block, { ipcMain: { handle: (_name, fn) => { handler = fn } },
@@ -69,7 +69,7 @@ test('cash backend and small-bill policy come from the native hardware configura
     })
     const status = await handler()
     assert.equal(status.cashBackend, expected)
-    assert.equal(status.cashPayoutUnit, expected === 'multi3400' ? 5000 : 10000)
+    assert.equal(status.cashPayoutUnit, expected === 'multi3400' && property === 'property3' ? 5000 : 10000)
     const fields = await screenProfile(status.cashBackend, status.cashPayoutUnit)
     assert.equal(fields.largeBillsOnly, expected === 'bac2400')
     assert.equal(fields.integratedCash, expected !== 'oneplus')
@@ -77,7 +77,7 @@ test('cash backend and small-bill policy come from the native hardware configura
 })
 
 test('payout unit is scoped to B and accepts only configured banknote denominations', () => {
-  for (const [property, building] of [['property4', ''], ['property3', 'A'], ['property1', 'C'], ['property1', 'D']]) {
+  for (const [property, building] of [['property4', ''], ['property3', 'A'], ['property1', 'C']]) {
     assert.equal(profile.cashPayoutUnit(property, building, { MULTI3400_BD1_VALUE: '5000' }), 10000)
     assert.equal(profile.usesIntegratedCash(property, building), property === 'property4')
   }

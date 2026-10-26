@@ -1,4 +1,4 @@
-"""ONEPLUS MULTI3400 FE protocol, scoped to Beach building B (BV1/BV2/BD1)."""
+"""ONEPLUS MULTI3400 FE protocol, scoped to Beach buildings B and D (BV1/BV2/BD1)."""
 import logging
 import threading
 import time

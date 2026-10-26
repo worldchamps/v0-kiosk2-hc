@@ -228,7 +228,8 @@ function findWoosimPrinter(printers, configuredName = "") {
   const wanted = configuredName.trim().toLowerCase()
   if (wanted) return printers.find((printer) =>
     [printer.name, printer.displayName].some((name) => String(name || "").toLowerCase() === wanted)) || null
-  return printers.find((printer) => /wsp[- ]?cp383/i.test(`${printer.name || ""} ${printer.displayName || ""}`)) || null
+  // Beach D uses a REXOD RX831-H (driver RMP-8300) on the same RAW path.
+  return printers.find((printer) => /wsp[- ]?cp383|rexod|rmp[- ]?8300/i.test(`${printer.name || ""} ${printer.displayName || ""}`)) || null
 }
 
 if (typeof require !== "undefined" && require.main === module) {
