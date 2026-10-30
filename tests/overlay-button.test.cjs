@@ -6,13 +6,13 @@ const vm = require('node:vm')
 const { EventEmitter } = require('node:events')
 
 function harness(property = 'property2', bounds = { x: -1280, y: 20, width: 1280, height: 720 }) {
-  const windows = [], intervals = new Set(), ipcMain = new EventEmitter()
+  const windows = [], timers = new Set(), intervals = new Set(), ipcMain = new EventEmitter()
   class Window extends EventEmitter {
     constructor(options) {
       super(); this.options = options; this.visible = options.show !== false; this.focusCount = 0
       this.sent = []; this.webContents = new EventEmitter()
       Object.assign(this.webContents, { mainFrame: {}, session: { webRequest: { onHeadersReceived() {} } },
-        isDestroyed: () => !!this.destroyed,
+        isDestroyed: () => !!this.destroyed, isLoading: () => false,
         send: (...args) => this.sent.push(args), setZoomFactor() {} })
       windows.push(this)
     }
@@ -29,14 +29,14 @@ function harness(property = 'property2', bounds = { x: -1280, y: 20, width: 1280
   }
   const context = { module: { exports: {} }, __dirname: path.join(__dirname, '../electron'), global: {},
     process: { env: { NODE_ENV: 'production', KIOSK_PROPERTY_ID: property } }, console: { log() {}, error() {} },
-    setInterval: fn => { intervals.add(fn); return fn }, clearInterval: fn => intervals.delete(fn),
+    setTimeout: fn => { timers.add(fn); return fn }, clearTimeout: fn => timers.delete(fn), setInterval: fn => { intervals.add(fn); return fn }, clearInterval: fn => intervals.delete(fn),
     require: name => name === 'electron' ? { BrowserWindow: Window, ipcMain, screen: { getPrimaryDisplay: () => ({ bounds }) }, app: { getPath: () => '' } }
       : name === 'node:fs' ? { appendFileSync() {} }
       : name === './renderer-recovery' ? require('../electron/renderer-recovery') : require(name) }
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../electron/overlay-button.js'), 'utf8'), context)
   const api = context.module.exports, button = api.createOverlayButton()
   button.webContents.emit('did-finish-load')
-  return { api, button, windows, context, intervals, tick: () => intervals.forEach(fn => fn()),
+  return { api, button, windows, context, intervals, timers, tick: () => intervals.forEach(fn => fn()),
     send: (channel, window = button, frame = window.webContents.mainFrame) => ipcMain.emit(channel, { sender: window.webContents, senderFrame: frame }) }
 }
 
@@ -112,4 +112,27 @@ test('exit destroys the non-closable banner and its keeper, even while a popup i
     assert.equal(h.api.getKioskPopup(), null)
     assert.equal(h.api.isIdleButtonSender(h.button.webContents), false)
   }
+})
+
+test('popup that never loads is dropped by the watchdog and the idle button returns; a loaded popup is kept', () => {
+  const h = harness()
+  h.send('overlay-button-clicked')
+  const stuck = h.windows[1]
+  assert.equal(h.timers.size, 1)
+  h.timers.forEach(fn => fn())
+  assert.equal(stuck.isDestroyed(), true)
+  assert.equal(h.button.visible, true)
+  assert.equal(h.api.isIdleButtonSender(h.button.webContents), true)
+  h.send('overlay-button-clicked')
+  const ok = h.windows[2]
+  ok.webContents.emit('did-finish-load')
+  assert.equal(h.timers.size, 0)
+  assert.equal(ok.isDestroyed(), false)
+})
+
+test('idle button hidden without a popup is shown again by the keeper', () => {
+  const h = harness()
+  h.button.hide()
+  h.tick()
+  assert.equal(h.button.visible, true)
 })

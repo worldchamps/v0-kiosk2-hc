@@ -14,7 +14,11 @@ function logPopup(message) {
   catch (error) { console.error("[OVERLAY_POPUP] diagnostic log unavailable:", error.message) }
 }
 
-const CHECK_INTERVAL = 250
+// 250ms마다 SetWindowPos를 다시 호출하면 화면이 깜빡이므로 느리게 확인한다.
+const CHECK_INTERVAL = 2000
+// 팝업이 이 시간 안에 뜨지 않으면 닫고 상시 버튼으로 돌아간다(관리자 없이 복귀).
+const POPUP_LOAD_LIMIT = 45000
+const topmostSet = new WeakSet()
 
 /**
  * Electron 고급 메서드로 최상위 유지
@@ -23,9 +27,12 @@ const CHECK_INTERVAL = 250
 function keepOnTopAggressive(window) {
   if (!window || window.isDestroyed()) return
 
-  // 여러 레벨을 시도하여 최대한 높은 우선순위 확보
-  window.setAlwaysOnTop(true, "screen-saver", 1)
-  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  // 레벨 설정은 창마다 한 번만. 반복 호출이 깜빡임의 원인이다.
+  if (!topmostSet.has(window)) {
+    topmostSet.add(window)
+    window.setAlwaysOnTop(true, "screen-saver", 1)
+    window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  }
   window.moveTop()
   // Keep the button visible without taking input focus from the third-party kiosk.
 }
@@ -42,6 +49,11 @@ function startTopmostKeeper(window) {
 
   aggressiveCheckInterval = setInterval(() => {
     if (window && !window.isDestroyed()) {
+      // 상시 버튼이 팝업 없이 숨겨진 채 남으면 다시 보인다(초기 로딩 전에는 호출되지 않는 주기 작업).
+      if (window === overlayButton && !kioskPopup && !window.isVisible() && !window.webContents.isLoading()) {
+        window.showInactive()
+        window.webContents.send("kiosk:overlay-idle", true)
+      }
       keepOnTopAggressive(window)
     }
   }, CHECK_INTERVAL)
@@ -177,6 +189,15 @@ function createKioskPopup() {
       zoomFactor: 0.7,
     },
   })
+
+  const popup = kioskPopup
+  const loadWatchdog = setTimeout(() => {
+    logPopup("[OVERLAY_POPUP] load timeout, returning to idle button")
+    if (!popup.isDestroyed()) popup.destroy()
+  }, POPUP_LOAD_LIMIT)
+  loadWatchdog.unref?.()
+  popup.once("closed", () => clearTimeout(loadWatchdog))
+  popup.webContents.once("did-finish-load", () => clearTimeout(loadWatchdog))
 
   kioskPopup.webContents.on("did-finish-load", () => {
     kioskPopup.webContents.setZoomFactor(0.7)
