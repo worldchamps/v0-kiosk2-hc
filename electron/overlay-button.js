@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain, screen } = require("electron")
+const { execFile } = require("node:child_process")
 const fs = require("node:fs")
 const path = require("path")
 const { attachRendererRecovery } = require("./renderer-recovery")
@@ -6,12 +7,43 @@ const { attachRendererRecovery } = require("./renderer-recovery")
 let overlayButton = null
 let kioskPopup = null
 let aggressiveCheckInterval = null
+let popupOpenedAt = 0
+let reportedLogMtime = 0
+
+const LOG_TAIL = 4000
+const logFile = () => path.join(app.getPath("userData"), "overlay-popup.log")
 
 function logPopup(message) {
   const line = `[${new Date().toISOString()}] ${message}`
   console.log(line)
-  try { fs.appendFileSync(path.join(app.getPath("userData"), "overlay-popup.log"), line + "\n", { mode: 0o600 }) }
+  try { fs.appendFileSync(logFile(), line + "\n", { mode: 0o600 }) }
   catch (error) { console.error("[OVERLAY_POPUP] diagnostic log unavailable:", error.message) }
+}
+
+// 운영 보고(PMS)에 붙일 로그 끝부분. 지난번 이후 바뀌었을 때만 돌려준다.
+function readPopupLogUpdate() {
+  try {
+    const file = logFile(), { mtimeMs, size } = fs.statSync(file)
+    if (mtimeMs === reportedLogMtime) return null
+    const length = Math.min(size, LOG_TAIL), buffer = Buffer.alloc(length), fd = fs.openSync(file, "r")
+    try { fs.readSync(fd, buffer, 0, length, size - length) } finally { fs.closeSync(fd) }
+    reportedLogMtime = mtimeMs
+    return buffer.toString("utf8")
+  } catch { return null }
+}
+
+// 타사 키오스크 창을 식별하려고 시작 시 한 번, 창이 있는 프로세스 이름을 기록한다.
+// 창 제목은 다른 프로그램의 개인정보가 섞일 수 있어 PMS로 보내지 않는다.
+function logVisibleWindows() {
+  const command = "Get-Process | Where-Object MainWindowTitle | ForEach-Object { $_.ProcessName }"
+  try {
+    execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { windowsHide: true, timeout: 20000 },
+      (error, stdout) => logPopup(error ? `[OVERLAY_WINDOWS] unavailable: ${String(error.message).slice(0, 100)}`
+        : `[OVERLAY_WINDOWS] ${String(stdout).trim().split(/\r?\n/).slice(0, 20).map(line => line.slice(0, 60)).join(" ; ")}`))
+  } catch (error) {
+    // 정책 차단 등으로 즉시 예외가 나도 배너와 키오스크 시작은 계속한다.
+    logPopup(`[OVERLAY_WINDOWS] unavailable: ${String(error.message).slice(0, 100)}`)
+  }
 }
 
 // 카리브 타사 프로그램(SeeReal)이 약 2초마다 자기 창을 맨 위로 올린다(2026-10-30 현장 영상).
@@ -149,7 +181,7 @@ function createOverlayButton() {
   overlayButton.setIgnoreMouseEvents(false)
 
   startTopmostKeeper(overlayButton)
-
+  if (kariv) logVisibleWindows()
 
   return overlayButton
 }
@@ -226,11 +258,13 @@ function createKioskPopup() {
     })
   })
 
+  popupOpenedAt = Date.now()
+  const since = () => `+${Date.now() - popupOpenedAt}ms`
   const startUrl = "http://localhost:3000?mode=kiosk&popup=true&direct=reservationConfirm"
   attachRendererRecovery(kioskPopup, { startUrl, onFault: code => logPopup(`[UI_RECOVERY] ${code}`) })
 
   logPopup(`[OVERLAY_POPUP] loading ${startUrl}`)
-  kioskPopup.webContents.on("did-finish-load", () => logPopup("[OVERLAY_POPUP] page loaded"))
+  kioskPopup.webContents.on("did-finish-load", () => logPopup(`[OVERLAY_POPUP] page loaded ${since()}`))
   kioskPopup.webContents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
     if (isMainFrame && code !== -3) logPopup(`[OVERLAY_POPUP] load failed: ${code} ${description} ${url}`)
   })
@@ -239,10 +273,13 @@ function createKioskPopup() {
   })
   kioskPopup.webContents.on("console-message", (_event, level, message) => {
     if (level >= 3) logPopup(`[OVERLAY_POPUP] script error: ${String(message).replace(/https?:\/\/\S+/g, "[URL]").slice(0, 300)}`)
+    // 흰 화면 구간을 재려고 예약 화면 초기화 완료 시점을 남긴다.
+    else if (String(message).startsWith("[v0] Kiosk initialized")) logPopup(`[OVERLAY_POPUP] app ready ${since()}`)
   })
   kioskPopup.loadURL(startUrl).catch(error => logPopup(`[OVERLAY_POPUP] loadURL failed: ${error.message}`))
 
   kioskPopup.on("closed", () => {
+    logPopup(`[OVERLAY_POPUP] closed ${since()}`)
     stopTopmostKeeper()
     kioskPopup = null
     if (overlayButton) {
@@ -284,7 +321,9 @@ ipcMain.on("overlay-button-clicked", event => {
 
 for (const channel of ["checkin-complete", "close-popup"]) {
   ipcMain.on(channel, event => {
-    if (isWindowEvent(event, kioskPopup)) kioskPopup.close()
+    if (!isWindowEvent(event, kioskPopup)) return
+    logPopup(`[OVERLAY_POPUP] ${channel}`)
+    kioskPopup.close()
   })
 }
 
@@ -292,6 +331,7 @@ module.exports = {
   createOverlayButton,
   createKioskPopup,
   destroyOverlayButton,
+  readPopupLogUpdate,
   getKioskPopup: () => kioskPopup && !kioskPopup.isDestroyed() ? kioskPopup : null,
   isIdleButtonSender: sender => !!overlayButton && !overlayButton.isDestroyed() &&
     overlayButton.isVisible() && !kioskPopup && overlayButton.webContents === sender,

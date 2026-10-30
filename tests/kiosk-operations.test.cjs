@@ -23,7 +23,7 @@ test('native operation and screen identity report optional C/D scope without inv
 function nativeOperations({ overlay = true, property = 'property2' } = {}) {
   const fs = require('node:fs'), vm = require('node:vm'), path = require('node:path')
   const source = fs.readFileSync(path.join(__dirname, '../electron/main.js'), 'utf8')
-  let popup = null, answer = { raw: null, memory: 'null' }, resets = 0, reloads = 0
+  let popup = null, answer = { raw: null, memory: 'null' }, resets = 0, reloads = 0, overlayLog = null
   const events = new Map()
   const context = { global: {}, OVERLAY_MODE: overlay, KIOSK_PROPERTY_ID: property, mainWindow: null,
     lastOperationsSnapshot: null, lastPrinterResult: null, deviceRecovery: null, cardRendererIdle: false, lastAcceptorCommand: 0,
@@ -31,7 +31,7 @@ function nativeOperations({ overlay = true, property = 'property2' } = {}) {
     pendingOperations: new Map(), URL, Date: { now: () => 100000 }, require,
     process: { env: { FIREBASE_PRIVATE_KEY: 'test-key' } },
     ipcMain: { on: (name, listener) => events.set(name, listener) },
-    setTimeout: callback => setTimeout(callback, 5), clearTimeout, overlayButtonModule: { getKioskPopup: () => popup },
+    setTimeout: callback => setTimeout(callback, 5), clearTimeout, overlayButtonModule: { getKioskPopup: () => popup, readPopupLogUpdate: () => overlayLog },
     hardwareBridge: {}, tossFrontBridge: { configured: true, pending: new Map() }, cardKey: { isBusy: () => false, status: () => ({}) },
     cardDispenserEnabled: () => false, usesWoosim: () => property === 'property3',
     hardwareProfile: require('../electron/cash-device-profile').hardwareProfile,
@@ -53,7 +53,7 @@ function nativeOperations({ overlay = true, property = 'property2' } = {}) {
       events.get('operations:response')({ sender: window.webContents, senderFrame: window.webContents.mainFrame },
         { id: input.id, result: input.kind === 'recover' ? { success: true } : answer })
     } } }
-  return { options: context.global.operations, context, popup: open => { popup = open ? window : null },
+  return { options: context.global.operations, context, popup: open => { popup = open ? window : null }, log: value => { overlayLog = value },
     answer: value => { answer = value }, get resets() { return resets }, get reloads() { return reloads } }
 }
 test('device recovery reports omit personal data and do not label an active payment as a lock', () => {
@@ -75,6 +75,13 @@ test('Kariv idle overlay reports a signed no-payment state without phantom devic
   assert.equal(reports.length, 1); assert.equal(reports[0].recovery, null); assert.equal(reports[0].printer, null)
   assert.deepEqual(reports[0].hardware, {})
   assert(verifyOperations(reports[0], operationsSignature(reports[0], 'test-key'), 'test-key', h.options.identity, 100000))
+  assert.equal(reports[0].overlayLog, null)
+  h.log('[OVERLAY_POPUP] page loaded +900ms')
+  await reporter.tick()
+  assert.equal(reports[1].overlayLog, '[OVERLAY_POPUP] page loaded +900ms')
+  assert(verifyOperations(reports[1], operationsSignature(reports[1], 'test-key'), 'test-key', h.options.identity, 100000))
+  const huge = { ...reports[1], overlayLog: 'x'.repeat(4001) }
+  assert(!verifyOperations(huge, operationsSignature(huge, 'test-key'), 'test-key', h.options.identity, 100000))
   assert(h.context.global.cardAutoIdle())
   for (const config of [{ overlay: false, property: 'property2' }, { overlay: true, property: 'property1' }, { overlay: false, property: 'property3' }]) {
     const other = nativeOperations(config)
@@ -259,7 +266,7 @@ test('the one-slot reporter defers busy reset and reports failed/busy after two-
 test('device reporting rejects unsigned requests, preserves command scope and acknowledges only the matching command', async () => {
   const fs = require('node:fs'), vm = require('node:vm'), ts = require('typescript')
   const key = 'synthetic-device-key', id = crypto.randomUUID()
-  let command = { request: { id, expiresAt: Date.now() + 100000 }, status: 'pending' }, device, writes = 0
+  let command = { request: { id, expiresAt: Date.now() + 100000 }, status: 'pending' }, device, log, logFails = false, writes = 0
   const exports = {}
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../app/api/kiosk-operations-agent/route.ts'), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -271,7 +278,10 @@ test('device reporting rejects unsigned requests, preserves command scope and ac
       assert.equal(path.split('/')[2], identity.deviceId)
       return { once: async () => ({ val: () => command }), transaction: async fn => {
         assert.equal(fn(null), null); command = fn(command); writes++;
-      }, set: async value => { device = value; writes++; } }
+      }, set: async value => {
+        if (path.startsWith('kiosk_operations/logs/')) { if (logFails) throw Error('quota'); log = value } else device = value
+        writes++
+      } }
     } }) }
     throw Error(name)
   } })
@@ -284,6 +294,13 @@ test('device reporting rejects unsigned requests, preserves command scope and ac
   assert.equal((await (await send(body)).json()).command.request.id, id)
   assert.equal(device.printer.error, 'printer offline'); assert.equal(device.recovery.amount, 70000)
   assert.equal(JSON.stringify(device.hardware), '{}')
+  assert.equal(log, undefined, 'reports without diagnostics do not touch the log path')
+  await send({ ...body, overlayLog: '[OVERLAY_POPUP] closed +30000ms' })
+  assert.equal(log.text, '[OVERLAY_POPUP] closed +30000ms'); assert.equal(device.overlayLog, undefined)
+  logFails = true
+  const failed = await send({ ...body, at: Date.now(), overlayLog: 'next' })
+  assert.equal(failed.status, 200, 'a diagnostics write failure still delivers the device report and command')
+  assert.equal((await failed.json()).command.request.id, id)
   await send({ ...body, result: { id: crypto.randomUUID(), status: 'completed', error: '' } })
   assert.equal(command.status, 'pending')
   assert.equal((await (await send({ ...body, result: { id, status: 'completed', error: '' } })).json()).command, null)

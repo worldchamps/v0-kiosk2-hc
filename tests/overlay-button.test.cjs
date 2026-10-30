@@ -5,7 +5,8 @@ const path = require('node:path')
 const vm = require('node:vm')
 const { EventEmitter } = require('node:events')
 
-function harness(property = 'property2', bounds = { x: -1280, y: 20, width: 1280, height: 720 }) {
+function harness(property = 'property2', bounds = { x: -1280, y: 20, width: 1280, height: 720 }, { fsImpl, userData = '', shellThrows = false } = {}) {
+  const shell = []
   const windows = [], timers = new Set(), intervals = new Set(), ipcMain = new EventEmitter()
   class Window extends EventEmitter {
     constructor(options) {
@@ -27,16 +28,17 @@ function harness(property = 'property2', bounds = { x: -1280, y: 20, width: 1280
     focus() { this.focusCount++ }
     setAlwaysOnTop() {} setVisibleOnAllWorkspaces() {} moveTop() {} setIgnoreMouseEvents() {}
   }
-  const context = { module: { exports: {} }, __dirname: path.join(__dirname, '../electron'), global: {},
+  const context = { Buffer, module: { exports: {} }, __dirname: path.join(__dirname, '../electron'), global: {},
     process: { env: { NODE_ENV: 'production', KIOSK_PROPERTY_ID: property } }, console: { log() {}, error() {} },
     setTimeout: fn => { timers.add(fn); return fn }, clearTimeout: fn => timers.delete(fn), setInterval: fn => { intervals.add(fn); return fn }, clearInterval: fn => intervals.delete(fn),
-    require: name => name === 'electron' ? { BrowserWindow: Window, ipcMain, screen: { getPrimaryDisplay: () => ({ bounds }) }, app: { getPath: () => '' } }
-      : name === 'node:fs' ? { appendFileSync() {} }
+    require: name => name === 'electron' ? { BrowserWindow: Window, ipcMain, screen: { getPrimaryDisplay: () => ({ bounds }) }, app: { getPath: () => userData } }
+      : name === 'node:child_process' ? { execFile: (...args) => { if (shellThrows) throw Error('spawn EPERM'); shell.push(args) } }
+      : name === 'node:fs' ? fsImpl || { appendFileSync() {} }
       : name === './renderer-recovery' ? require('../electron/renderer-recovery') : require(name) }
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../electron/overlay-button.js'), 'utf8'), context)
   const api = context.module.exports, button = api.createOverlayButton()
   button.webContents.emit('did-finish-load')
-  return { api, button, windows, context, intervals, timers, tick: () => intervals.forEach(fn => fn()),
+  return { api, button, windows, context, intervals, timers, shell, tick: () => intervals.forEach(fn => fn()),
     send: (channel, window = button, frame = window.webContents.mainFrame) => ipcMain.emit(channel, { sender: window.webContents, senderFrame: frame }) }
 }
 
@@ -135,4 +137,29 @@ test('idle button hidden without a popup is shown again by the keeper', () => {
   h.button.hide()
   h.tick()
   assert.equal(h.button.visible, true)
+})
+
+test('Kariv records visible programs once and ships only new popup diagnostics', () => {
+  const fs = require('node:fs'), os = require('node:os')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'overlay-log-'))
+  try {
+    const h = harness('property2', undefined, { fsImpl: fs, userData: dir })
+    assert.equal(h.shell.length, 1)
+    assert.equal(h.shell[0][0], 'powershell.exe')
+    assert.equal(harness('property1').shell.length, 0, 'legacy overlay does not probe other programs')
+    assert.equal(h.api.readPopupLogUpdate(), null, 'no log yet')
+    h.send('overlay-button-clicked')
+    const first = h.api.readPopupLogUpdate()
+    assert.match(first, /\[OVERLAY_POPUP\] loading/)
+    assert.equal(h.api.readPopupLogUpdate(), null, 'unchanged log is not resent')
+    fs.appendFileSync(path.join(dir, 'overlay-popup.log'), 'x'.repeat(9000))
+    fs.utimesSync(path.join(dir, 'overlay-popup.log'), new Date(), new Date(Date.now() + 5000))
+    assert.equal(h.api.readPopupLogUpdate().length, 4000, 'only the tail fits in a device report')
+  } finally { fs.rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('a blocked PowerShell probe never stops the Kariv banner from starting', () => {
+  const h = harness('property2', undefined, { shellThrows: true })
+  assert.equal(h.button.visible, true)
+  assert.equal(h.api.isIdleButtonSender(h.button.webContents), true)
 })

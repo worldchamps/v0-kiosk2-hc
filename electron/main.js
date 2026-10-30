@@ -1478,7 +1478,9 @@ app.whenReady().then(async () => {
           reason: hardware.cardDispenser.state === 'ok' ? status.reason : hardware.cardDispenser.reason,
           empty: status.empty, low: status.low, captureFull: status.captureFull, hopperFull: status.hopperFull }
       }
-      return { ...snapshot, printer: lastPrinterResult, hardware }
+      // Kariv has no on-site admin; ship the popup diagnostics with the report when they change.
+      const overlayLog = karivOverlay ? overlayButtonModule.readPopupLogUpdate() : null
+      return { ...snapshot, printer: lastPrinterResult, hardware, overlayLog }
     },
     recover: async command => {
       if (command.request.action === 'reset_device') {

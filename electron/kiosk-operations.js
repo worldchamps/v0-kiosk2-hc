@@ -37,6 +37,7 @@ function verifyOperations(body, signature, key, identity, now = Date.now()) {
     const result = body.result
     if (result !== null && (!result || !/^[a-f0-9-]{36}$/.test(result.id || '') || !['completed', 'failed'].includes(result.status) ||
       typeof result.error !== 'string' || result.error.length > 500)) return false
+    if (body.overlayLog != null && (typeof body.overlayLog !== 'string' || body.overlayLog.length > 4000)) return false
     const hardware = body.hardware
     if (!hardware || typeof hardware !== 'object' || Array.isArray(hardware) ||
       Object.keys(hardware).some(key => !deviceKeys.includes(key))) return false
@@ -77,7 +78,7 @@ function createOperationsReporter({ identity, key, read, recover, fetcher = fetc
     busy = true
     try {
       const state = await read()
-      const body = { ...identity, at: now(), recovery: recoverySummary(state.raw, state.memory, state.storageError), printer: state.printer || null, hardware: state.hardware || {}, result }
+      const body = { ...identity, at: now(), recovery: recoverySummary(state.raw, state.memory, state.storageError), printer: state.printer || null, hardware: state.hardware || {}, overlayLog: state.overlayLog || null, result }
       const response = await fetcher('http://localhost:3000/api/kiosk-operations-agent', {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
         headers: { 'Content-Type': 'application/json', 'x-kiosk-operations-signature': operationsSignature(body, key) }, body: JSON.stringify(body),

@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 export async function POST(request: NextRequest) {
   try {
     const raw = await request.text()
-    if (raw.length > 8000) return NextResponse.json({ error: 'Too large' }, { status: 413 })
+    if (raw.length > 12000) return NextResponse.json({ error: 'Too large' }, { status: 413 })
     const body = JSON.parse(raw), scope = getKioskScope()
     if (!verifyOperations(body, request.headers.get('x-kiosk-operations-signature'), process.env.FIREBASE_PRIVATE_KEY,
       { deviceId: process.env.KIOSK_DEVICE_ID, property: scope.property, building: scope.building || '' }))
@@ -23,6 +23,9 @@ export async function POST(request: NextRequest) {
     }
     await db.ref(`kiosk_operations/devices/${body.deviceId}`).set({ property: body.property, building: body.building,
       version: body.version, lastSeen: Date.now(), recovery: body.recovery, printer: body.printer, hardware: body.hardware })
+    // Kept beside, not inside, devices/ so the PMS dashboard reads are unchanged. Diagnostics never delay commands.
+    if (typeof body.overlayLog === 'string')
+      await db.ref(`kiosk_operations/logs/${body.deviceId}`).set({ version: body.version, at: Date.now(), text: body.overlayLog }).catch(() => {})
     return NextResponse.json({ command: job?.status === 'pending' &&
       (job.request.action === 'reset_device' || job.request.expiresAt > Date.now()) && job.request.id !== body.result?.id ? job : null })
   } catch { return NextResponse.json({ error: 'Device report unavailable' }, { status: 503 }) }
