@@ -14,8 +14,10 @@ function logPopup(message) {
   catch (error) { console.error("[OVERLAY_POPUP] diagnostic log unavailable:", error.message) }
 }
 
-// 250ms마다 SetWindowPos를 다시 호출하면 화면이 깜빡이므로 느리게 확인한다.
-const CHECK_INTERVAL = 2000
+// 카리브 타사 프로그램(SeeReal)이 약 2초마다 자기 창을 맨 위로 올린다(2026-10-30 현장 영상).
+// 가려지는 시간 = 이 주기이므로 짧게 둔다. 2초로 늘린 1.3.57은 버튼이 대부분 가려졌다.
+// ponytail: 주기 폴링이라 최대 100ms는 가려진다. 완전히 없애려면 타사 창 소유 관계(owner)로 묶어야 한다.
+const CHECK_INTERVAL = 100
 // 팝업이 이 시간 안에 뜨지 않으면 닫고 상시 버튼으로 돌아간다(관리자 없이 복귀).
 const POPUP_LOAD_LIMIT = 45000
 const topmostSet = new WeakSet()
@@ -27,7 +29,7 @@ const topmostSet = new WeakSet()
 function keepOnTopAggressive(window) {
   if (!window || window.isDestroyed()) return
 
-  // 레벨 설정은 창마다 한 번만. 반복 호출이 깜빡임의 원인이다.
+  // 레벨 설정은 창마다 한 번만 하고, 순서 복구는 moveTop으로 한다.
   if (!topmostSet.has(window)) {
     topmostSet.add(window)
     window.setAlwaysOnTop(true, "screen-saver", 1)
