@@ -53,6 +53,13 @@ function getReservations(data: { reservations?: unknown } | null): Reservation[]
   return reservations
 }
 
+// Only kiosks the redirect dialog can name; anything else stays "not found".
+function getRedirect(data: { redirect?: any }): KioskScope | null {
+  const target = data.redirect
+  if (["property2", "property4"].includes(target?.property) && target.building === null) return target
+  return ["property1", "property3"].includes(target?.property) && ["A", "B", "C", "D"].includes(target.building) ? target : null
+}
+
 export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayoutProps) {
   const [currentScreen, setCurrentScreen] = useState("onSiteReservation")
   const [installedVersion, setInstalledVersion] = useState("")
@@ -100,7 +107,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
   } | null>(null)
   const [adminOverride, setAdminOverride] = useState(false)
   const [showPropertyRedirect, setShowPropertyRedirect] = useState(false)
-  const [redirectTargetProperty, setRedirectTargetProperty] = useState<PropertyId | null>(null)
+  const [redirectTarget, setRedirectTarget] = useState<KioskScope | null>(null)
   const router = useRouter()
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null)
   const INACTIVITY_TIMEOUT = 30000 // 30 seconds
@@ -121,6 +128,8 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     setCheckInPending(false)
     setAdminOverride(false)
     setShowPropertyMismatch(false)
+    setShowPropertyRedirect(false)
+    setRedirectTarget(null)
     setReturnHomeAfterError(false)
   }
 
@@ -356,7 +365,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
 
     try {
       const response = await fetch(
-        `/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false&kioskProperty=${kioskProperty}`,
+        `/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false`,
         {
           method: "GET",
           signal: AbortSignal.timeout(15000),
@@ -369,6 +378,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
 
       const data = await response.json()
       data.reservations = getReservations(data)
+      const redirect = getRedirect(data)
 
       if (data.reservations && data.reservations.length > 0) {
         if (data.reservations.length > 1) {
@@ -379,34 +389,12 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
           setReservationData(reservation)
           setCurrentScreen("reservationDetails")
         }
-      } else if (kioskScope?.building) {
-        setError(buildingRestrictionMessage(kioskScope.building))
-        setCurrentScreen("reservationNotFound")
+      } else if (redirect) {
+        setRedirectTarget(redirect)
+        setShowPropertyRedirect(true)
       } else {
-        const allPropertiesResponse = await fetch(
-          `/api/reservations?name=${encodeURIComponent(name)}&todayOnly=false&searchAll=true`,
-          {
-            method: "GET",
-            signal: AbortSignal.timeout(15000),
-          },
-        )
-
-        if (!allPropertiesResponse.ok) {
-          throw new Error(`API error: ${allPropertiesResponse.status}`)
-        }
-
-        const allPropertiesData = await allPropertiesResponse.json()
-        allPropertiesData.reservations = getReservations(allPropertiesData)
-
-        if (allPropertiesData.reservations && allPropertiesData.reservations.length > 0) {
-          const foundReservation = allPropertiesData.reservations[0]
-          const targetProperty = foundReservation.property
-
-          setRedirectTargetProperty(targetProperty)
-          setShowPropertyRedirect(true)
-        } else {
-          setCurrentScreen("reservationNotFound")
-        }
+        if (kioskScope?.building) setError(buildingRestrictionMessage(kioskScope.building))
+        setCurrentScreen("reservationNotFound")
       }
     } catch (err) {
       console.error("[v0] Reservation check error:", err)
@@ -419,25 +407,15 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
     }
   }
 
-  const findReservationById = async (reservationId: string, searchAll = false) => {
-    const params = new URLSearchParams({
-      reservationId,
-      todayOnly: "false",
-    })
-
-    if (searchAll) {
-      params.set("searchAll", "true")
-    } else {
-      params.set("kioskProperty", kioskProperty)
-    }
-
+  const findReservationById = async (reservationId: string) => {
+    const params = new URLSearchParams({ reservationId, todayOnly: "false" })
     const response = await fetch(`/api/reservations?${params.toString()}`, { signal: AbortSignal.timeout(15000) })
     if (!response.ok) {
       throw new Error(`API error: ${response.status}`)
     }
 
     const data = await response.json()
-    return getReservations(data)
+    return { reservations: getReservations(data), redirect: getRedirect(data) }
   }
 
   const handleScanReservationQr = async () => {
@@ -460,7 +438,7 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
       }
 
       const reservationId = parseReservationQrValue(scanResult.value)
-      const reservations = await findReservationById(reservationId)
+      const { reservations, redirect } = await findReservationById(reservationId)
 
       if (reservations.length === 1) {
         setGuestName(reservations[0].guestName || "")
@@ -469,19 +447,12 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         return
       }
 
-      if (kioskScope?.building) {
-        setError(buildingRestrictionMessage(kioskScope.building))
-        setCurrentScreen("reservationNotFound")
-        return
-      }
-      const allPropertyReservations = await findReservationById(reservationId, true)
-      if (allPropertyReservations.length > 0) {
-        const foundReservation = allPropertyReservations[0]
-        if (!foundReservation.property) throw new Error("예약 숙소 정보를 확인하지 못했습니다.")
-        setGuestName(foundReservation.guestName || "")
-        setRedirectTargetProperty(foundReservation.property)
+      if (redirect) {
+        setGuestName("")
+        setRedirectTarget(redirect)
         setShowPropertyRedirect(true)
       } else {
+        if (kioskScope?.building) setError(buildingRestrictionMessage(kioskScope.building))
         setCurrentScreen("reservationNotFound")
       }
     } catch (err) {
@@ -851,14 +822,16 @@ export default function KioskLayout({ onChangeMode, initialLocation }: KioskLayo
         />
       )}
 
-      {showPropertyRedirect && redirectTargetProperty && (
+      {showPropertyRedirect && redirectTarget && (
         <PropertyRedirectDialog
-          targetProperty={redirectTargetProperty}
+          target={redirectTarget}
           guestName={guestName}
           onClose={() => {
+            if (!isPopupMode) return goHome()
+            // An overlay popup returns to the vendor kiosk underneath by closing itself.
             setShowPropertyRedirect(false)
-            setRedirectTargetProperty(null)
-            setCurrentScreen("reservationConfirm")
+            setRedirectTarget(null)
+            window.electronAPI?.send?.("close-popup") // nothing was checked in
           }}
         />
       )}

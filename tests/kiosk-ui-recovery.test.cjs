@@ -1003,7 +1003,7 @@ async function kiosk(scenario = {}) {
     '@/lib/kiosk-operator-shortcuts': load('lib/kiosk-operator-shortcuts.ts').exports,
   });
   const h = load('components/kiosk-layout.tsx', deps, { Date: scenario.clock || Date, AbortSignal: scenario.abortSignal || AbortSignal,
-    alert() {}, setTimeout(fn, ms) { if (ms === 2000) { scenario.tick?.(ms); fn(); return 0 } timers.push({ fn, ms }); return timers.length }, clearTimeout() {}, window: { crypto: { randomUUID }, location: { search: '' }, addEventListener(type, fn) { if (type === 'keydown') keyHandlers.push(fn); }, removeEventListener() {}, electronAPI: { getHardwareStatus: scenario.hardware || (async () => ({ cashBackend: 'oneplus' })), send: command => commands.push(command), tossFront: { scanReservationQr: scenario.scan || (async () => ({success: true, value: 'AGAIN:RESERVATION:QA-ONLY'})) } } }, document: { body: { classList: { add() {}, remove() {} } } },
+    alert() {}, setTimeout(fn, ms) { if (ms === 2000) { scenario.tick?.(ms); fn(); return 0 } timers.push({ fn, ms }); return timers.length }, clearTimeout() {}, window: { crypto: { randomUUID }, location: { search: scenario.search || '' }, addEventListener(type, fn) { if (type === 'keydown') keyHandlers.push(fn); }, removeEventListener() {}, electronAPI: { getHardwareStatus: scenario.hardware || (async () => ({ cashBackend: 'oneplus' })), send: command => commands.push(command), tossFront: { scanReservationQr: scenario.scan || (async () => ({success: true, value: 'AGAIN:RESERVATION:QA-ONLY'})) } } }, document: { body: { classList: { add() {}, remove() {} } } },
     fetch: async (url, options) => {
       if (url === '/api/kiosk-config') return { ok: true, json: async () => ({ property: 'property3', building: 'B' }) };
       if (url.startsWith('/api/reservations')) return scenario.lookup ? scenario.lookup(url, options) : { ok: true, json: async () => ({ reservations: [{ reservationId: 'QA-ONLY', roomNumber: 'B901', guestName: 'QA', roomType: 'Test', price: '30000', checkInDate: '2026-09-10', checkOutDate: '2026-09-11', password: '' }] }) };
@@ -1016,8 +1016,8 @@ async function kiosk(scenario = {}) {
     } });
   const render = () => h.render({ onChangeMode: scenario.onChangeMode || (() => {}) }); const settle = async () => { await new Promise(resolve => setImmediate(resolve)); render(); };
   render(); for (const effect of h.effects) effect(); await settle();
-  const navigate = h.component('on-site-reservation').props.onNavigate;
-  await navigate('reservationConfirm'); await settle();
+  const navigate = h.component('on-site-reservation')?.props.onNavigate;
+  if (!scenario.search) { await navigate('reservationConfirm'); await settle(); } // overlay popups open on reservationConfirm
   return { ...h, settle, render, navigate, posts, keyHandlers, timers, commands, session, payment, observed, collections, balances,
     idle: () => idle, confirmCheckIn: () => pending = false };
 }
@@ -1433,6 +1433,47 @@ test('name lookup ignores blank input and encodes Unicode and query punctuation 
   const url = new URL(urls[0], 'http://test.invalid');
   assert.equal(url.searchParams.get('name'), '테스트 &searchAll=true'); assert.equal(url.searchParams.get('searchAll'), null);
   assert.equal(h.component('reservation-not-found').props.lookupFailed, false);
+});
+test('name and QR lookups at the wrong kiosk show the server-named kiosk from one request', async () => {
+  for (const [redirect, shown] of [[{ property: 'property1', building: 'D' }, true], [{ property: 'property4', building: null }, true],
+    [{ property: 'property3', building: null }, false], [{ property: 'property9', building: 'A' }, false], ['D', false], [null, false]]) {
+    for (const start of [props => props.onCheckReservation('QA'), props => props.onScanReservationQr()]) {
+      const urls = [];
+      const h = await kiosk({ lookup: async url => { urls.push(url); return { ok: true, json: async () => ({ reservations: [], redirect }) }; } });
+      await start(h.component('reservation-confirm').props); await h.settle();
+      assert.equal(urls.length, 1, JSON.stringify(redirect)); assert(!urls[0].includes('searchAll'));
+      if (!shown) {
+        assert.equal(h.component('property-redirect-dialog'), undefined); assert(h.component('reservation-not-found')); assert(h.visible('B only'));
+        continue;
+      }
+      assert.deepEqual(h.component('property-redirect-dialog').props.target, redirect);
+      h.component('property-redirect-dialog').props.onClose(); h.render();
+      assert.equal(h.component('property-redirect-dialog'), undefined); assert(h.component('on-site-reservation'));
+    }
+  }
+});
+test('in an overlay popup, closing wrong-kiosk guidance closes the popup instead of opening on-site sale', async () => {
+  const h = await kiosk({ search: '?popup=true&direct=reservationConfirm',
+    lookup: async () => ({ ok: true, json: async () => ({ reservations: [], redirect: { property: 'property1', building: 'C' } }) }) });
+  await h.component('reservation-confirm').props.onCheckReservation('QA'); await h.settle();
+  const sent = h.commands.length;
+  h.component('property-redirect-dialog').props.onClose(); h.render();
+  assert.deepEqual(h.commands.slice(sent), ['close-popup']);
+  assert.equal(h.component('property-redirect-dialog'), undefined); assert.equal(h.component('on-site-reservation'), undefined);
+});
+test('wrong-kiosk guidance names the kiosk and closes itself after 30 seconds exactly once', () => {
+  const timers = [], closed = [];
+  const h = load('components/property-redirect-dialog.tsx', { 'next/image': { default: 'img' } },
+    { setInterval() { return 0 }, clearInterval() {}, setTimeout(fn, ms) { timers.push({ fn, ms }); return timers.length }, clearTimeout() {} });
+  let tree = h.render({ target: { property: 'property1', building: 'D' }, guestName: '', onClose: () => closed.push('first') });
+  for (const effect of h.effects) effect();
+  const said = value => text(tree).replace(/\s+/g, ' ').includes(value);
+  assert(said('고객님')); assert(said('숙소는 더 비치스테이 D동')); assert(said('체크인은 D동 키오스크')); assert(h.component('img'));
+  h.render({ target: { property: 'property1', building: 'D' }, guestName: '', onClose: () => closed.push('latest') });
+  assert.equal(timers[0].ms, 30000); timers[0].fn(); assert.deepEqual(closed, ['latest']); // the latest parent callback
+  // Kariv has no photo of its own; show none rather than a beach building.
+  tree = h.render({ target: { property: 'property2', building: null }, guestName: 'QA', onClose() {} });
+  assert.equal(h.component('img'), undefined); assert(said('QA님')); assert(said('체크인은 Kariv Hotel 키오스크'));
 });
 for (const malformed of [{}, { reservations: 'invalid' }, { reservations: [null] }]) {
   test('malformed name lookup becomes an explicit error, not missing-reservation or a blank details screen: ' + JSON.stringify(malformed), async () => {

@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server"
 import { createSheetsClient, SHEET_COLUMNS } from "@/lib/google-sheets"
 import { getCurrentDateKST, normalizeDate, resolveReservationSheetDateTime } from "@/lib/date-utils"
 import { getPropertyFromReservation } from "@/lib/property-utils"
-import { getKioskScope, isRoomInBuilding } from "@/lib/kiosk-scope"
+import { type KioskScope, getKioskScope, isRoomInBuilding, kioskForReservation } from "@/lib/kiosk-scope"
 
 const normalizeGuestName = (value: unknown) => {
   const name = String(value ?? "").normalize("NFC").replace(/[\u200B-\u200D\uFEFF]/g, "").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US")
@@ -18,11 +18,8 @@ export async function GET(request: NextRequest) {
     if (normalizedGuestName === "") return NextResponse.json({ reservations: [] })
     const reservationId = searchParams.get("reservationId")
     const todayOnly = searchParams.get("todayOnly") === "true"
+    // Device identity comes from this PC's settings, never from the request.
     const scope = getKioskScope()
-    const kioskProperty = scope.building ? scope.property : searchParams.get("kioskProperty")
-    const searchAllProperties = !scope.building && searchParams.get("searchAll") === "true"
-
-    console.log("[v0] Reservations API called with kioskProperty:", kioskProperty, "searchAll:", searchAllProperties)
 
     const sheets = createSheetsClient()
     const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID || ""
@@ -48,19 +45,17 @@ export async function GET(request: NextRequest) {
 
     const reservations = []
     const today = getCurrentDateKST()
+    const tomorrow = new Date(Date.parse(`${today}T00:00:00Z`) + 86400000).toISOString().slice(0, 10)
+    // Kiosks holding this guest's current or upcoming stays. Only the destination
+    // is returned; other kiosks' reservation details never leave this server.
+    const elsewhere = new Map<string, { target: KioskScope | null; near: boolean }>()
 
     for (const row of rows) {
-      if (!isRoomInBuilding(row[SHEET_COLUMNS.ROOM_NUMBER], scope.building)) continue
       const rowGuestName = row[SHEET_COLUMNS.GUEST_NAME] || ""
       const rowReservationId = row[SHEET_COLUMNS.RESERVATION_ID] || ""
       const checkInStatus = row[SHEET_COLUMNS.CHECK_IN_STATUS] || ""
 
-      // Filter 1: skip if already checked in (no date normalization needed)
-      if (checkInStatus && checkInStatus.trim() !== "") {
-        continue
-      }
-
-      // Filter 2: if searching by name, only include matching names (no date normalization needed)
+      // Filter 1: if searching by name, only include matching names (no date normalization needed)
       if (normalizedGuestName !== null && normalizeGuestName(rowGuestName) !== normalizedGuestName) {
         continue
       }
@@ -80,50 +75,38 @@ export async function GET(request: NextRequest) {
       const checkInDate = normalizeDate(checkInDateTime)
       const checkOutDate = normalizeDate(checkOutDateTime)
 
+      // Filter 2: skip if already processed. A same-name guest still staying
+      // (e.g. back for the door code) means any guidance could be someone else's.
+      if (checkInStatus && checkInStatus.trim() !== "") {
+        // Same normalization as the PMS sheet fixer: "Checked-in", "checked in", ...
+        const checkedIn = checkInStatus.toLowerCase().replace(/[-_\s]+/g, " ").trim() === "checked in"
+        if (checkedIn && !(checkOutDate && checkOutDate < today)) {
+          elsewhere.set("unknown", { target: null, near: false })
+        }
+        continue
+      }
+
       // Filter 3: if todayOnly, skip if check-in date is before today
       if (todayOnly && checkInDate < today) {
         continue
       }
 
-      if (kioskProperty && !searchAllProperties) {
-        const place = row[SHEET_COLUMNS.PLACE] || ""
-        const roomNumber = row[SHEET_COLUMNS.ROOM_NUMBER] || ""
-
-        console.log("[v0] Checking reservation:", {
-          guestName: rowGuestName,
-          place,
-          roomNumber,
-          kioskProperty,
-        })
-
-        const reservationProperty = getPropertyFromReservation({
-          place,
-          roomNumber,
-        } as any)
-
-        // If still no property detected, skip this reservation
-        if (!reservationProperty) {
-          console.log("[v0] Could not detect property for reservation, skipping")
-          continue
-        }
-
-        console.log("[v0] Detected property:", reservationProperty, "Expected:", kioskProperty)
-
-        // Skip if property doesn't match
-        if (reservationProperty !== kioskProperty) {
-          console.log("[v0] Skipping reservation - property mismatch")
-          continue
-        }
-
-        console.log("[v0] Including reservation - property match!")
-      }
-
       const place = row[SHEET_COLUMNS.PLACE] || ""
       const roomNumber = row[SHEET_COLUMNS.ROOM_NUMBER] || ""
-      const detectedProperty = getPropertyFromReservation({
-        place,
-        roomNumber,
-      } as any)
+      const detectedProperty = getPropertyFromReservation({ place, roomNumber })
+
+      // Filter 4: this kiosk's building and property only
+      if (!isRoomInBuilding(roomNumber, scope.building) || detectedProperty !== scope.property) {
+        // Later stays and unreadable dates only make the answer ambiguous; a
+        // destination needs a stay starting by tomorrow (guest a day early).
+        const readable = !!checkInDate && !!checkOutDate
+        if (!readable || today <= checkOutDate) {
+          const target = readable ? kioskForReservation(detectedProperty, roomNumber) : null
+          const key = target ? `${target.property}:${target.building}` : "unknown"
+          elsewhere.set(key, { target, near: checkInDate <= tomorrow || !!elsewhere.get(key)?.near })
+        }
+        continue
+      }
 
       reservations.push({
         place: place,
@@ -147,10 +130,17 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    // Guide only to a single certain kiosk: same-name guests at different
+    // kiosks or an unassigned beach room fall back to "not found".
+    const lookedUp = normalizedGuestName !== null || !!reservationId
+    const [only] = elsewhere.values()
+    const redirect = lookedUp && reservations.length === 0 && elsewhere.size === 1 && only.near ? only.target : null
+
     console.log("[v0] Total reservations found:", reservations.length)
 
     return NextResponse.json({
       reservations,
+      redirect,
     })
   } catch (error) {
     console.error("Error fetching reservations:", error)

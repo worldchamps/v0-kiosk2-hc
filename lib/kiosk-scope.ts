@@ -24,10 +24,21 @@ export function getKioskScope(env: NodeJS.ProcessEnv = process.env): KioskScope 
   return { property, building }
 }
 
+function roomBuilding(roomNumber: unknown): KioskBuilding | null {
+  if (typeof roomNumber !== "string") return null
+  return (roomNumber.trim().toUpperCase().match(/^([A-D])[\s-]?\d{3}$/)?.[1] as KioskBuilding | undefined) ?? null
+}
+
 export function isRoomInBuilding(roomNumber: unknown, building: KioskBuilding | null): boolean {
-  if (!building) return true
-  if (typeof roomNumber !== "string") return false
-  return roomNumber.trim().toUpperCase().match(/^([A-D])[\s-]?\d{3}$/)?.[1] === building
+  return !building || roomBuilding(roomNumber) === building
+}
+
+// The kiosk that will find this reservation. Beach kiosks are split by
+// building, so an unassigned beach booking has no answer yet.
+export function kioskForReservation(property: PropertyId | null, roomNumber: unknown): KioskScope | null {
+  if (property === "property2" || property === "property4") return { property, building: null }
+  const building = roomBuilding(roomNumber)
+  return property && building ? { property, building } : null
 }
 
 export function buildingRestrictionMessage(building: KioskBuilding): string {

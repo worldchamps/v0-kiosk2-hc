@@ -272,6 +272,74 @@ test("name and QR lookups cannot bypass A/B scope with searchAll or a forged pro
   }
 })
 
+test("a wrong-kiosk lookup names only the one kiosk holding the guest's stay, without its details", async () => {
+  const guest = (code: string, name: string, { place = "비치", from = "26.09.06", to = "26.09.07", status = "" } = {}) => {
+    const row = reservation(code); row[0] = place; row[1] = name
+    row[columns.CHECK_IN_DATE] = `${from}/15:00`; row[columns.CHECK_OUT_DATE] = `${to}/11:00`; row[columns.CHECK_IN_STATUS] = status
+    return row
+  }
+  const lookup = async (api: ReturnType<typeof harness>, query: string, today = "2026-09-06") => {
+    api.dependencies["@/lib/date-utils"] = { ...api.dependencies["@/lib/date-utils"], getCurrentDateKST: () => today }
+    return (await api.get("reservations", query)).json()
+  }
+  const rows = [guest("A131", "A Guest"), guest("D211", "D Guest"), guest("B121", "Twin"), guest("C105", "Twin"),
+    guest("", "Unassigned", { place: "비치 A,B동" }), guest("Camp101", "Camp Guest", { place: "더 캠프스테이" }),
+    guest("Kariv301", "Kariv Guest", { place: "Kariv" }), guest("C105", "Done", { status: "Checked In" }),
+    guest("D211", "Kim"), guest("B121", "Kim", { from: "26.09.20", to: "26.09.21" }), guest("C105", "Old", { from: "26.08.01", to: "26.08.02" }),
+    guest("C105", "Later", { from: "26.09.20", to: "26.09.21" }), guest("D211", "Repeat"), guest("D211", "Repeat", { from: "26.09.20", to: "26.09.21" }),
+    guest("C105", "Broken", { to: "bad" }), guest("D211", "Broken"), guest("C105", "Unreadable", { from: "bad" }),
+    guest("A131", "Staying", { from: "26.09.05", status: " checked-in " }), guest("D211", "Staying"),
+    guest("A131", "Left", { from: "26.09.01", to: "26.09.02", status: "Checked In" }), guest("D211", "Left"),
+    guest("B121", "Rebooked", { status: "Cancelled" }), guest("D211", "Rebooked")]
+
+  const beachA = harness("A")
+  beachA.rows.splice(0, beachA.rows.length, ...rows)
+  assert.deepEqual(await lookup(beachA, "name=D%20Guest"), { reservations: [], redirect: { property: "property1", building: "D" } })
+  assert.deepEqual((await lookup(beachA, "reservationId=id-B121")).redirect, { property: "property3", building: "B" })
+  assert.deepEqual((await lookup(beachA, "name=Camp%20Guest")).redirect, { property: "property4", building: null })
+  assert.deepEqual((await lookup(beachA, "name=Kariv%20Guest")).redirect, { property: "property2", building: null })
+  // Arriving a day early or on checkout day still finds the right building.
+  for (const today of ["2026-09-05", "2026-09-07"]) assert.deepEqual((await lookup(beachA, "name=D%20Guest", today)).redirect, { property: "property1", building: "D" }, today)
+  assert.deepEqual((await lookup(beachA, "name=Repeat")).redirect, { property: "property1", building: "D" })
+  // Only a checked-in stay that has not ended blocks guidance; past stays and other statuses do not.
+  for (const name of ["Left", "Rebooked"]) assert.deepEqual((await lookup(beachA, `name=${name}`)).redirect, { property: "property1", building: "D" }, name)
+  // Same name at two kiosks (even on another day), only a later stay, unreadable dates, unassigned,
+  // checked in, ended, or no query: no guess.
+  for (const query of ["name=Twin", "name=Kim", "name=Later", "name=Broken", "name=Unreadable", "name=Staying", "name=Unassigned", "name=Done",
+    "name=Old", "name=Nobody", ""]) {
+    assert.equal((await lookup(beachA, query)).redirect, null, query)
+  }
+  assert.equal((await lookup(beachA, "name=D%20Guest", "2026-09-08")).redirect, null)
+  const here = await lookup(beachA, "name=A%20Guest")
+  assert.equal(here.reservations[0].roomNumber, "A131"); assert.equal(here.redirect, null)
+
+  const camp = harness("", "property4")
+  camp.rows.splice(0, camp.rows.length, ...rows)
+  assert.deepEqual((await lookup(camp, "name=D%20Guest")).redirect, { property: "property1", building: "D" })
+  assert.equal((await lookup(camp, "name=Camp%20Guest")).reservations.length, 1)
+  // The PC's own property decides; a forged kioskProperty or searchAll widens nothing.
+  for (const query of ["name=D%20Guest&kioskProperty=property1", "name=D%20Guest&searchAll=true", "name=D%20Guest&kioskProperty="]) {
+    assert.deepEqual((await lookup(camp, query)).reservations, [], query)
+  }
+
+  const beachCD = harness("", "property1")
+  beachCD.rows.splice(0, beachCD.rows.length, ...rows)
+  assert.deepEqual((await lookup(beachCD, "name=A%20Guest")).redirect, { property: "property3", building: "A" })
+  assert.equal((await lookup(beachCD, "name=D%20Guest")).reservations[0].roomNumber, "D211")
+  const both = await lookup(beachCD, "name=Twin") // C105 here, B121 elsewhere
+  assert.equal(both.reservations[0].roomNumber, "C105"); assert.equal(both.redirect, null)
+
+  const beachC = harness("C", "property1")
+  beachC.rows.splice(0, beachC.rows.length, ...rows)
+  assert.deepEqual((await lookup(beachC, "name=D%20Guest")).redirect, { property: "property1", building: "D" })
+
+  const kariv = harness("", "property2")
+  kariv.rows.splice(0, kariv.rows.length, ...rows)
+  assert.deepEqual((await lookup(kariv, "name=A%20Guest")).redirect, { property: "property3", building: "A" })
+  const karivHere = await lookup(kariv, "name=Kariv%20Guest")
+  assert.equal(karivHere.reservations.length, 1); assert.equal(karivHere.redirect, null)
+})
+
 test("check-in rechecks assigned room; missing/forged property and adminOverride cannot cross buildings", async () => {
   for (const building of ["A", "B"]) {
     const api = harness(building)
